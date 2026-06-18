@@ -1,0 +1,91 @@
+{
+  "devices": {
+    "6S-LITVI": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "YE21F8VC00009P3"
+      ],
+      "mgmt0": ""
+    },
+    "Hybrid_Omer": {
+      "expected_role": "CL",
+      "expected_sns": [
+        "CZ22500CW4",
+        "CZ22260685"
+      ],
+      "mgmt0": "100.64.10.252",
+      "system_id": "75d31b3c-87db-48a5-b6f1-6ed013bd0250"
+    },
+    "Kira-uses-this-SA": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "WDY1957K00068"
+      ],
+      "mgmt0": "100.64.11.64"
+    },
+    "Metropolis": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "WW61E1V300004P1"
+      ],
+      "mgmt0": "100.64.10.44"
+    },
+    "NCP3-SA-Etay": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "YE41F7VK00003B1"
+      ],
+      "mgmt0": "100.64.10.84",
+      "system_id": "e5105fa0-3297-4ea9-99f2-d64f4c51090e"
+    },
+    "NCPL-Etay-BGP_BFD-strict": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "100.64.7.46"
+      ],
+      "mgmt0": "100.64.4.40",
+      "system_id": "47d5f0eb-1652-447b-a57e-0c61d47a4bad"
+    },
+    "Nevermore": {
+      "expected_role": "CL",
+      "expected_sns": [
+        "CZJ93802NT",
+        "CZJ93802NF"
+      ],
+      "mgmt0": "100.64.4.177",
+      "system_id": "2c943948-986d-47b0-a75c-5d30fe5725a1"
+    },
+    "OHADZS-CL": {
+      "expected_role": "CL",
+      "expected_sns": [
+        "dn40-cl-301a-ncc0",
+        "dn40-cl-301a-ncc1"
+      ],
+      "mgmt0": "100.64.11.161",
+      "system_id": "571cba6e-e54b-4d92-a649-41b929347a64"
+    },
+    "OHADZS-SA": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "WW61DBVB0000EB1"
+      ],
+      "mgmt0": "100.64.11.4",
+      "system_id": "d22e8daf-e65b-4032-aadc-22fc820c8c59"
+    },
+    "Slava_1_WK31C8V10001BP2": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "WK31C8V10001BP2"
+      ],
+      "mgmt0": "100.64.2.119"
+    },
+    "Slava_2_WW61DBV000003B1": {
+      "expected_role": "SA",
+      "expected_sns": [
+        "WW61DBV000003B1"
+      ],
+      "mgmt0": "100.64.8.119"
+    }
+  },
+  "generated_at": "2026-06-18T06:00:03Z"
+}

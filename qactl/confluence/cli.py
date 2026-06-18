@@ -11,7 +11,7 @@ from typing import Optional, Tuple
 from qactl.core.common import confirm_or_exit, resolve_timeout
 from qactl.core.creds import CredentialError
 from qactl.core.envelope import error_envelope, ok_envelope
-from qactl.core.output import emit
+from qactl.core.output import emit, read_payload
 from qactl.confluence.client import ConfluenceClient, ConfluenceError
 
 
@@ -56,9 +56,16 @@ def _list(args):
 
 
 def _comment(args):
-    if not args.text and not args.attach:
+    try:
+        text = read_payload(args.text, args.text_file)
+    except OSError as e:
         return emit(error_envelope(
-            "nothing to post: provide --text and/or --attach",
+            f"cannot read --text-file: {e}",
+            kind="confluence_comment", status="bad_argument"), as_json=args.json)
+
+    if not text and not args.attach:
+        return emit(error_envelope(
+            "nothing to post: provide --text/--text-file and/or --attach",
             kind="confluence_comment", status="bad_argument"), as_json=args.json)
 
     def fn(c):
@@ -72,7 +79,7 @@ def _comment(args):
             att = c.upload_attachment(args.page_id, path)
             attach_name = att["title"]
             attached = att
-        body = c.build_comment_body(args.text, attach_name)
+        body = c.build_comment_body(text, attach_name)
         comment_id = c.post_comment(args.page_id, body)
         return ok_envelope(kind="confluence_comment", result={
             "page_id": args.page_id, "comment_id": comment_id, "attachment": attached,
@@ -109,7 +116,10 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
                        help="post a comment (with optional --attach file)")
     _add_cred_flags(p)
     p.add_argument("page_id")
-    p.add_argument("--text", default=None, help="comment body (plain text)")
+    p.add_argument("--text", default=None,
+                   help="comment body (plain text); '-' reads stdin")
+    p.add_argument("--text-file", default=None, dest="text_file",
+                   help="read the comment body from a file (wins over --text)")
     p.add_argument("--attach", default=None, help="file to attach to the page and embed")
     p.set_defaults(func=_comment)
 

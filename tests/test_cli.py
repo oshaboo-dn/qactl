@@ -18,14 +18,14 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from qactl.__main__ import build_parser
+from qactl.__main__ import build_native_parser
 from qactl.core import common, output
 from qactl.core.creds import AtlassianConfig, JenkinsConfig, CredentialError
 
 
 class ParserTests(unittest.TestCase):
     def setUp(self):
-        self.parser = build_parser()
+        self.parser = build_native_parser()
 
     def test_global_flags_after_subcommand(self):
         args = self.parser.parse_args(["jira", "whoami", "--json"])
@@ -47,6 +47,13 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(args.page_id, "12345")
         self.assertEqual(args.text, "hi")
+
+    def test_confluence_comment_text_file(self):
+        args = self.parser.parse_args(
+            ["confluence", "comment", "12345", "--text-file", "note.md"]
+        )
+        self.assertEqual(args.text_file, "note.md")
+        self.assertIsNone(args.text)
 
     def test_jenkins_trigger_defaults(self):
         args = self.parser.parse_args(["jenkins", "trigger", "feature/foo"])
@@ -81,7 +88,7 @@ class ExitCodeTests(unittest.TestCase):
 
 class ConfirmGateTests(unittest.TestCase):
     def _args(self, **kw):
-        ns = build_parser().parse_args(["jira", "comment", "delete", "SW-1", "9"])
+        ns = build_native_parser().parse_args(["jira", "comment", "delete", "SW-1", "9"])
         for k, v in kw.items():
             setattr(ns, k, v)
         return ns
@@ -105,6 +112,21 @@ class PayloadTests(unittest.TestCase):
 
     def test_none(self):
         self.assertIsNone(output.read_payload(None, None))
+
+    def test_stdin_dash(self):
+        with mock.patch("sys.stdin", io.StringIO("piped body")):
+            self.assertEqual(output.read_payload("-", None), "piped body")
+
+    def test_file_wins_over_inline(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+            fh.write("from file")
+            path = fh.name
+        try:
+            self.assertEqual(output.read_payload("inline", path), "from file")
+        finally:
+            os.unlink(path)
 
 
 class CredsTests(unittest.TestCase):
@@ -169,7 +191,7 @@ class CheetahParamTests(unittest.TestCase):
     def test_named_overrides_map_to_jenkins_params(self):
         from qactl.jenkins.cli import build_cheetah_params
 
-        args = build_parser().parse_args([
+        args = build_native_parser().parse_args([
             "jenkins", "trigger", "feature/foo", "--sanitizer", "--baseos",
             "--no-smoke",
         ])

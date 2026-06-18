@@ -1,14 +1,15 @@
-"""qactl — one agent-shaped CLI for a QA engineer's external services.
+"""qactl — one agent-shaped CLI for an entire QA workflow.
 
-A single executable that unifies the tools a QA workflow touches outside
-the lab — Jira, Confluence, and Jenkins — behind one consistent,
-shell-driven contract: ``--json`` everywhere, real exit codes, stdin
-payloads, and a ``--yes`` confirm gate on destructive ops. Credentials
-are resolved at runtime from the environment; none are stored in the
-repo.
+A single executable that unifies every surface a QA engineer drives:
 
-Pairs with the device/traffic CLIs (`dnctl`, `ixiactl`); those remain
-their own tools/repos.
+    cli / nc / gnmi / rc / setup   DNOS devices   (vendored dnctl)
+    ixia                           IxNetwork      (vendored ixiactl)
+    jira / confluence / jenkins    Atlassian/CI   (native)
+
+One shell-driven contract across all of them: ``--json`` everywhere,
+real exit codes, stdin payloads, and a ``--yes`` confirm gate on
+destructive ops. Credentials resolve at runtime from the environment;
+none are stored in the repo.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

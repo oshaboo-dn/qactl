@@ -1,0 +1,40 @@
+{
+  "_comment": "RESTCONF entry points keyed by alias. DNOS does not run RESTCONF natively on current builds (see README.md); production access goes via ODL controllers acting as NETCONF\u2192RESTCONF gateways. Each entry describes one RESTCONF speaker (ODL today; native DNOS endpoints will be added when/if a build ships /restconf on the box). Per-device 'mount' info under each ODL is what gets PUT to /restconf/config/network-topology:.../node/<NAME>.",
+  "endpoints": {
+    "odl-lab1": {
+      "kind": "odl",
+      "base_url": "http://10.10.75.34:8181/restconf",
+      "auth": {
+        "user": "admin",
+        "password": "admin"
+      },
+      "uri_style": "legacy",
+      "_uri_style_note": "Legacy ODL RFC-7895 path style: keyed list entries are /list/key (NOT RFC-8040 /list=key). RFC-8040 form returns 400 unknown-element on this build.",
+      "module_name_quirks": {
+        "drivenets-top": "dn-top",
+        "_comment": "YANG module name on the wire. Top container element name is 'drivenets-top' but the module that defines it is 'dn-top', so RESTCONF URIs start /dn-top:drivenets-top/... \u2014 not /drivenets-top:drivenets-top/..."
+      },
+      "mounts": {
+        "OHADZS-CL": {
+          "device": "cl",
+          "host": "100.64.11.161",
+          "port": 830,
+          "device_user": "dnroot",
+          "device_password": "dnroot",
+          "tcp_only": false,
+          "keepalive_delay": 0
+        },
+        "OHADZS-SA": {
+          "device": "sa",
+          "host": "100.64.11.4",
+          "port": 830,
+          "device_user": "dnroot",
+          "device_password": "dnroot",
+          "tcp_only": false,
+          "keepalive_delay": 0
+        }
+      }
+    }
+  },
+  "generated_at": "2026-04-30T08:30:00Z"
+}

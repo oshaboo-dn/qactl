@@ -1,14 +1,24 @@
 # qactl
 
-One **agent-shaped** command-line tool for the external services a QA
-workflow touches outside the lab — **Jira**, **Confluence**, and
-**Jenkins** — behind a single consistent contract. It replaces a set of
-local MCP servers and scattered helper scripts with one executable that
-an AI agent (or a human) can drive over a shell.
+One **agent-shaped** command-line tool for an entire QA workflow — DNOS
+devices, IxNetwork traffic generation, Jira, Confluence, and Jenkins —
+behind a single consistent contract. It collapses a fleet of local MCP
+servers and scattered helper scripts into one executable an AI agent (or
+a human) drives over a shell.
 
-Pairs with [`dnctl`](https://github.com/oshaboo-dn/dnctl) (DNOS devices)
-and [`ixiactl`](https://github.com/oshaboo-dn/ixiactl) (IxNetwork traffic
-gen); those stay their own tools/repos.
+| Group | Domain | Source |
+|---|---|---|
+| `cli` / `nc` / `gnmi` / `rc` / `setup` | DNOS devices (SSH / NETCONF / gNMI / RESTCONF) | vendored `dnctl` |
+| `ixia` | IxNetwork sessions / topology / protocols / traffic | vendored `ixiactl` |
+| `jira` | Jira watchers / attachments / comments / transitions / status | native |
+| `confluence` | Confluence comments / attachments | native |
+| `jenkins` | Jenkins builds: trigger / inspect / stop | native |
+
+`qactl` is a thin dispatcher: the `cli/nc/gnmi/rc/setup` and `ixia`
+groups delegate to the bundled `dnctl` / `ixiactl` entrypoints unchanged
+(full surface, help, and behaviour preserved), while `jira` /
+`confluence` / `jenkins` are implemented natively. All groups share the
+same contract.
 
 ## The contract
 
@@ -87,7 +97,7 @@ is the default. The repo ships no `.env` and no baked-in tokens.
 
 | Command | Description | Gate |
 |---|---|---|
-| `comment <page> [--text T] [--attach F]` | post a comment, optionally attaching+embedding a file | |
+| `comment <page> [--text T \| --text-file F \| --text -] [--attach F]` | post a comment (body inline, from a file, or from stdin), optionally attaching+embedding a file | |
 | `list <page>` | list a page's comments + attachments | |
 | `delete <id>` | delete a comment or attachment by id | `--yes` |
 
@@ -132,14 +142,35 @@ qactl jenkins trigger feature/foo                  # must REFUSE (no --yes)
 qactl jenkins trigger feature/foo --yes            # queues the build
 ```
 
+## DNOS devices & Ixia
+
+These groups are the bundled `dnctl` / `ixiactl` verbatim — same flags,
+same behaviour, same `--json`/`--yes` contract:
+
+```bash
+qactl setup ...                       # one-time device registry / creds (dnctl)
+qactl cli system -d sa --json
+cat filter.xml | qactl nc get -d sa - --json
+qactl gnmi get -d cl /interfaces --json
+qactl ixia session connect --host 10.0.0.5 --json   # IXIA_HOST also honoured
+qactl ixia traffic stats --host 10.0.0.5 --json
+```
+
+Device credentials/registry come from `qactl setup` (dnctl's resolver);
+Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
+`qactl <group> --help` for the full surface.
+
 ## Layout
 
 ```
 qactl/
-  core/        envelope, output/exit-codes, creds (env), CLI plumbing
-  jira/        client.py (REST) + cli.py  -> qactl jira ...
-  confluence/  client.py (REST) + cli.py  -> qactl confluence ...
-  jenkins/     client.py (REST) + cli.py  -> qactl jenkins ...
-  __main__.py  argparse tree + dispatch
-tests/         CLI-layer tests (no live services)
+  qactl/
+    core/        envelope, output/exit-codes, creds (env), CLI plumbing
+    jira/        client.py (REST) + cli.py  -> qactl jira ...
+    confluence/  client.py (REST) + cli.py  -> qactl confluence ...
+    jenkins/     client.py (REST) + cli.py  -> qactl jenkins ...
+    __main__.py  dispatcher: native groups + delegation to dnctl / ixiactl
+  dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup
+  ixiactl/ ixia/ ixia_core/ ixia_tools/    vendored Ixia CLI -> qactl ixia
+tests/           native CLI tests + vendored dnctl / ixiactl suites
 ```
