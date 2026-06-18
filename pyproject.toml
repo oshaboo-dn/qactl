@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qactl"
+version = "0.1.0"
+description = "One agent-shaped CLI for a QA workflow's external services: Jira, Confluence, and Jenkins."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "DriveNets" }]
+keywords = ["jira", "confluence", "jenkins", "atlassian", "cli", "qa", "automation"]
+
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+qactl = "qactl.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["qactl*"]

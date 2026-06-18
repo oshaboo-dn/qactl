@@ -1,0 +1,39 @@
+---
+description: qactl contribution workflow — issues, branches, commits, PRs, releases, secrets
+alwaysApply: true
+---
+
+# qactl repo rules
+
+## The agent-shaped contract (don't break it)
+- `--json` on every command emits the raw envelope; keep it lossless.
+- Real exit codes: 0 only on `status` ok/warning, non-zero otherwise.
+- stdin (`-`) / `--file` / inline accepted for any text payload arg.
+- Every destructive/mutating subcommand is gated by `--yes` and refuses
+  off a TTY without it. New destructive commands MUST add the gate.
+- One envelope shape across `jira` / `confluence` / `jenkins`.
+
+## Secrets
+- NEVER commit credentials. All tokens resolve at runtime from the
+  environment (`ATLASSIAN_*`, `JENKINS_*`). No `.env`, no defaults that
+  embed a token, none in code/docstrings/tests/issues.
+
+## Issues (gh)
+- Bugs/change requests arrive as `gh` issues. Triage on read: confirm
+  the repro (command + exit code) before fixing.
+- One issue → one branch → one PR. Label `bug` / `enhancement` /
+  `needs-info`. Close via the merge (`Closes #N`), not manually.
+
+## Branches / commits
+- Never commit to `main`. Branch per issue: `fix/<n>-slug` /
+  `feat/<n>-slug`. `main` stays releasable.
+- Small, focused, imperative subjects ≤72 chars referencing the issue:
+  `fix: gate jira comment delete on --yes (#4)`.
+
+## Push / PR / releases
+- Push the branch, open a PR, let CI run. No force-push to `main`.
+- Squash-merge to keep `main` linear. Tag `vX.Y.Z` after merge and bump
+  the version the CLI reports.
+
+## Don't
+- No edits outside this repo. No secrets anywhere. No `--no-verify`.
