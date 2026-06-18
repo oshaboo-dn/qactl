@@ -19,9 +19,9 @@ from ixiactl.cli import traffic as traffic_cli
 from ixiactl.cli.common import apply_session_policy, global_parent
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "ixiactl") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ixiactl",
+        prog=prog,
         description="Command-line control for an IxNetwork REST API server "
                     "(reattach-aware; pairs with dnctl).",
     )
@@ -39,8 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = build_parser()
+def main(argv: Optional[List[str]] = None, prog: str = "ixiactl") -> int:
+    parser = build_parser(prog)
     args = parser.parse_args(argv)
 
     rc = apply_session_policy(args)
