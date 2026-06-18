@@ -33,15 +33,17 @@ alwaysApply: true
   `needs-info`. Close via the merge (`Closes #N`), not manually.
 
 ## Branches / commits
-- Never commit to `main`. Branch per issue: `fix/<n>-slug` /
-  `feat/<n>-slug`. `main` stays releasable.
+- Direct commits to `main` are allowed; `main` stays releasable.
+  Per-issue branches (`fix/<n>-slug` / `feat/<n>-slug`) are still fine
+  when you want review or CI first, but are no longer required.
 - Small, focused, imperative subjects ≤72 chars referencing the issue:
   `fix: gate jira comment delete on --yes (#4)`.
 
 ## Push / PR / releases
-- Push the branch, open a PR, let CI run. No force-push to `main`.
-- Squash-merge to keep `main` linear. Tag `vX.Y.Z` after merge and bump
-  the version the CLI reports.
+- Push directly to `main`, or open a PR when you want CI/review first.
+  No force-push to `main`.
+- Keep `main` linear (squash-merge PRs). Tag `vX.Y.Z` after notable
+  changes and bump the version the CLI reports.
 
 ## Don't
 - No edits outside this repo. No secrets anywhere. No `--no-verify`.
