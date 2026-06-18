@@ -57,8 +57,14 @@ def confirm_or_exit(args: argparse.Namespace, *, kind: str, action: str) -> Opti
             next_actions=["Re-run with --yes to proceed."],
         )
         return emit(env, as_json=getattr(args, "json", False))
+    # The prompt goes to stderr (not stdout via input()'s prompt arg) so a
+    # piped ``--json | jq`` still shows it and never pollutes the envelope
+    # on stdout — and so the command never blocks invisibly on a swallowed
+    # prompt when stdout is redirected.
+    sys.stderr.write(f"{action}\nProceed? [y/N] ")
+    sys.stderr.flush()
     try:
-        resp = input(f"{action}\nProceed? [y/N] ")
+        resp = input()
     except EOFError:
         resp = ""
     if resp.strip().lower() in ("y", "yes"):

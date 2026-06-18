@@ -28,9 +28,15 @@ def ensure(action: str, *, yes: bool, as_json: bool) -> bool:
     if yes:
         return True
 
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        # Prompt on stderr so a piped ``--json`` still surfaces it without
+        # polluting stdout (and so we never block on a swallowed prompt when
+        # stdout is redirected). Keys interactivity on stdin+stderr to match
+        # the native qactl / ixiactl gates.
+        sys.stderr.write(f"About to: {action}\nProceed? [y/N] ")
+        sys.stderr.flush()
         try:
-            resp = input(f"About to: {action}\nProceed? [y/N] ")
+            resp = input()
         except (EOFError, KeyboardInterrupt):
             resp = ""
         if resp.strip().lower() in ("y", "yes"):

@@ -265,6 +265,26 @@ class ConfirmGateTests(unittest.TestCase):
         env = json.loads(out.getvalue())
         self.assertEqual(env["status"], "confirmation_required")
 
+    def test_interactive_prompt_to_stderr_not_stdout(self):
+        # On a TTY the prompt goes to stderr; stdout stays clean so a piped
+        # `--json` is neither corrupted nor blocked on a swallowed prompt.
+        args = self._args(yes=False, json=False)
+        err = io.StringIO()
+        out = io.StringIO()
+        with mock.patch.object(common.sys, "stdin",
+                               mock.Mock(isatty=lambda: True)), \
+             mock.patch.object(common.sys, "stderr",
+                               mock.Mock(isatty=lambda: True,
+                                         write=err.write, flush=lambda: None)), \
+             mock.patch("builtins.input", return_value="y"), \
+             redirect_stdout(out):
+            rc = common.confirm_or_exit(
+                args, kind="delete_topology", action="delete t1",
+            )
+        self.assertIsNone(rc)
+        self.assertIn("Proceed? [y/N]", err.getvalue())
+        self.assertEqual(out.getvalue(), "")
+
 
 class RenderTests(unittest.TestCase):
     def test_json_emit_roundtrips(self):

@@ -105,6 +105,39 @@ class ConfirmGateTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out.getvalue())["status"], "confirmation_required")
 
+    def test_interactive_prompt_to_stderr_not_stdout(self):
+        # On a TTY the prompt must go to stderr and stdout must stay clean,
+        # so a piped `--json | jq` neither hangs nor gets the prompt mixed
+        # into the JSON. A 'y' reply proceeds (returns None).
+        args = self._args(yes=False, json=False)
+        err = io.StringIO()
+        out = io.StringIO()
+        with mock.patch.object(common.sys, "stdin", mock.Mock(isatty=lambda: True)), \
+             mock.patch.object(common.sys, "stderr",
+                               mock.Mock(isatty=lambda: True,
+                                         write=err.write, flush=lambda: None)), \
+             mock.patch("builtins.input", return_value="y"), \
+             redirect_stdout(out):
+            rc = common.confirm_or_exit(args, kind="jira_delete_comment",
+                                        action="delete the thing")
+        self.assertIsNone(rc)
+        self.assertIn("Proceed? [y/N]", err.getvalue())
+        self.assertEqual(out.getvalue(), "")
+
+    def test_interactive_decline_aborts(self):
+        args = self._args(yes=False, json=True)
+        err = io.StringIO()
+        out = io.StringIO()
+        with mock.patch.object(common.sys, "stdin", mock.Mock(isatty=lambda: True)), \
+             mock.patch.object(common.sys, "stderr",
+                               mock.Mock(isatty=lambda: True,
+                                         write=err.write, flush=lambda: None)), \
+             mock.patch("builtins.input", return_value="n"), \
+             redirect_stdout(out):
+            rc = common.confirm_or_exit(args, kind="jira_delete_comment", action="del")
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out.getvalue())["status"], "aborted")
+
 
 class PayloadTests(unittest.TestCase):
     def test_inline(self):

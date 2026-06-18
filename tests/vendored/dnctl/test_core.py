@@ -2,9 +2,11 @@
 
 import io
 import json
+from unittest import mock
 
 import pytest
 
+from dnctl.core import confirm
 from dnctl.core import devices as dn_devices
 from dnctl.core import output, payload
 
@@ -51,6 +53,34 @@ def test_resolve_body_required_raises():
     with pytest.raises(payload.PayloadError):
         payload.resolve_body(None, None)
     assert payload.resolve_body(None, None, required=False) is None
+
+
+# --- confirm gate ----------------------------------------------------------
+
+
+def test_confirm_yes_proceeds():
+    assert confirm.ensure("do x", yes=True, as_json=False) is True
+
+
+def test_confirm_interactive_prompt_to_stderr(monkeypatch, capsys):
+    # On a TTY the prompt goes to stderr and stdout stays clean, matching
+    # the native qactl / ixiactl gates (keyed on stdin+stderr).
+    err = mock.Mock(isatty=lambda: True)
+    monkeypatch.setattr("sys.stdin", mock.Mock(isatty=lambda: True))
+    monkeypatch.setattr("sys.stderr", err)
+    monkeypatch.setattr("builtins.input", lambda *a: "y")
+    assert confirm.ensure("delete x", yes=False, as_json=False) is True
+    written = "".join(c.args[0] for c in err.write.call_args_list)
+    assert "Proceed? [y/N]" in written
+    assert capsys.readouterr().out == ""
+
+
+def test_confirm_off_tty_refuses(capsys):
+    # pytest's captured stdin/stderr are non-TTYs → refuse, no blocking.
+    assert confirm.ensure("delete x", yes=False, as_json=True) is False
+    payload_out = json.loads(capsys.readouterr().out)
+    assert payload_out["status"] == "error"
+    assert any("--yes" in n for n in payload_out["next_actions"])
 
 
 # --- device aliases (nicknames) -------------------------------------------
