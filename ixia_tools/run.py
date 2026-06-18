@@ -92,7 +92,7 @@ def _run_apply_changes(env: Dict[str, Any], s, *, timeout_s: int) -> bool:
             f"Apply Changes did not reach 'nothingToApply' within "
             f"{timeout_s}s — last state: {ac.get('state')!r}. "
             "Continuing to Start; if Start no-ops, retry "
-            "ixia_apply_changes with a larger timeout_s."
+            "`qactl ixia session apply` with a larger --timeout."
         )
     return True
 
@@ -131,10 +131,10 @@ def _enrich_vport_not_ready(env: Dict[str, Any], s, exc: BaseException) -> bool:
     )
     env["next_actions"].append(
         "Wait for chassis ports to finish booting "
-        "(typically 30-60 s after ixia_load_config), then retry. "
-        "ixia_load_config now blocks for vport readiness by default — "
-        "if you skipped that wait (wait_for_vports_ms=0) re-poll "
-        "ixia_list_vports until every vport is connectedLinkUp+up."
+        "(typically 30-60 s after `qactl ixia session load`), then retry. "
+        "`qactl ixia session load` blocks for vport readiness by default — "
+        "if you skipped that wait (--wait-for-vports-ms 0) re-poll "
+        "`qactl ixia session vports` until every vport is connectedLinkUp+up."
     )
     env_result = env.get("result") or {}
     env_result["vports_ready"] = False
@@ -195,11 +195,11 @@ def _preflight_vport_wait(
         f"'{NOT_READY_ERROR_MARKER}')."
     )
     env["next_actions"].append(
-        "Either bump the start tool's wait_for_vports_ready_ms (chassis "
-        "may need >60 s after ixia_load_config), or call "
-        "ixia_wait_vports_ready / ixia_list_vports first to confirm. "
-        "Pass force=True to skip the preflight when you really know "
-        "the vports are up."
+        "Either bump --wait-for-vports-ready-ms (chassis "
+        "may need >60 s after `qactl ixia session load`), or run "
+        "`qactl ixia session wait-vports` / `qactl ixia session vports` "
+        "first to confirm. Pass --force to skip the preflight when you "
+        "really know the vports are up."
     )
     return False
 
@@ -478,7 +478,7 @@ def ixia_topology_start(
         env["status"] = "error"
         env["errors"].append(f"Topology {name!r} not found.")
         env["next_actions"].append(
-            "Call ixia_list_topologies to see available names."
+            "Run `qactl ixia topo list` to see available names."
         )
         return env
 
@@ -658,7 +658,7 @@ def ixia_dg_start(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_list_topologies / ixia_get_topology to see "
+            "Run `qactl ixia topo list` / `qactl ixia topo get` to see "
             "the available topology + DG names."
         )
         return env
@@ -740,7 +740,7 @@ def ixia_dg_stop(
                 env["status"] = "error"
                 env["errors"].append(str(e))
                 env["next_actions"].append(
-                    "Call ixia_list_topologies / ixia_get_topology "
+                    "Run `qactl ixia topo list` / `qactl ixia topo get` "
                     "to see the available topology + DG names."
                 )
                 return env
@@ -912,7 +912,7 @@ def ixia_protocols_summary(
         env["errors"].append(
             f"Protocols Summary view did not return within {timeout}s — "
             "either protocols are not started yet, or the view is still "
-            "initialising. Try again after ixia_protocols_start_all."
+            "initialising. Try again after `qactl ixia proto start-all`."
         )
         return env
     if isinstance(value, BaseException):

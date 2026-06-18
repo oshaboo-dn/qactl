@@ -264,7 +264,7 @@ def ixia_get_topology(
             env["status"] = "error"
             env["errors"].append(f"Topology {name!r} not found.")
             env["next_actions"].append(
-                "Call ixia_list_topologies to see available names."
+                "Run `qactl ixia topo list` to see available names."
             )
             return env
 

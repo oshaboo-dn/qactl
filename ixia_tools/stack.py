@@ -333,7 +333,7 @@ def ixia_create_ethernet(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_describe_session to confirm topology / DG names."
+            "Run `qactl ixia session describe` to confirm topology / DG names."
         )
         return env
     except IxiaOperationError as e:
@@ -492,7 +492,7 @@ def ixia_create_ipv4(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_describe_session to confirm DG / ethernet names."
+            "Run `qactl ixia session describe` to confirm DG / ethernet names."
         )
         return env
     except IxiaOperationError as e:
@@ -606,7 +606,7 @@ def ixia_create_bgp_peer(
     if not isinstance(local_as, int) or local_as < 0 or local_as > 65535:
         return error_envelope(
             "local_as must be a 2-byte integer in [0, 65535]. "
-            "For 4-byte ASNs use ixia_rest_patch on localAs4Bytes "
+            "For 4-byte ASNs use `qactl ixia rest patch` on localAs4Bytes "
             "after creation.",
             kind="create_bgp_peer", host=host, port=port,
             status="bad_argument",
@@ -740,7 +740,7 @@ def ixia_create_bgp_peer(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_describe_session to confirm DG / ipv4 names."
+            "Run `qactl ixia session describe` to confirm DG / ipv4 names."
         )
         return env
     except IxiaOperationError as e:
@@ -972,8 +972,8 @@ def ixia_create_bgp_vrf(
                 env["status"] = "error"
                 env["errors"].append(str(e))
                 env["next_actions"].append(
-                    "Call ixia_get_topology / ixia_describe_session to "
-                    "see available BGP peer names under this DG."
+                    "Run `qactl ixia topo get` / `qactl ixia session describe` "
+                    "to see available BGP peer names under this DG."
                 )
                 return env
 
@@ -1304,7 +1304,7 @@ def ixia_delete_bgp_peer(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_describe_session to see available BGP peer "
+            "Run `qactl ixia session describe` to see available BGP peer "
             "names under this DG."
         )
         return env
@@ -1406,7 +1406,7 @@ def ixia_delete_bgp_vrf(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_get_bgp_peer to see existing bgpVrf names "
+            "Run `qactl ixia bgp peer get` to see existing bgpVrf names "
             "under this peer."
         )
         return env

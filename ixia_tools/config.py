@@ -114,9 +114,9 @@ def ixia_list_configs(
     ssh_bin = shutil.which("ssh")
     if not ssh_bin:
         return error_envelope(
-            "ssh binary not found in PATH on the MCP host.",
+            "ssh binary not found in PATH on the local host.",
             kind="list_configs", host=host,
-            next_actions=["Install openssh-client on the MCP host."],
+            next_actions=["Install openssh-client on the local host."],
         )
 
     target = ssh_alias or host
@@ -359,7 +359,7 @@ def ixia_load_config(
         env["errors"].append(str(e))
         env["next_actions"].append(
             "Verify the path exists on the API server filesystem and is a "
-            "valid .ixncfg (e.g. `dir` that path via cli-mcp or RDP)."
+            "valid .ixncfg (e.g. `dir` that path via `qactl cli` or RDP)."
         )
         return env
     except Exception as e:
@@ -418,10 +418,11 @@ def ixia_load_config(
             "will likely fail with 'No IP Address for Parent found!'."
         )
         env["next_actions"].append(
-            "Re-poll ixia_list_vports until connection_state=connectedLinkUp "
-            "and link_state=up before calling ixia_protocols_start_all / "
-            "ixia_topology_start; or re-run ixia_load_config with a larger "
-            "wait_for_vports_ms."
+            "Re-poll `qactl ixia session vports` until "
+            "connection_state=connectedLinkUp and link_state=up before "
+            "running `qactl ixia proto start-all` / `qactl ixia topo start`; "
+            "or re-run `qactl ixia session load` with a larger "
+            "--wait-for-vports-ms."
         )
 
     return env

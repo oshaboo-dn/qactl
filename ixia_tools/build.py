@@ -523,7 +523,7 @@ def ixia_create_network_group(
                     env["status"] = "error"
                     env["errors"].append(str(e))
                     env["next_actions"].append(
-                        "Call ixia_get_topology to see the available "
+                        "Run `qactl ixia topo get` to see the available "
                         "BGP peer names under this DG."
                     )
                     return env

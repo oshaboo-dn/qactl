@@ -471,7 +471,7 @@ def ixia_route_action(
                 env["status"] = "error"
                 env["errors"].append(str(ve))
                 env["next_actions"].append(
-                    "Call ixia_get_network_group to see the NG's "
+                    "Run `qactl ixia topo netgroup get` to see the NG's "
                     "multiplier and current per-line Active mask."
                 )
                 return env
@@ -511,9 +511,9 @@ def ixia_route_action(
                     "applyOnTheFlyState": None,
                 }
                 env["next_actions"].append(
-                    "Call ixia_route_apply_pending() to push the staged "
-                    "change to the wire (mandatory — multivalue PATCH on "
-                    "a running topology is passive until ApplyOnTheFly)."
+                    "Run `qactl ixia proto route apply-pending` to push the "
+                    "staged change to the wire (mandatory — multivalue PATCH "
+                    "on a running topology is passive until ApplyOnTheFly)."
                 )
                 return env
 
@@ -530,8 +530,8 @@ def ixia_route_action(
                 f"ApplyOnTheFly did not reach 'nothingToApply' within "
                 f"{apply_timeout_s}s — last state: {wait.get('state')!r} "
                 f"(polls={wait.get('polls')}). The multivalue write "
-                "succeeded; verify on the wire with cli-mcp / "
-                "ixia_get_network_group."
+                "succeeded; verify on the wire with `qactl cli` or "
+                "`qactl ixia topo netgroup get`."
             )
         env["result"] = {
             "action": action,
@@ -551,8 +551,8 @@ def ixia_route_action(
         env["status"] = "error"
         env["errors"].append(str(e))
         env["next_actions"].append(
-            "Call ixia_get_network_group / ixia_describe_session to "
-            "see what topology / DG / NG names exist."
+            "Run `qactl ixia topo netgroup get` / `qactl ixia session "
+            "describe` to see what topology / DG / NG names exist."
         )
         return env
     except IxiaOperationError as e:

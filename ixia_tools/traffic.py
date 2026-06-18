@@ -145,7 +145,7 @@ def ixia_get_traffic_item(
         env["status"] = "error"
         env["errors"].append(f"{type(e).__name__}: {e}")
         env["next_actions"].append(
-            "Call ixia_list_traffic_items to confirm the exact item name "
+            "Run `qactl ixia traffic list` to confirm the exact item name "
             "(names are case- and whitespace-sensitive)."
         )
         return env
