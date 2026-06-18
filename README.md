@@ -97,10 +97,15 @@ is the default. The repo ships no `.env` and no baked-in tokens.
 |---|---|---|
 | `whoami` | sanity-check the Jenkins token | |
 | `trigger <branch> [...flags] [--wait]` | trigger a cheetah build; `--wait` blocks until it finishes | `--yes` |
+| `trigger-raw <job_path> [--param K=V]... [--extra-params JSON] [--wait]` | trigger any parameterized job by path with raw params (non-cheetah) | `--yes` |
 | `info <branch> [build]` | build details (params, result, causes) | |
 | `console <branch> [build] [--tail N]` | tail the console log | |
 | `list <branch> [--limit N]` | recent builds | |
-| `stop <branch> --build-number N` | abort a build | `--yes` |
+| `stop <branch> --build-number N` / `stop --queue-id N` | abort a running build, or cancel a queued one | `--yes` |
+
+> The MCP's `get_jenkins_build_job` (in-memory async job registry) has no CLI
+> equivalent by design — a CLI is process-per-invocation, so build state is read
+> live from Jenkins via `info` / `list` (or `trigger --wait`).
 
 Cheetah trigger knobs map to Jenkins parameters: `--sanitizer`
 (`TEST_NAMES=ENABLE_SANITIZER`), `--baseos`, `--no-lint`, `--no-dnos`,

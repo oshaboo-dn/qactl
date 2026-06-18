@@ -130,6 +130,49 @@ def _console(args):
                 }))
 
 
+def _do_trigger(args, c, *, kind, job_path, params, result_base, warnings, console_ref):
+    """Trigger ``job_path`` and, with --wait, poll the build to completion.
+
+    Shared by the cheetah ``trigger`` and the generic ``trigger-raw``.
+    ``console_ref`` is the ``qactl jenkins console ...`` hint for failures.
+    """
+    trig = c.trigger_build(job_path, params)
+    result: dict[str, Any] = {
+        **result_base,
+        "job_url": trig["job_url"], "queue_id": trig["queue_id"],
+        "queue_url": trig["queue_url"], "parameters": params,
+    }
+    if not args.wait:
+        return ok_envelope(
+            kind=kind, result=result, warnings=warnings,
+            next_actions=[
+                f"Build queued (queue_id={trig['queue_id']}). Poll it with "
+                f"`qactl jenkins info ...` or re-run with --wait."
+            ],
+        )
+    if trig["queue_id"] is None:
+        return error_envelope("Triggered but Jenkins returned no queue id to wait on.",
+                              kind=kind, result=result)
+    q = c.wait_for_build_number(trig["queue_id"], timeout_s=args.wait_timeout, poll_s=args.poll)
+    if q.get("status") != "started":
+        return error_envelope(
+            f"Build did not start (queue status={q.get('status')}).",
+            kind=kind, status="error" if q.get("status") == "timeout" else "aborted",
+            result={**result, "queue": q},
+        )
+    bnum = q["build_number"]
+    b = c.wait_for_build_result(job_path, bnum, timeout_s=args.wait_timeout, poll_s=args.poll)
+    result.update({"build_number": bnum, "build_url": q.get("build_url"), "build": b})
+    if b.get("status") == "timeout":
+        return error_envelope(f"Build #{bnum} still running after {args.wait_timeout}s.",
+                              kind=kind, status="error", result=result)
+    if b.get("result") == "SUCCESS":
+        return ok_envelope(kind=kind, result=result, warnings=warnings)
+    return error_envelope(f"Build #{bnum} finished with result={b.get('result')}.",
+                          kind=kind, result=result,
+                          next_actions=[console_ref.format(bnum=bnum)])
+
+
 def _trigger(args):
     rc = confirm_or_exit(args, kind="jenkins_trigger",
                          action=f"Trigger a {args.repo} build on branch {args.branch!r}.")
@@ -139,54 +182,71 @@ def _trigger(args):
 
     def fn(c):
         params, warning = build_cheetah_params(args, c, job_path)
-        trig = c.trigger_build(job_path, params)
-        warnings = [warning] if warning else []
-        result: dict[str, Any] = {
-            "branch": args.branch, "repo": args.repo, "org": args.org,
-            "job_url": trig["job_url"], "queue_id": trig["queue_id"],
-            "queue_url": trig["queue_url"], "parameters": params,
-        }
-        if not args.wait:
-            return ok_envelope(
-                kind="jenkins_trigger", result=result, warnings=warnings,
-                next_actions=[
-                    f"Build queued (queue_id={trig['queue_id']}). Check with "
-                    f"`qactl jenkins info {args.branch}` or add --wait."
-                ],
-            )
-        if trig["queue_id"] is None:
-            return error_envelope("Triggered but Jenkins returned no queue id to wait on.",
-                                  kind="jenkins_trigger", result=result)
-        q = c.wait_for_build_number(trig["queue_id"], timeout_s=args.wait_timeout, poll_s=args.poll)
-        if q.get("status") != "started":
-            return error_envelope(
-                f"Build did not start (queue status={q.get('status')}).",
-                kind="jenkins_trigger", status="error" if q.get("status") == "timeout" else "aborted",
-                result={**result, "queue": q},
-            )
-        bnum = q["build_number"]
-        b = c.wait_for_build_result(job_path, bnum, timeout_s=args.wait_timeout, poll_s=args.poll)
-        result.update({"build_number": bnum, "build_url": q.get("build_url"), "build": b})
-        if b.get("status") == "timeout":
-            return error_envelope(f"Build #{bnum} still running after {args.wait_timeout}s.",
-                                  kind="jenkins_trigger", status="error", result=result)
-        if b.get("result") == "SUCCESS":
-            return ok_envelope(kind="jenkins_trigger", result=result, warnings=warnings)
-        return error_envelope(f"Build #{bnum} finished with result={b.get('result')}.",
-                              kind="jenkins_trigger", result=result,
-                              next_actions=[f"qactl jenkins console {args.branch} {bnum} --tail 300"])
+        return _do_trigger(
+            args, c, kind="jenkins_trigger", job_path=job_path, params=params,
+            result_base={"branch": args.branch, "repo": args.repo, "org": args.org},
+            warnings=[warning] if warning else [],
+            console_ref=f"qactl jenkins console {args.branch} {{bnum}} --tail 300",
+        )
     return _run(args, kind="jenkins_trigger", fn=fn)
 
 
-def _stop(args):
-    rc = confirm_or_exit(args, kind="jenkins_stop",
-                         action=f"Stop {args.repo} build #{args.build_number} on {args.branch!r}.")
+def _trigger_raw(args):
+    rc = confirm_or_exit(args, kind="jenkins_trigger_raw",
+                         action=f"Trigger raw Jenkins job {args.job_path!r}.")
     if rc is not None:
         return rc
-    job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-    return _run(args, kind="jenkins_stop",
-                fn=lambda c: ok_envelope(kind="jenkins_stop",
-                                         result=c.stop_build(job_path, args.build_number)))
+    try:
+        params = _parse_params(args.param, args.extra_params)
+    except (ValueError, json.JSONDecodeError) as e:
+        return emit(error_envelope(f"bad parameters: {e}", kind="jenkins_trigger_raw",
+                                   status="bad_argument"), as_json=args.json)
+
+    def fn(c):
+        return _do_trigger(
+            args, c, kind="jenkins_trigger_raw", job_path=args.job_path, params=params,
+            result_base={"job_path": args.job_path}, warnings=[],
+            console_ref="inspect the build URL above for failure details (build #{bnum})",
+        )
+    return _run(args, kind="jenkins_trigger_raw", fn=fn)
+
+
+def _parse_params(pairs, extra_params_json):
+    """Merge repeated ``--param K=V`` with an ``--extra-params`` JSON dict."""
+    out: dict[str, Any] = {}
+    for item in pairs or []:
+        if "=" not in item:
+            raise ValueError(f"--param {item!r} must be of the form KEY=VALUE")
+        k, _, v = item.partition("=")
+        out[k.strip()] = v
+    if extra_params_json:
+        extra = json.loads(extra_params_json)
+        if not isinstance(extra, dict):
+            raise ValueError("--extra-params must be a JSON object")
+        out.update(extra)
+    return out
+
+
+def _stop(args):
+    if args.queue_id is None and args.build_number is None:
+        return emit(error_envelope(
+            "provide --build-number (abort a running build) or --queue-id "
+            "(cancel a build still in the queue).",
+            kind="jenkins_stop", status="bad_argument"), as_json=args.json)
+    if args.queue_id is not None:
+        action = f"Cancel queued Jenkins item {args.queue_id}."
+    else:
+        action = f"Stop {args.repo} build #{args.build_number} on {args.branch!r}."
+    rc = confirm_or_exit(args, kind="jenkins_stop", action=action)
+    if rc is not None:
+        return rc
+
+    def fn(c):
+        if args.queue_id is not None:
+            return ok_envelope(kind="jenkins_stop", result=c.cancel_queue_item(args.queue_id))
+        job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
+        return ok_envelope(kind="jenkins_stop", result=c.stop_build(job_path, args.build_number))
+    return _run(args, kind="jenkins_stop", fn=fn)
 
 
 # ---- registration --------------------------------------------------------
@@ -234,6 +294,21 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     t.add_argument("--poll", type=float, default=30.0, help="poll interval seconds (with --wait)")
     t.set_defaults(func=_trigger)
 
+    tr = sub.add_parser("trigger-raw", parents=[parent],
+                        help="trigger ANY parameterized job by path with raw params (--yes)")
+    g = tr.add_argument_group("jenkins credentials (default: environment)")
+    g.add_argument("--user", default=None, help="override $JENKINS_USER")
+    g.add_argument("--token", default=None, help="override $JENKINS_API_TOKEN")
+    g.add_argument("--url", default=None, help="override $JENKINS_URL")
+    tr.add_argument("job_path", help="slash path (org/repo/branch) or a full Jenkins job URL")
+    tr.add_argument("--param", action="append", metavar="KEY=VALUE",
+                    help="raw Jenkins parameter (repeatable)")
+    tr.add_argument("--extra-params", default=None, help="JSON dict of raw Jenkins params")
+    tr.add_argument("--wait", action="store_true", help="block until the build finishes")
+    tr.add_argument("--wait-timeout", type=float, default=4 * 3600)
+    tr.add_argument("--poll", type=float, default=30.0)
+    tr.set_defaults(func=_trigger_raw)
+
     i = sub.add_parser("info", parents=[parent], help="details on a build (params, result, causes)")
     _add_common(i)
     i.add_argument("branch"); i.add_argument("build_number", nargs="?", default="lastBuild")
@@ -250,7 +325,11 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     l.add_argument("branch"); l.add_argument("--limit", type=int, default=10)
     l.set_defaults(func=_list)
 
-    s = sub.add_parser("stop", parents=[parent], help="abort a build (--yes)")
+    s = sub.add_parser("stop", parents=[parent],
+                       help="abort a running build (--build-number) or cancel a queued one (--queue-id) (--yes)")
     _add_common(s)
-    s.add_argument("branch"); s.add_argument("--build-number", type=int, required=True)
+    s.add_argument("branch", nargs="?", help="branch (with --build-number)")
+    s.add_argument("--build-number", type=int, default=None)
+    s.add_argument("--queue-id", type=int, default=None,
+                   help="cancel a build still waiting in the queue")
     s.set_defaults(func=_stop)

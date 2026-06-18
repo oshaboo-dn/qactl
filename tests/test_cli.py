@@ -55,9 +55,18 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(args.wait)
         self.assertFalse(args.sanitizer)
 
-    def test_jenkins_stop_requires_build_number(self):
-        with self.assertRaises(SystemExit):
-            self.parser.parse_args(["jenkins", "stop", "feature/foo"])
+    def test_jenkins_stop_branch_optional(self):
+        args = self.parser.parse_args(["jenkins", "stop", "--queue-id", "42"])
+        self.assertIsNone(args.branch)
+        self.assertEqual(args.queue_id, 42)
+
+    def test_jenkins_trigger_raw(self):
+        args = self.parser.parse_args([
+            "jenkins", "trigger-raw", "drivenets/myrepo/main",
+            "--param", "FOO=1", "--param", "BAR=two",
+        ])
+        self.assertEqual(args.job_path, "drivenets/myrepo/main")
+        self.assertEqual(args.param, ["FOO=1", "BAR=two"])
 
 
 class ExitCodeTests(unittest.TestCase):
@@ -170,6 +179,20 @@ class CheetahParamTests(unittest.TestCase):
         self.assertEqual(params["SHOULD_BUILD_BASEOS_CONTAINERS"], "Yes")
         self.assertEqual(params["SHOULD_RUN_SMOKE_TESTS"], "No")
         self.assertEqual(params["SHOULD_LINT"], "Yes")
+
+
+class RawParamTests(unittest.TestCase):
+    def test_parse_params_pairs_and_json(self):
+        from qactl.jenkins.cli import _parse_params
+        self.assertEqual(
+            _parse_params(["A=1", "B=x"], '{"C": "y"}'),
+            {"A": "1", "B": "x", "C": "y"},
+        )
+
+    def test_parse_params_bad_pair(self):
+        from qactl.jenkins.cli import _parse_params
+        with self.assertRaises(ValueError):
+            _parse_params(["noequals"], None)
 
 
 if __name__ == "__main__":
