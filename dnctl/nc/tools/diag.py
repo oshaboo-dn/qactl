@@ -1,4 +1,4 @@
-"""Diagnostic MCP tools (``netconf_ping``, ``netconf_capabilities``).
+"""Diagnostic tools (``netconf_ping``, ``netconf_capabilities``).
 
 Both tools open a NETCONF session and immediately close it; ``ping``
 just measures round-trip latency, ``capabilities`` returns the hello

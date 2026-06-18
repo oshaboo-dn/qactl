@@ -62,7 +62,7 @@ def netconf_backup(
     under ``<drivenets-top>`` (one file per direct child), packs them into
     a single ``.tar.gz`` and uploads it to
     ``/ftpdisk/dn/oshaboo/netconf/backups/[<bucket>/]<device>__<UTC-YYYYMMDD-HHMMSS>[__<description>].tar.gz``
-    on ``dnftp``. The MCP host keeps no local copy.
+    on ``dnftp``. No local copy is kept on the host.
 
     Buckets are an optional one-level grouping under the backup root,
     chosen by the agent at backup time (e.g. ``bug-1234-repro``,

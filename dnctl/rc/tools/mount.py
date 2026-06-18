@@ -28,6 +28,7 @@ from dnctl.rc.core.odl_mount import (
     wait_until_connected,
 )
 from dnctl.rc.core.registry import (
+    canonical_device,
     get_device,
     get_endpoint,
     load_endpoints,
@@ -141,7 +142,7 @@ def restconf_mount_add(
         doc = load_endpoints()
         ep_doc = doc["endpoints"].setdefault(endpoint, ep)
         ep_doc.setdefault("mounts", {})[name] = {
-            "device": device,
+            "device": canonical_device(device),
             "host": host,
             "port": netconf_port,
             "device_user": device_user,
@@ -168,8 +169,9 @@ def restconf_mount_status(
 
     name = mount_name
     if not name and device:
+        target = canonical_device(device)
         for mn, mcfg in (ep.get("mounts") or {}).items():
-            if mcfg.get("device") == device:
+            if canonical_device(mcfg.get("device")) == target:
                 name = mn
                 break
     if not name:

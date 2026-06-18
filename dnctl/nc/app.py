@@ -1,11 +1,10 @@
-"""`dnctl nc ...` — NETCONF subcommand group (from user-netconf-mcp).
+"""`dnctl nc ...` — NETCONF subcommand group.
 
-Thin Typer front-end over the lifted NETCONF tools in
-:mod:`dnctl.nc.tools`. The agent supplies the full XML payload (inline,
-via ``--file``, or as ``-`` for stdin); the lifted core handles the
-session, candidate commit / discard-on-failure, and logging. Defaults
-match the MCP tools (``op=merge``, ``source=running``, ``port=830``,
-``no_verify=True``, ``timeout=120``).
+Thin Typer front-end over the NETCONF tools in :mod:`dnctl.nc.tools`.
+The caller supplies the full XML payload (inline, via ``--file``, or as
+``-`` for stdin); the core handles the session, candidate commit /
+discard-on-failure, and logging. Defaults are ``op=merge``,
+``source=running``, ``port=830``, ``no_verify=True``, ``timeout=120``.
 """
 
 from __future__ import annotations
@@ -45,6 +44,7 @@ def get(
     file: File = None,
     oper: Annotated[bool, typer.Option("--oper", help="Use <get> (operational) instead of <get-config>.")] = False,
     source: Annotated[str, typer.Option("--source", help="Datastore for <get-config> (default: running).")] = "running",
+    out_file: Annotated[Optional[str], typer.Option("--out-file", help="Also write the full result XML to this path.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -52,7 +52,7 @@ def get(
     """Read config/operational data with a subtree-filter XML."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     body = O.read_body(xml, file, c)
-    O.finish(O.call(netconf_get, c, xml=body, oper=oper, source=source), c)
+    O.finish(O.call(netconf_get, c, xml=body, oper=oper, source=source, out_file=out_file), c)
 
 
 @app.command()
@@ -170,7 +170,7 @@ def read_backup(
 def restore(
     filename: Annotated[str, typer.Argument(help="Backup filename to restore.")],
     bucket: Annotated[Optional[str], typer.Option("--bucket", help="Backup bucket.")] = None,
-    mode: Annotated[str, typer.Option("--mode", help="merge | override (default: merge).")] = "merge",
+    mode: Annotated[str, typer.Option("--mode", help="merge | override | none (default: merge). 'override' maps to NETCONF replace.")] = "merge",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -179,9 +179,12 @@ def restore(
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     if not c.device:
         O.finish({"status": "error", "errors": ["--device is required for nc restore"]}, c)
+    # Speak the cli group's vocabulary ("override") but hand the NETCONF
+    # tool the default-operation term it expects ("replace").
+    nc_mode = "replace" if mode == "override" else mode
     if not confirm.ensure(f"netconf restore {filename} ({mode}) onto {c.device}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(netconf_restore, c, filename=filename, bucket=bucket, mode=mode, confirm=True), c)
+    O.finish(O.call(netconf_restore, c, filename=filename, bucket=bucket, mode=nc_mode, confirm=True), c)
 
 
 @app.command()

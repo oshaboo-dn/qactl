@@ -72,10 +72,10 @@ def restconf_resolve(device: str) -> Dict[str, Any]:
         env["status"] = "error"
         env["errors"].append(
             f"no RESTCONF mount registered for '{device}'. "
-            f"Run restconf_mount_add(device='{device}', endpoint=...) first."
+            f"Create one with 'qactl rc mount add' first."
         )
         env["next_actions"].append(
-            f"restconf_mount_add(device='{device}', endpoint='odl-lab1')"
+            f"qactl rc mount add {device} --endpoint odl-lab1 --yes"
         )
         return env
     env["result"] = {

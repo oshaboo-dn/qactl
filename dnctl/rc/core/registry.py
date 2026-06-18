@@ -71,14 +71,31 @@ def get_device(device_alias: str) -> Optional[Dict[str, Any]]:
     return _devices.get_device_entry(device_alias)
 
 
+def canonical_device(device_alias: Optional[str]) -> Optional[str]:
+    """Best-effort canonical name for a device alias.
+
+    Mirrors the canonicalisation the CLI front-end applies to ``-d`` so a
+    mount registered under the canonical name (or a secondary alias)
+    resolves regardless of which name the caller passes. Unknown names
+    pass through untouched.
+    """
+    if not device_alias:
+        return device_alias
+    return _devices.resolve_canonical(device_alias) or device_alias
+
+
 def find_mount(device_alias: str) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     """Locate which RESTCONF endpoint has a mount for ``device_alias``.
 
-    Returns ``(endpoint_alias, mount_name, mount_cfg)`` or all ``None``.
+    Both the requested alias and each mount's stored ``device`` are
+    canonicalised before comparison, so an alias and the canonical name
+    match the same mount. Returns ``(endpoint_alias, mount_name,
+    mount_cfg)`` or all ``None``.
     """
+    target = canonical_device(device_alias)
     endpoints = load_endpoints().get("endpoints", {})
     for ep_alias, ep_cfg in endpoints.items():
         for mount_name, mcfg in (ep_cfg.get("mounts") or {}).items():
-            if mcfg.get("device") == device_alias:
+            if canonical_device(mcfg.get("device")) == target:
                 return ep_alias, mount_name, mcfg
     return None, None, None

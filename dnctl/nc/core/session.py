@@ -158,13 +158,13 @@ def _update_device_map_entry(map_file: str, device: str, **fields: object) -> No
 class StaleMgmt0Error(RuntimeError):
     """Raised when the cached mgmt0 / SN no longer fits the live chassis.
 
-    netconf-mcp does not SSH the device itself — cli-mcp owns every CLI
-    interaction. When the cached mgmt0 stops responding (TCP / NETCONF
-    timeout) or the chassis at that IP reports a SN that no longer
-    matches ``expected_sns``, callers must invoke
-    ``cli-mcp.manage_device(operation="refresh", name="<alias>")`` so
-    the registry can be re-probed via the CLI transport pool, then
-    retry the original NETCONF call.
+    The ``nc`` group does not SSH the device itself — the ``cli`` group
+    owns every CLI interaction. When the cached mgmt0 stops responding
+    (TCP / NETCONF timeout) or the chassis at that IP reports a SN that
+    no longer matches ``expected_sns``, callers must run
+    ``dnctl cli device refresh <alias>`` so the registry can be
+    re-probed via the CLI transport pool, then retry the original
+    NETCONF call.
 
     The message is shaped to be useful as the error envelope's
     ``errors[0]`` and a hint emitted in ``next_actions``.
@@ -174,10 +174,9 @@ class StaleMgmt0Error(RuntimeError):
 def _stale_mgmt0_message(device: str, host: str, detail: str) -> str:
     return (
         f"NETCONF connect to device='{device}' at cached mgmt0={host!r} "
-        f"failed: {detail}. netconf-mcp does not re-probe devices; "
-        f"call cli-mcp's manage_device(operation='refresh', "
-        f"name='{device}') to re-discover mgmt0 / system_id / "
-        f"expected_role from the chassis, then retry."
+        f"failed: {detail}. The nc group does not re-probe devices; "
+        f"run `dnctl cli device refresh {device}` to re-discover mgmt0 / "
+        f"system_id / expected_role from the chassis, then retry."
     )
 
 
@@ -268,9 +267,9 @@ def connect(
       2. Connect to cached mgmt0 IP from the map.
       3. Verify serial number matches expected_sns from the map.
       4. On TCP / NETCONF failure or SN mismatch: raise
-         :class:`StaleMgmt0Error` pointing the caller at cli-mcp's
-         ``manage_device(operation='refresh', name=<alias>)`` — netconf-mcp
-         never SSHes the chassis to refresh itself; cli-mcp owns the wire.
+         :class:`StaleMgmt0Error` pointing the caller at
+         ``dnctl cli device refresh <alias>`` — the nc group never SSHes
+         the chassis to refresh itself; the cli group owns the wire.
 
     When host= is used directly: no SN verification (caller knows the target).
     """
@@ -294,7 +293,7 @@ def connect(
     if expected_role is None:
         raise RuntimeError(
             f"Device '{device}' has no 'expected_role' in {map_file}. "
-            f"Set it to one of {_VALID_ROLES} via cli-mcp's manage_device(add) "
+            f"Set it to one of {_VALID_ROLES} via `dnctl cli device add` "
             f"before opening a session."
         )
 
@@ -332,8 +331,8 @@ def connect(
     if not resolved_host:
         raise StaleMgmt0Error(
             f"device='{device}' has no cached mgmt0 in the canonical map. "
-            f"Call cli-mcp's manage_device(operation='add', sn=<ssh-host>) "
-            f"to register it (cli-mcp will SSH-probe the chassis and "
+            f"Run `dnctl cli device add {device} --sn <ssh-host>` to "
+            f"register it (the cli group will SSH-probe the chassis and "
             f"populate mgmt0 / system_id / expected_role / expected_sns), "
             f"then retry."
         )

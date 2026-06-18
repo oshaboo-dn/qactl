@@ -1,23 +1,22 @@
-"""YANG-related MCP tools.
+"""YANG-related tools.
 
-Two tools are exposed to agents:
+Two tools are exposed:
 
 - ``netconf_yang_library`` — list modules advertised by the device's
   ``ietf-yang-library`` (RFC 8525 / 7895).
 - ``netconf_get_schema`` — fetch one ``.yang`` source via ``<get-schema>``
-  (RFC 6022). Large schemas spill to a file under ``netconf-logs/`` and
-  the inline response is truncated.
+  (RFC 6022). The full source is returned inline; pass ``--out-file`` to
+  also write it to a path.
 
-Together these are the agent's primary on-demand path to schema
-knowledge: discover module names with ``netconf_yang_library``, pull
-the source for the ones you need with ``netconf_get_schema``, then
-hand-author XML for ``netconf_get`` / ``netconf_edit`` against the
-shapes you read. No cache, no separate filesystem MCP, no preflight
+Together these are the primary on-demand path to schema knowledge:
+discover module names with ``nc yang-library``, pull the source for the
+ones you need with ``nc schema``, then hand-author XML for ``nc get`` /
+``nc edit`` against the shapes you read. No cache, no preflight
 validation — the device is the final authority on payload correctness.
 
 ``netconf_refresh_yang`` (bulk pre-fetch into ``yangs/<build>/<sub_build>/``)
 is intentionally **not registered**. The code is preserved for a future
-``fs-netconf-yangs`` filesystem MCP — see ``TODO-fs-netconf-yangs.md``.
+``fs-netconf-yangs`` cache — see ``TODO-fs-netconf-yangs.md``.
 """
 
 from __future__ import annotations
@@ -38,11 +37,6 @@ from dnctl.nc.core.session import (
 
 from dnctl.nc.yang._yang_io import YANGS_DIR as _YANGS_DIR
 from dnctl.nc.yang.send import resolve_build_and_bootstrap as _yang_resolve_build
-
-
-# Above this many characters, ``netconf_get_schema`` spills the YANG text
-# to a file and only returns a head prefix + the spill path.
-_SHOW_INLINE_MAX_CHARS = 64 * 1024
 
 
 def netconf_yang_library(
@@ -131,16 +125,12 @@ def netconf_get_schema(
             ``ietf-netconf``).
         version: Optional ``YYYY-MM-DD`` revision; omit to take the
             server default (almost always what you want).
-        out_file: Optional path to write the full ``.yang`` text to. If
-            omitted and the source exceeds the 64 KiB inline cap, the
-            tool auto-spills to
-            ``netconf-logs/.../schema-<sid>-<identifier>.yang`` and
-            sets ``out_file`` in the response.
+        out_file: Optional path to also write the full ``.yang`` text to.
 
     Response keys to inspect:
-        ``source`` (text, truncated to first 64 KiB if large),
-        ``source_truncated`` (bool — when True read ``out_file`` for the
-        full text), ``source_total_chars``, ``out_file`` (spill path or
+        ``source`` (full text), ``source_truncated`` (always False —
+        retained for envelope stability), ``source_total_chars``,
+        ``out_file`` (path written when ``out_file`` was given, else
         None), ``warnings``.
 
     Example::
@@ -186,31 +176,6 @@ def netconf_get_schema(
                 output_path.write_text(source, encoding="utf-8")
                 spill_path = str(output_path)
 
-            display = source
-            truncated = False
-            if len(source) > _SHOW_INLINE_MAX_CHARS:
-                if spill_path is None:
-                    spill_file = Path(log_path).parent / f"schema-{sid}-{identifier}.yang"
-                    if not spill_file.is_absolute():
-                        spill_file = ROOT_DIR / spill_file
-                    try:
-                        spill_file.parent.mkdir(parents=True, exist_ok=True)
-                        spill_file.write_text(source, encoding="utf-8")
-                        spill_path = str(spill_file)
-                    except OSError as spill_err:
-                        warnings.append(
-                            f"could not spill large schema to file "
-                            f"({spill_err}); returning full source inline."
-                        )
-                display = source[:_SHOW_INLINE_MAX_CHARS]
-                truncated = True
-                if spill_path:
-                    warnings.append(
-                        f"schema was {len(source)} chars; inline response "
-                        f"truncated at {_SHOW_INLINE_MAX_CHARS}. Full YANG "
-                        f"written to {spill_path}."
-                    )
-
             _log_event(log_path, sid, "end", status="ok")
             return _base_result(
                 "get-schema", cr, sid,
@@ -220,8 +185,8 @@ def netconf_get_schema(
                     "version": version,
                     "out_file": spill_path,
                     "warnings": warnings,
-                    "source": display,
-                    "source_truncated": truncated,
+                    "source": source,
+                    "source_truncated": False,
                     "source_total_chars": len(source),
                 },
             )

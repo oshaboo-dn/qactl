@@ -1,12 +1,12 @@
-"""Device-registry MCP tools — ``netconf_list_devices`` (read-only).
+"""Device-registry tool — ``netconf_list_devices`` (read-only).
 
-Adding / removing / renaming devices is owned by **cli-mcp** —
-specifically its ``manage_device`` tool, which SSHes the chassis once
-to capture System Name / role / mgmt0 and writes the canonical
-``<repo>/devices/devices_mgmt0.json`` map. netconf-mcp consumes that
-map read-only via ``dnctl.core.devices``; this module exposes a
-listing tool so agents can see what's available without bouncing
-over to cli-mcp.
+Adding / removing / renaming devices is owned by the ``cli`` group —
+specifically ``qactl cli device add/remove/...``, which SSHes the
+chassis once to capture System Name / role / mgmt0 and writes the
+canonical ``<repo>/devices/devices_mgmt0.json`` map. The ``nc`` group
+consumes that map read-only via ``dnctl.core.devices``; this module
+exposes a listing command so you can see what's available without
+switching to ``cli``.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ def netconf_list_devices() -> Dict[str, Any]:
     source-of-record metadata. SN hostnames live under ``expected_sns`` and
     are mirrored into the legacy ``sn_hostnames`` key for older clients.
 
-    To **register** a new device call cli-mcp's ``manage_device`` —
-    netconf-mcp does not have its own ``add_device`` tool by design,
-    so the lab registry has a single owner.
+    To **register** a new device run ``qactl cli device add`` — the
+    ``nc`` group has no ``add`` command by design, so the lab registry
+    has a single owner.
     """
     sid = _session_id()
     try:

@@ -1,9 +1,9 @@
-"""``netconf_extract_logs`` MCP tool.
+"""``netconf_extract_logs`` tool.
 
 Surfaces structured per-device session events from
 ``netconf-logs/<date>-<device>.log`` (the human-readable transcript
 written by :mod:`dnctl.nc.core.device_log`). Companion to the JSONL request
-log under ``mcp-logs/`` which the agent reads directly.
+log under ``mcp-logs/`` which can be read directly.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ def netconf_extract_logs(
     device: str,
     date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Pull MCP server logs for a device and date from netconf/logs/.
+    """Pull NETCONF session logs for a device and date from netconf-logs/.
 
     Date format: YYYY-MM-DD (defaults to today in Israel timezone).
     Returns log contents, or a list of available dates if the requested file is missing.

@@ -1,1 +1,1 @@
-"""`dnctl nc ...` — NETCONF subcommand group (from user-netconf-mcp)."""
+"""`dnctl nc ...` — NETCONF subcommand group."""

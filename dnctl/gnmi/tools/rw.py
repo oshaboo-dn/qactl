@@ -55,14 +55,14 @@ def _classify_grpc_error(msg: str) -> Optional[str]:
     if "rate limit exceeded" in m:
         return (
             "DNOS gNMI rate limiter tripped. Wait a few seconds and "
-            "retry; the MCP already paces 3 s per device by default."
+            "retry; this tool already paces 3 s per device by default."
         )
     if "data_type" in m and "not supported" in m:
         return "Use datatype='all' — the only datatype this server accepts."
     if "received message larger than max" in m:
         return (
             "Response exceeded the grpc receive cap. Narrow the path; "
-            "the MCP already raised the cap to 32 MiB."
+            "this tool already raised the cap to 32 MiB."
         )
     return None
 
@@ -497,9 +497,6 @@ def gnmi_enumerate_keys(
     return env
 
 
-_VALID_SET_OPS: Tuple[str, ...] = ("update", "replace", "delete")
-
-
 def _validate_set_lists(
     update: Optional[List[Any]],
     replace: Optional[List[Any]],
@@ -572,8 +569,8 @@ def gnmi_set(
 
     Safety: ``confirm=False`` (default) returns a dry-run envelope with
     the SetRequest that would be sent — **no device traffic**. Pass
-    ``confirm=True`` to execute. The MCP cannot dry-run on the device
-    itself because gNMI Set has no simulation primitive.
+    ``confirm=True`` to execute. There is no on-device dry-run because
+    gNMI Set has no simulation primitive.
     """
     if encoding not in _VALID_ENCODINGS:
         return error_envelope(

@@ -1,8 +1,9 @@
-"""Read / write MCP tools (``netconf_get``, ``netconf_edit``).
+"""Read / write tools (``netconf_get``, ``netconf_edit``).
 
-The agent supplies the full XML payload; this module forwards it to the
-NETCONF server and handles spill-to-file for large reads. The actual
-edit-config + commit + discard-on-failure flow lives in
+The caller supplies the full XML payload; this module forwards it to the
+NETCONF server and returns the full reply. ``--out-file`` additionally
+writes the result to a path. The actual edit-config + commit +
+discard-on-failure flow lives in
 :func:`dnctl.nc.core.change_ops.edit_from_xml`.
 """
 
@@ -30,12 +31,6 @@ from dnctl.nc.core.session import (
 from dnctl.nc.core.xml_payload import pretty_xml, write_output
 
 
-# Above this many characters, ``netconf_get`` spills the pretty XML to a
-# file and returns only a head prefix + the spill path. Keeps large
-# get-config replies from flooding the chat / MCP transport.
-_SHOW_INLINE_MAX_CHARS = 64 * 1024
-
-
 def netconf_get(
     xml: str,
     host: Optional[str] = None,
@@ -55,9 +50,8 @@ def netconf_get(
     The agent supplies the full subtree filter XML (including the
     ``<drivenets-top xmlns="...">...</drivenets-top>`` wrapper). The server
     forwards it unchanged to ``<get-config>`` (default) or ``<get>``
-    (``oper=True``). The MCP does not validate or rewrite the filter --
-    the device is the final authority. Call
-    ``netconf_read_yang(name=..., device=...)`` if you need the raw
+    (``oper=True``). The filter is not validated or rewritten -- the
+    device is the final authority. Use ``nc schema`` if you need the raw
     ``.yang`` source while composing the filter.
 
     Example::
@@ -128,43 +122,16 @@ def netconf_get(
             _log_event(log_path, sid, "end", status="ok")
 
             pretty = pretty_xml(result_xml)
-            spill_path: Optional[str] = None
-            truncated = False
-            display = pretty
-            if len(pretty) > _SHOW_INLINE_MAX_CHARS:
-                spill_file = (
-                    Path(out_file) if out_file
-                    else Path(log_path).parent / f"show-{sid}.xml"
-                )
-                if not spill_file.is_absolute():
-                    spill_file = ROOT_DIR / spill_file
-                try:
-                    spill_file.parent.mkdir(parents=True, exist_ok=True)
-                    spill_file.write_text(pretty, encoding="utf-8")
-                    spill_path = str(spill_file)
-                    display = pretty[:_SHOW_INLINE_MAX_CHARS]
-                    truncated = True
-                    warnings.append(
-                        f"result was {len(pretty)} chars; inline response "
-                        f"truncated at {_SHOW_INLINE_MAX_CHARS}. Full XML "
-                        f"written to {spill_path}."
-                    )
-                except OSError as spill_err:
-                    warnings.append(
-                        f"could not spill large result to file "
-                        f"({spill_err}); returning full payload inline."
-                    )
-
             payload = {
                 "status": "ok",
                 "kind": kind,
                 "source": source,
                 "rpc_file": used_file,
-                "out_file": out_file or spill_path,
+                "out_file": out_file,
                 "filter_xml": xml,
                 "warnings": warnings,
-                "result_xml": display,
-                "result_truncated": truncated,
+                "result_xml": pretty,
+                "result_truncated": False,
                 "result_total_chars": len(pretty),
             }
             return _base_result("show", cr, sid, payload)
@@ -200,10 +167,9 @@ def netconf_edit(
     ``nc:operation="delete"`` / ``"remove"`` / ``"replace"``. The
     per-element annotation wins over the top-level ``op``.
 
-    The MCP does not validate or rewrite the payload -- the device is
-    the final authority. If you need the raw ``.yang`` source while
-    composing, call
-    ``netconf_read_yang(name=..., device=...)``.
+    The payload is not validated or rewritten -- the device is the final
+    authority. If you need the raw ``.yang`` source while composing, use
+    ``nc schema``.
     """
     sid = _session_id()
 

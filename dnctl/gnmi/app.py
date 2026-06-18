@@ -9,7 +9,7 @@ agent's existing mental model carries over unchanged.
 from __future__ import annotations
 
 import json as _json
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional, Tuple
 
 import typer
 
@@ -29,6 +29,36 @@ app = typer.Typer(no_args_is_help=True, help="gNMI get / set / enumerate against
 TlsMode = Annotated[str, typer.Option("--tls-mode", help="insecure | skip_verify | verify_ca | mtls.")]
 Encoding = Annotated[str, typer.Option("--encoding", help="json | proto.")]
 Datatype = Annotated[str, typer.Option("--datatype", help="all (the only datatype DNOS honours).")]
+
+
+def _parse_assign(spec: str) -> Tuple[str, Any]:
+    """Split an ``xpath=value`` op spec into ``(path, parsed_val)``.
+
+    The split happens at the first ``=`` that is **not** inside a list-key
+    predicate, so ``ncps/ncp[ncp-id=0]/admin-state=up`` yields path
+    ``ncps/ncp[ncp-id=0]/admin-state`` and value ``up``. The value is parsed
+    as JSON when possible, else kept as a string.
+    """
+    depth = 0
+    cut = -1
+    for i, ch in enumerate(spec):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth = max(0, depth - 1)
+        elif ch == "=" and depth == 0:
+            cut = i
+            break
+    if cut < 0:
+        raise ValueError(f"expected 'xpath=value', got {spec!r}")
+    path = spec[:cut].strip()
+    if not path:
+        raise ValueError(f"empty xpath in {spec!r}")
+    raw = spec[cut + 1:]
+    try:
+        return path, _json.loads(raw)
+    except ValueError:
+        return path, raw
 
 
 @app.command()
@@ -64,26 +94,61 @@ def get_many(
 
 @app.command()
 def set(
-    path: Annotated[str, typer.Argument(help="gNMI xpath to set.")],
-    val: Annotated[str, typer.Argument(help="Value (parsed as JSON if possible, else string).")],
-    replace: Annotated[bool, typer.Option("--replace", help="Use replace instead of update.")] = False,
+    path: Annotated[Optional[str], typer.Argument(help="Shorthand single-update xpath (pair with VAL).")] = None,
+    val: Annotated[Optional[str], typer.Argument(help="Value for the shorthand PATH (JSON if parseable, else string).")] = None,
+    update: Annotated[Optional[List[str]], typer.Option("--update", help="Merge op 'xpath=value' (repeatable).")] = None,
+    replace: Annotated[Optional[List[str]], typer.Option("--replace", help="Replace op 'xpath=value' (repeatable).")] = None,
+    delete: Annotated[Optional[List[str]], typer.Option("--delete", help="Delete xpath (repeatable).")] = None,
     tls_mode: TlsMode = "insecure",
     encoding: Encoding = "json",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
 ):
-    """Atomic gNMI Set (DESTRUCTIVE — needs --yes)."""
+    """Atomic gNMI Set — update / replace / delete in one RPC (DESTRUCTIVE — needs --yes).
+
+    The three op kinds are repeatable and freely mixed; the server applies
+    them in a single atomic Set. The positional PATH VAL is shorthand for a
+    single update. List paths need their key predicate
+    (``ncps/ncp[ncp-id=0]/...``). Examples::
+
+        gnmi set system/.../leaf true -y
+        gnmi set --update a/b=1 --replace c/d='{"x":1}' --delete e/f -y
+    """
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
-    if not confirm.ensure(f"gnmi set {path}", yes=c.yes, as_json=c.json):
-        raise typer.Exit(confirm.REFUSAL_EXIT)
+    deletes = list(delete or [])
     try:
-        parsed = _json.loads(val)
-    except ValueError:
-        parsed = val
-    entry = [{"path": path, "val": parsed}]
-    kw = {"replace": entry} if replace else {"update": entry}
-    O.finish(O.call(gnmi_set, c, confirm=True, tls_mode=tls_mode, encoding=encoding, **kw), c)
+        upd = [{"path": p, "val": v} for p, v in (_parse_assign(s) for s in (update or []))]
+        rep = [{"path": p, "val": v} for p, v in (_parse_assign(s) for s in (replace or []))]
+    except ValueError as exc:
+        O.finish({"status": "error", "errors": [str(exc)]}, c)
+        return
+
+    if path is not None:
+        if val is None:
+            O.finish({"status": "error", "errors": ["positional PATH needs a VAL; or use --update/--replace/--delete"]}, c)
+            return
+        try:
+            parsed = _json.loads(val)
+        except ValueError:
+            parsed = val
+        upd.append({"path": path, "val": parsed})
+
+    if not (upd or rep or deletes):
+        O.finish({"status": "error", "errors": ["nothing to set; provide PATH VAL or --update/--replace/--delete"]}, c)
+        return
+
+    op_count = len(upd) + len(rep) + len(deletes)
+    label = f"gnmi set ({op_count} op{'' if op_count == 1 else 's'}) on {c.device or c.host}"
+    if not confirm.ensure(label, yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(
+            gnmi_set, c, confirm=True, tls_mode=tls_mode, encoding=encoding,
+            update=upd or None, replace=rep or None, delete=deletes or None,
+        ),
+        c,
+    )
 
 
 @app.command("enumerate-keys")

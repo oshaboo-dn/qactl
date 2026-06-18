@@ -1,4 +1,4 @@
-"""Shared result-dict builders for MCP tool responses."""
+"""Shared result-dict builders for tool responses."""
 
 from __future__ import annotations
 

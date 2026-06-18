@@ -16,7 +16,7 @@
       },
       "mounts": {
         "OHADZS-CL": {
-          "device": "cl",
+          "device": "OHADZS-CL",
           "host": "100.64.11.161",
           "port": 830,
           "device_user": "dnroot",
@@ -25,7 +25,7 @@
           "keepalive_delay": 0
         },
         "OHADZS-SA": {
-          "device": "sa",
+          "device": "OHADZS-SA",
           "host": "100.64.11.4",
           "port": 830,
           "device_user": "dnroot",

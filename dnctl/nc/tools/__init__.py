@@ -1,11 +1,7 @@
-"""MCP tool surface for the NETCONF MCP server.
+"""Tool surface for the ``dnctl nc`` (NETCONF) group.
 
 Each module in this package exposes plain tool functions plus a
-``register(mcp)`` entry point that wires them onto a FastMCP instance.
-The entry-point file (``netconf_mcp_server.py``) imports the modules and
-calls their ``register`` functions in turn — there are no import-time
-side effects.
-
-Mirrors the layout of ``cli-mcp/dnctl.cli.tools/``; the two MCP servers are
-deployed independently and share no Python code.
+``register(mcp)`` entry point. ``register`` is retained so the modules
+stay liftable onto a FastMCP server; the ``dnctl nc`` Typer front-end
+(:mod:`dnctl.nc.app`) imports and calls the functions directly.
 """
