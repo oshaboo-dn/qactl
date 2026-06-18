@@ -74,7 +74,7 @@ def device_log_file(device_name: Optional[str] = None, host: Optional[str] = Non
 
 
 # ---------------------------------------------------------------------------
-# Session-level structured logging (used by MCP tool bodies)
+# Session-level structured logging (used by tool bodies)
 # ---------------------------------------------------------------------------
 
 

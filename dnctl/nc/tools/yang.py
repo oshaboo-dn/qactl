@@ -220,10 +220,10 @@ def netconf_refresh_yang(
 ) -> Dict[str, Any]:
     """Probe the device's DNOS build and bulk-cache its YANG modules.
 
-    NOT REGISTERED as an MCP tool — kept here so the bulk-fetch path
-    (``yang/bootstrap.py``, ``yang/send.py``) stays exercised and
-    ready. See ``TODO-fs-netconf-yangs.md`` for the plan to revive this
-    once a sibling ``fs-netconf-yangs`` filesystem MCP exists.
+    NOT REGISTERED / not exposed on the CLI — kept here so the
+    bulk-fetch path (``yang/bootstrap.py``, ``yang/send.py``) stays
+    exercised and ready. See ``TODO-fs-netconf-yangs.md`` for the plan
+    to revive this once a sibling ``fs-netconf-yangs`` cache exists.
 
     Behaviour, when called directly from Python:
 
