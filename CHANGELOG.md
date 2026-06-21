@@ -4,6 +4,28 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-21
+
+### Changed
+- MCP surface: expose device + NETCONF **backup/restore** over MCP
+  (`backup_device`, `restore_device`, `netconf_backup`, `netconf_restore`).
+  Backups are non-destructive; restores execute only with `confirm=true`
+  (`confirm=false` returns a dry-run). The CLI-only bar is now *interactive*
+  or *destructive without a confirm gate*; the only tools left CLI-only are
+  `setup`, `request_system_tar_load`, and `scale_deploy`.
+- Single device credential: removed the separate NETCONF account and the
+  auth-failure fallback. Every protocol surface (SSH / NETCONF / gNMI /
+  RESTCONF) now authenticates with the one `DNCTL_USER` / `DNCTL_PASSWORD`
+  pair (default `dnroot` / `dnroot`) plus an optional `DNCTL_SSH_KEY`.
+  `qactl setup` no longer prompts for NETCONF user/password, and the
+  `[netconf]` config table / `DNCTL_NETCONF_*` env vars are gone.
+
+### Removed
+- `dnctl.core.credentials.NETCONF_USER` / `NETCONF_PASSWORD` /
+  `PROTOCOL_FALLBACK` (and the `core.auth` re-exports); the gNMI
+  `FALLBACK_CREDENTIALS` constant; the NETCONF session credential-fallback
+  retry; `ConnectResult.fallback_used`.
+
 ## [0.4.0] - 2026-06-21
 
 ### Changed

@@ -8,14 +8,17 @@ applying:
 
   * the **surface map** -- which tools each group exposes over MCP. A tool
     is kept **CLI-only** only when it is *interactive* (e.g. the one-time
-    ``setup`` credential flow) or *writes a large config onto the device*
-    in a long, destructive way (device/NETCONF backup + restore, image
-    tar-load, scale-deploy). Fire-and-forget kickoffs (tech-support) and
-    cheap read-only / job-poll calls (backup listing/read-back, the
-    tech-support / tar-load job lookups, pre-check) ARE exposed: their
-    artifacts land on remote dnftp, never in the local agent context, so
-    the stdio model fits them fine. The CLI-only set lives in
-    :data:`CLI_ONLY` and is skipped here.
+    ``setup`` credential flow) or *destructive without a confirm gate*.
+    The only tools left in that bucket are the long image-staging /
+    deploy ops (``request_system_tar_load`` / ``scale_deploy``), which
+    mutate the box and don't yet take a ``confirm=true`` argument. Device
+    + NETCONF backup/restore ARE exposed -- backups are non-destructive
+    and the restores already gate execution behind ``confirm=true``
+    (``confirm=false`` returns a dry-run). Fire-and-forget kickoffs
+    (tech-support) and cheap read-only / job-poll calls also stay on MCP:
+    their artifacts land on remote dnftp, never in the local agent
+    context. The CLI-only set lives in :data:`CLI_ONLY` and is skipped
+    here.
   * an optional per-tool **wrap** (the JSONL request logger).
 
 Registration goes through :class:`_Selector`, a thin proxy around the real
@@ -56,18 +59,12 @@ _DNCTL_PKG: Dict[str, str] = {
 # by tool function name.
 CLI_ONLY: Dict[str, Set[str]] = {
     "cli": {
-        # writes the device's running config to dnftp (mutates /config/)
-        "backup_device",
-        # long-running + destructive: downloads + load/commit onto the box
-        "restore_device",
-        # long-running image staging (multi-GB loads, then install territory)
+        # long-running image staging (multi-GB loads, then install
+        # territory): destructive and NOT yet confirm-gated, so kept off
+        # MCP until it grows a confirm=true gate.
         "request_system_tar_load",
-        # scale config deploy (heavy, audit-trail artifacts on host)
+        # scale config deploy (heavy, destructive, not yet confirm-gated).
         "scale_deploy",
-    },
-    "nc": {
-        # writes/commits a full config onto the device
-        "netconf_backup", "netconf_restore",
     },
 }
 

@@ -52,31 +52,30 @@ class SurfaceMapTests(unittest.TestCase):
         ):
             self.assertIn(name, cli_tools, name)
 
-    def test_cli_only_keeps_heavy_destructive_tools(self):
-        # The long/destructive device-config writers stay CLI-only.
+    def test_cli_backup_and_restore_on_mcp(self):
+        # Backups are non-destructive; restore is gated behind confirm=true
+        # (confirm=false is a dry-run) — both are MCP-shaped.
         cli_tools = list_group_tools("cli")
-        for name in (
-            "backup_device", "restore_device",
-            "request_system_tar_load", "scale_deploy",
-        ):
+        self.assertIn("backup_device", cli_tools)
+        self.assertIn("restore_device", cli_tools)
+
+    def test_cli_only_keeps_ungated_destructive_tools(self):
+        # The long, destructive, not-yet-confirm-gated ops stay CLI-only.
+        cli_tools = list_group_tools("cli")
+        for name in ("request_system_tar_load", "scale_deploy"):
             self.assertNotIn(name, cli_tools, name)
 
-    def test_nc_backups_are_not_on_mcp(self):
+    def test_nc_all_backup_tools_on_mcp(self):
+        # Nothing in the nc group is CLI-only any more: list/read are pure
+        # SFTP reads, backup is non-destructive, restore is confirm-gated.
+        self.assertNotIn("nc", CLI_ONLY)
         nc_tools = list_group_tools("nc")
-        for name in CLI_ONLY["nc"]:
-            self.assertNotIn(name, nc_tools, name)
-        self.assertIn("netconf_get", nc_tools)
-
-    def test_nc_read_only_backups_are_on_mcp(self):
-        # Listing + reading backups off dnftp is a pure SFTP read — exposed.
-        nc_tools = list_group_tools("nc")
-        self.assertIn("netconf_list_backups", nc_tools)
-        self.assertIn("netconf_read_backup", nc_tools)
-
-    def test_nc_write_backups_stay_cli_only(self):
-        nc_tools = list_group_tools("nc")
-        self.assertNotIn("netconf_backup", nc_tools)
-        self.assertNotIn("netconf_restore", nc_tools)
+        for name in (
+            "netconf_backup", "netconf_restore",
+            "netconf_list_backups", "netconf_read_backup",
+            "netconf_get",
+        ):
+            self.assertIn(name, nc_tools, name)
 
     def test_unknown_group_raises(self):
         with self.assertRaises(ValueError):

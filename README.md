@@ -58,22 +58,22 @@ are no per-request HTTP headers. Destructive MCP tools require a
 ### What's on MCP vs CLI-only
 
 Agent-driven surfaces are exposed over MCP: all of `jira`, `confluence`,
-`jenkins`, `gnmi`, `rc`, `ixia`, plus the operational subset of `cli` and
-`nc`. This includes tech-support (`create_techsupport` is fire-and-forget —
-the `.tar` lands on remote `dnftp`, never locally) and the cheap read-only /
-job-poll tools. A tool stays **CLI-only** only when it is *interactive* or
-*writes a large config onto the device* in a long, destructive way:
+`jenkins`, `gnmi`, `rc`, `ixia`, plus nearly all of `cli` and `nc`. This
+includes tech-support (`create_techsupport` is fire-and-forget — the `.tar`
+lands on remote `dnftp`, never locally), the cheap read-only / job-poll
+tools, and device + NETCONF **backup/restore** (backups are
+non-destructive; restores execute only with `confirm=true`, otherwise they
+return a dry-run). A tool stays **CLI-only** only when it is *interactive*
+or *destructive without a confirm gate*:
 
 - `setup` (one-time device registry / credentials — interactive)
-- `cli`: `backup_device`, `restore_device`, `request_system_tar_load`,
-  `scale_deploy`
-- `nc`: `netconf_backup`, `netconf_restore`
+- `cli`: `request_system_tar_load`, `scale_deploy` (long image-staging /
+  deploy ops that mutate the box and don't yet take a `confirm` argument)
 
-Run those as `qactl cli ... --yes` / `qactl nc ...` / `qactl setup`. The
-backup *read* side (`list_backups` / `read_backup` /
-`netconf_list_backups` / `netconf_read_backup`), the tech-support /
-tar-load job lookups (`get_techsupport_job` / `get_tar_load_job`) and
-`request_system_pre_check` are all on MCP.
+Run those as `qactl cli ... --yes` / `qactl setup`. Everything else —
+including `backup_device` / `restore_device` / `netconf_backup` /
+`netconf_restore`, the backup read side, the tech-support / tar-load job
+lookups, and `request_system_pre_check` — is on MCP.
 
 > Migrating from the old HTTP MCP servers (ports 8200–8207 under systemd):
 > replace each `http://127.0.0.1:820N/mcp` URL entry with a stdio
