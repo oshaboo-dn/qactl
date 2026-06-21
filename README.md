@@ -240,3 +240,8 @@ function returns the one envelope dict, the CLI prints it via `emit()`,
 and the MCP front serializes it as the tool result. The vendored
 `dnctl/*/tools/*` and `ixia_tools/*` already are this layer (they kept
 their `register(mcp)` hooks), so the MCP front re-exposes them directly.
+
+## Changelog
+
+Notable changes per release are in [`CHANGELOG.md`](CHANGELOG.md). The
+current version is reported by `qactl --version`.
