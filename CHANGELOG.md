@@ -4,6 +4,23 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-21
+
+### Changed
+- MCP surface: expose tech-support and the read-only / job-poll tools that
+  were previously `CLI_ONLY`. Dropped from the carve-out (now reachable over
+  `qactl mcp cli` / `qactl mcp nc`): `create_techsupport`,
+  `get_techsupport_job`, `list_backups`, `read_backup`, `get_tar_load_job`,
+  `request_system_pre_check`, `netconf_list_backups`, `netconf_read_backup`.
+  The bar for staying CLI-only is now *interactive* or *writes a large
+  config onto the device* — "artifact lands on remote dnftp" is not a reason
+  to hide a tool, since that data never enters the local agent context (#4).
+
+### Notes
+- Still CLI-only: `setup` (interactive), and the long/destructive device-
+  config writers `backup_device`, `restore_device`, `request_system_tar_load`,
+  `scale_deploy`, `netconf_backup`, `netconf_restore`.
+
 ## [0.3.0] - 2026-06-21
 
 ### Added

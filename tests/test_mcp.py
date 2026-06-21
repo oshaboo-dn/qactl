@@ -41,11 +41,42 @@ class SurfaceMapTests(unittest.TestCase):
         self.assertIn("show", cli_tools)
         self.assertIn("edit_config", cli_tools)
 
+    def test_cli_techsupport_and_polls_are_on_mcp(self):
+        # Tech-support is fire-and-forget (lands on remote dnftp), and the
+        # read-only / job-poll tools are cheap + bounded — all MCP-shaped.
+        cli_tools = list_group_tools("cli")
+        for name in (
+            "create_techsupport", "get_techsupport_job",
+            "list_backups", "read_backup",
+            "request_system_pre_check", "get_tar_load_job",
+        ):
+            self.assertIn(name, cli_tools, name)
+
+    def test_cli_only_keeps_heavy_destructive_tools(self):
+        # The long/destructive device-config writers stay CLI-only.
+        cli_tools = list_group_tools("cli")
+        for name in (
+            "backup_device", "restore_device",
+            "request_system_tar_load", "scale_deploy",
+        ):
+            self.assertNotIn(name, cli_tools, name)
+
     def test_nc_backups_are_not_on_mcp(self):
         nc_tools = list_group_tools("nc")
         for name in CLI_ONLY["nc"]:
             self.assertNotIn(name, nc_tools, name)
         self.assertIn("netconf_get", nc_tools)
+
+    def test_nc_read_only_backups_are_on_mcp(self):
+        # Listing + reading backups off dnftp is a pure SFTP read — exposed.
+        nc_tools = list_group_tools("nc")
+        self.assertIn("netconf_list_backups", nc_tools)
+        self.assertIn("netconf_read_backup", nc_tools)
+
+    def test_nc_write_backups_stay_cli_only(self):
+        nc_tools = list_group_tools("nc")
+        self.assertNotIn("netconf_backup", nc_tools)
+        self.assertNotIn("netconf_restore", nc_tools)
 
     def test_unknown_group_raises(self):
         with self.assertRaises(ValueError):

@@ -59,18 +59,21 @@ are no per-request HTTP headers. Destructive MCP tools require a
 
 Agent-driven surfaces are exposed over MCP: all of `jira`, `confluence`,
 `jenkins`, `gnmi`, `rc`, `ixia`, plus the operational subset of `cli` and
-`nc`. A small set stays **CLI-only** because it moves large artifacts over
-remote `dnftp` SFTP and/or runs long — the process-per-invocation CLI fits
-it better and it gains nothing from the local stdio model:
+`nc`. This includes tech-support (`create_techsupport` is fire-and-forget —
+the `.tar` lands on remote `dnftp`, never locally) and the cheap read-only /
+job-poll tools. A tool stays **CLI-only** only when it is *interactive* or
+*writes a large config onto the device* in a long, destructive way:
 
-- `setup` (one-time device registry / credentials)
-- `cli`: `backup_device`, `list_backups`, `read_backup`, `restore_device`,
-  `create_techsupport`, `get_techsupport_job`, `request_system_tar_load`,
-  `request_system_pre_check`, `get_tar_load_job`, `scale_deploy`
-- `nc`: `netconf_backup`, `netconf_restore`, `netconf_list_backups`,
-  `netconf_read_backup`
+- `setup` (one-time device registry / credentials — interactive)
+- `cli`: `backup_device`, `restore_device`, `request_system_tar_load`,
+  `scale_deploy`
+- `nc`: `netconf_backup`, `netconf_restore`
 
-Run those as `qactl cli ... --yes` / `qactl nc ...` / `qactl setup`.
+Run those as `qactl cli ... --yes` / `qactl nc ...` / `qactl setup`. The
+backup *read* side (`list_backups` / `read_backup` /
+`netconf_list_backups` / `netconf_read_backup`), the tech-support /
+tar-load job lookups (`get_techsupport_job` / `get_tar_load_job`) and
+`request_system_pre_check` are all on MCP.
 
 > Migrating from the old HTTP MCP servers (ports 8200–8207 under systemd):
 > replace each `http://127.0.0.1:820N/mcp` URL entry with a stdio
