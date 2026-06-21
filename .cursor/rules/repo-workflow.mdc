@@ -32,6 +32,23 @@ alwaysApply: true
 - One issue → one branch → one PR. Label `bug` / `enhancement` /
   `needs-info`. Close via the merge (`Closes #N`), not manually.
 
+## Concurrency (worktrees)
+- Multiple agents may run against this repo at once. NEVER share one
+  checkout — a `git checkout`/`switch` in one agent yanks the working
+  tree out from under another mid-edit (lost/garbled work).
+- Each agent/task gets its own `git worktree`. Create one off `main`
+  before editing: `git worktree add ../qactl-<n> -b <branch> origin/main`
+  (or `git worktree add ../qactl-<n> <existing-branch>`). Work, commit,
+  push, and open the PR from there.
+- `main` stays checked out in the primary clone; don't `checkout` other
+  branches there. Rebase your worktree onto the latest `main`
+  (`git fetch origin && git rebase origin/main`) before the PR so a
+  parallel merge doesn't make your PR revert someone else's work.
+- Clean up when merged: `git worktree remove ../qactl-<n>` +
+  `git branch -D <branch>`. `gh pr merge --delete-branch`'s local step
+  fails while the branch is in a worktree — remove the worktree first,
+  or just delete the remote branch and prune.
+
 ## Branches / commits
 - Direct commits to `main` are allowed; `main` stays releasable.
   Per-issue branches (`fix/<n>-slug` / `feat/<n>-slug`) are still fine

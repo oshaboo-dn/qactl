@@ -23,7 +23,7 @@ never commit to `main`, close issues via the merge (`Closes #N`), squash-merge.
 - [ ] 1. Find the issue (gh issue list --state open)
 - [ ] 2. Understand it + reproduce mentally
 - [ ] 3. Investigate the codebase
-- [ ] 4. Branch off main (fix/<N>-slug or feat/<N>-slug)
+- [ ] 4. Worktree off main (fix/<N>-slug or feat/<N>-slug) — never share the checkout
 - [ ] 5. Implement the fix
 - [ ] 6. Add/extend tests in tests/
 - [ ] 7. Run tests + lint
@@ -42,11 +42,17 @@ produces the Observed behavior. The domains are `jira` / `confluence` /
 `jenkins`, each a `client.py` (REST) + `cli.py` (subcommands) under `qactl/`,
 on a shared `core/` (envelope, output, creds, common).
 
-### 4. Branch off main
+### 4. Worktree off main
+Other agents may share this repo, so never `git checkout` a branch in the
+primary clone — work in a dedicated worktree (see the repo rule's
+"Concurrency (worktrees)" clause):
 ```bash
-git checkout main && git pull --ff-only
-git checkout -b fix/<N>-slug
+git fetch origin
+git worktree add ../qactl-<N> -b fix/<N>-slug origin/main
+cd ../qactl-<N>
 ```
+Do all of steps 5-9 from that worktree. When the PR merges, clean up:
+`git worktree remove ../qactl-<N>` and `git branch -D fix/<N>-slug`.
 
 ### 5. Implement
 Keep the agent-shaped contract intact (see the repo rule): `--json` lossless,
@@ -81,8 +87,12 @@ EOF
 ```bash
 gh pr checks <PR> --watch
 gh pr merge <PR> --squash --delete-branch
+git worktree remove ../qactl-<N> && git branch -D fix/<N>-slug   # from the primary clone
 ```
 Only merge green. On red, push a NEW commit (never amend a pushed commit).
+Note: `--delete-branch`'s local cleanup fails while the branch is checked
+out in a worktree (`fatal: '<branch>' is already checked out`) — the remote
+merge still succeeds; just remove the worktree + local branch afterwards.
 
 ## Stop and ask instead of guessing
 - More than one plausible target issue and the user didn't name one.
