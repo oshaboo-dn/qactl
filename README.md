@@ -173,6 +173,7 @@ is the default. The repo ships no `.env` and no baked-in tokens.
 | `trigger-raw <job_path> [--param K=V]... [--extra-params JSON] [--wait]` | trigger any parameterized job by path with raw params (non-cheetah) | `--yes` |
 | `info <branch> [build]` | build details (params, result, causes) | |
 | `console <branch> [build] [--tail N]` | tail the console log | |
+| `artifacts <branch> [build] [--all]` | a build's published download links (baseos / GI / dnos / cdnos tarballs + registry image refs) | |
 | `list <branch> [--limit N]` | recent builds | |
 | `stop <branch> --build-number N` / `stop --queue-id N` | abort a running build, or cancel a queued one | `--yes` |
 

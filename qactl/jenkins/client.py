@@ -127,6 +127,31 @@ class JenkinsClient:
     def get_build_parameters(self, job_path: str, build_number: int | str = "lastBuild") -> dict[str, Any]:
         return self.get_build(job_path, build_number)["parameters"]
 
+    def get_build_artifacts(self, job_path: str, build_number: int | str = "lastBuild") -> dict[str, Any]:
+        """The build's archived artifacts plus enough build context to fetch them."""
+        url = self._job_url(job_path)
+        r = self._session.get(
+            f"{url}/{build_number}/api/json",
+            params={"tree": "number,url,result,building,artifacts[fileName,relativePath]"},
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        d = r.json()
+        build_url = (d.get("url") or f"{url}/{build_number}/").rstrip("/") + "/"
+        return {
+            "number": d.get("number"), "url": build_url, "result": d.get("result"),
+            "building": d.get("building"), "artifacts": d.get("artifacts") or [],
+        }
+
+    def get_artifact_text(self, build_url: str, relative_path: str) -> str:
+        """Fetch the (text) contents of one archived artifact by relative path."""
+        r = self._session.get(
+            f"{build_url.rstrip('/')}/artifact/{relative_path.lstrip('/')}",
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        return r.text
+
     def trigger_build(self, job_path: str, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
         params = dict(parameters or {})
         url = self._job_url(job_path)

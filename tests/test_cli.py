@@ -67,6 +67,17 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(args.branch)
         self.assertEqual(args.queue_id, 42)
 
+    def test_jenkins_artifacts(self):
+        args = self.parser.parse_args(["jenkins", "artifacts", "feature/foo", "7", "--all"])
+        self.assertEqual(args.branch, "feature/foo")
+        self.assertEqual(args.build_number, "7")
+        self.assertTrue(args.all)
+
+    def test_jenkins_artifacts_build_defaults_to_last(self):
+        args = self.parser.parse_args(["jenkins", "artifacts", "feature/foo"])
+        self.assertEqual(args.build_number, "lastBuild")
+        self.assertFalse(args.all)
+
     def test_jenkins_trigger_raw(self):
         args = self.parser.parse_args([
             "jenkins", "trigger-raw", "drivenets/myrepo/main",
@@ -234,6 +245,76 @@ class CheetahParamTests(unittest.TestCase):
         self.assertEqual(params["SHOULD_BUILD_BASEOS_CONTAINERS"], "Yes")
         self.assertEqual(params["SHOULD_RUN_SMOKE_TESTS"], "No")
         self.assertEqual(params["SHOULD_LINT"], "Yes")
+
+
+class ArtifactParseTests(unittest.TestCase):
+    def test_first_line_skips_blanks(self):
+        from qactl.jenkins.tools import _first_line
+        self.assertEqual(_first_line("\n\n  http://x/y.tar \n"), "http://x/y.tar")
+        self.assertEqual(_first_line(""), "")
+
+    def test_parse_kv_lines(self):
+        from qactl.jenkins.tools import _parse_kv_lines
+        self.assertEqual(
+            _parse_kv_lines("# comment\nCDNOS_IMAGE=reg/cdnos:tag\nNOEQ\n"),
+            {"CDNOS_IMAGE": "reg/cdnos:tag"},
+        )
+
+
+class _FakeJenkins:
+    """Stands in for JenkinsClient: serves a build's artifacts from a dict."""
+
+    def __init__(self, files):
+        self._files = files
+
+    @classmethod
+    def make_from_env(cls, files):
+        def _from_env(*a, **k):
+            return cls(files)
+        return _from_env
+
+    def get_build_artifacts(self, job_path, build_number="lastBuild"):
+        return {
+            "number": 7, "result": "SUCCESS", "building": False,
+            "url": "https://j/job/x/7/",
+            "artifacts": [{"fileName": n, "relativePath": n} for n in self._files],
+        }
+
+    def get_artifact_text(self, build_url, relative_path):
+        return self._files[relative_path]
+
+
+class JenkinsArtifactsTests(unittest.TestCase):
+    def _run(self, files):
+        from qactl.jenkins import tools
+        with mock.patch.object(tools.JenkinsClient, "from_env",
+                               _FakeJenkins.make_from_env(files)):
+            return tools.jenkins_artifacts("feature/foo", "7")
+
+    def test_collects_download_links_and_images(self):
+        env = self._run({
+            "gi_base_os_artifact.txt": "http://minio/drivenets_baseos_2.x.tar\n",
+            "gi_GI_artifact.txt": "http://minio/drivenets_gi_26.tar",
+            "gi_DNOS_artifact.txt": "http://minio/drivenets_dnos_26.tar",
+            "cdnos_images.txt": "CDNOS_IMAGE=pr-registry/cdnos:tag\n",
+            "metadata.images": "pr-registry/gi:tag@sha256:abc\npr-registry/re:tag@sha256:def\n",
+        })
+        self.assertEqual(env["status"], "ok")
+        res = env["result"]
+        self.assertEqual(res["build_number"], 7)
+        self.assertEqual(res["downloads"]["baseos_tar"], "http://minio/drivenets_baseos_2.x.tar")
+        self.assertEqual(res["downloads"]["gi_tar"], "http://minio/drivenets_gi_26.tar")
+        self.assertEqual(res["downloads"]["dnos_tar"], "http://minio/drivenets_dnos_26.tar")
+        self.assertEqual(res["images"]["cdnos"], "pr-registry/cdnos:tag")
+        self.assertEqual(len(res["images"]["registry"]), 2)
+        self.assertEqual(res["artifact_base_url"], "https://j/job/x/7/artifact/")
+        self.assertNotIn("artifacts", res)
+
+    def test_warns_when_no_links(self):
+        env = self._run({"some_other_file.txt": "irrelevant"})
+        self.assertEqual(env["status"], "warning")
+        self.assertEqual(env["result"]["downloads"], {})
+        self.assertTrue(env["warnings"])
 
 
 class RawParamTests(unittest.TestCase):

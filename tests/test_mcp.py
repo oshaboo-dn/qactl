@@ -32,6 +32,7 @@ class SurfaceMapTests(unittest.TestCase):
         self.assertIn("jira_delete_comment", list_group_tools("jira"))
         self.assertIn("confluence_comment", list_group_tools("confluence"))
         self.assertIn("jenkins_trigger", list_group_tools("jenkins"))
+        self.assertIn("jenkins_artifacts", list_group_tools("jenkins"))
 
     def test_cli_only_tools_are_not_on_mcp(self):
         cli_tools = list_group_tools("cli")
