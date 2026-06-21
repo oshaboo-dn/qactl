@@ -1,28 +1,33 @@
-"""Backup / restore MCP tools.
+"""Backup / restore tools.
 
-Three tools that move DNOS configurations through ``dnftp`` (the shared
-external SFTP host owned by :mod:`dnctl.cli.core.dnftp`):
+Four tools that move DNOS configurations to/from **this host** (the
+machine running ``dnctl``) over its own sshd. The device is the SFTP
+client; the artefacts land on the local filesystem owned by
+:mod:`dnctl.cli.core.backup_store`. The shared external ``dnftp`` host is
+reserved for the large device-pushed tech-support tarballs.
 
 - ``backup_device`` — DNOS ``save`` + ``request file upload config`` of
-  the saved file to ``dnftp``. The MCP then SFTPs to ``dnftp`` itself
-  to verify size and existence.
-- ``list_backups`` — pure SFTP listing of the on-dnftp backup tree (no
-  device contact).
-- ``restore_device`` — ``request file download`` from ``dnftp`` followed
+  the saved file to this host. The store then stats the local file to
+  verify size and existence.
+- ``list_backups`` — pure local listing of the backup tree (no device
+  contact).
+- ``read_backup`` — read a saved config off the local disk.
+- ``restore_device`` — ``request file download`` from this host followed
   by ``configure`` / ``load`` / ``commit`` on the device. Destructive,
   guarded by ``confirm=True``. Filename's device prefix MUST match the
   ``device`` argument so a backup from one box can never land on
   another.
 
-All three serialise per-device through ``dnctl.cli.core.locks.device_lock``
+All serialise per-device through ``dnctl.cli.core.locks.device_lock``
 (shared with ``edit_config`` / ``create_techsupport``) — DNOS' candidate
 configuration is shared across SSH sessions, so concurrent edits would
 stomp each other.
 
 The ``request file upload|download`` command strings come from
-:func:`dnctl.cli.core.dnftp.build_upload_command` /
-:func:`dnctl.cli.core.dnftp.build_download_command` so the grammar lives in one
-place.
+:func:`dnctl.core.dnftp.build_upload_command` /
+:func:`dnctl.core.dnftp.build_download_command` so the grammar lives in one
+place; the *self* target (host / user / password / VRF the device dials
+back into) is resolved at runtime by :mod:`dnctl.core.local_sftp`.
 """
 
 from __future__ import annotations
@@ -36,10 +41,15 @@ from dnctl.cli.core.configure_commit import (
     drive_configure_commit,
 )
 from dnctl.cli.core.dnftp import (
-    DNFTP_PASSWORD,
-    DNFTP_VRF,
     build_download_command,
     build_upload_command,
+)
+from dnctl.core.local_sftp import (
+    LOCAL_SFTP_HOST,
+    LOCAL_SFTP_USER,
+    LOCAL_SFTP_VRF,
+    LocalSftpNotConfigured,
+    require_password,
 )
 from dnctl.cli.core.edit_helpers import validate_edit_statements
 from dnctl.cli.core.envelope import error_response, make_response
@@ -72,25 +82,26 @@ def backup_device(
     device: Optional[str] = None,
     description: Optional[str] = None,
     bucket: Optional[str] = None,
-    vrf: str = DNFTP_VRF,
+    vrf: str = LOCAL_SFTP_VRF,
     host: Optional[str] = None,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = _BACKUP_DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
-    """Save the device's running config and upload it to dnftp.
+    """Save the device's running config and upload it to this host.
 
-    On-dnftp layout (per-device, optional one-level sub-bucket under it)::
+    Local layout (per-device, optional one-level sub-bucket under it),
+    under ``<state_dir>/backups/cli`` (honours ``$DNCTL_STATE_DIR``)::
 
-        /ftpdisk/dn/oshaboo/cli/backups/<device>/                     # device root
+        <BACKUP_DIR>/<device>/                                        # device root
         ├── <device>__<UTC-YYYYMMDD-HHMMSS>[__<desc>].md              # bucket=None
         └── <bucket>/                                                 # bucket="<name>"
             └── <device>__<UTC-YYYYMMDD-HHMMSS>[__<desc>].md
 
     The ``<device>`` folder is **always** the top level — derived from
     the ``device=`` arg, not from the caller's ``bucket``. Sub-buckets
-    are an *optional* second level, chosen by the agent at backup
-    time, and exist to group captures by purpose:
+    are an *optional* second level, chosen at backup time, and exist to
+    group captures by purpose:
 
     - ``bucket=None`` (default): file lands directly in the device
       root. Good for one-off "I want a snapshot of cl right now"
@@ -104,13 +115,11 @@ def backup_device(
       under multiple devices (``cl/bug-1234/``, ``sa/bug-1234/``)
       groups a multi-device capture for one bug.
 
-    The MCP host itself keeps no local copy — verification, listing,
-    and restore-side download all go over SFTP to dnftp, which means
-    the same code base works on any MCP host that can reach dnftp.
-    Both the device folder and the optional sub-bucket are auto-
-    created on demand and reused if they already exist — no error if
-    they were made by a previous call. The same backup name can
-    coexist under multiple sub-buckets without colliding.
+    The config lands on this host's local disk — verification, listing,
+    and restore-side download all read that local tree, so backups don't
+    depend on dnftp (reserved for tech-support). Both the device folder
+    and the optional sub-bucket are auto-created on demand and reused if
+    they already exist — no error if they were made by a previous call.
     ``restore_device`` and ``list_backups`` accept the same
     ``device`` / ``bucket`` args; pass them whatever the matching
     ``backup_device`` envelope reported in its ``device`` /
@@ -121,15 +130,17 @@ def backup_device(
         1. ``configure``
         2. ``save <filename>``                — writes /config/<filename>.
         3. ``exit``                           — back to operational mode.
-        4. ``request file upload config <filename> dn@dnftp:/.../<filename>
-            protocol sftp vrf <vrf>``         — password fed on prompt.
+        4. ``request file upload config <filename>
+            <local-user>@<this-host>:<path> protocol sftp vrf <vrf>``
+                                              — password fed on prompt.
 
-    After the upload, the MCP opens its own SFTP session to dnftp and
-    confirms ``size >= 64 bytes``. On success, the envelope carries
-    ``backup_path`` (absolute POSIX path on dnftp) / ``size_bytes`` /
-    ``filename`` / ``bucket``. No on-device cleanup is performed
-    (intentional — the user keeps the copy under ``/config/`` on the
-    device).
+    The local-user / host / password the device authenticates with come
+    from :mod:`dnctl.core.local_sftp`. After the upload, the store stats
+    the local file and confirms ``size >= 64 bytes``. On success, the
+    envelope carries ``backup_path`` (absolute local path) /
+    ``size_bytes`` / ``filename`` / ``bucket``. No on-device cleanup is
+    performed (intentional — the user keeps the copy under ``/config/``
+    on the device).
 
     Args:
         device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
@@ -144,7 +155,7 @@ def backup_device(
             (default) lands the file directly in the device folder.
             The sub-bucket directory is auto-created on demand and
             reused if it already exists.
-        vrf: DNOS VRF used to reach the backup host. Default ``mgmt0``.
+        vrf: DNOS VRF the device uses to reach this host. Default ``mgmt0``.
         host: Raw hostname/IP (alternative to device). If you pass ``host``
             the resulting filename will use the host string as the device
             segment, which the matching ``restore_device`` call must supply
@@ -164,6 +175,14 @@ def backup_device(
     if bucket_err:
         return error_response(
             bucket_err, device=device, host=host,
+            next_action=BACKUP_NEXT_ACTION,
+        )
+
+    try:
+        local_password = require_password()
+    except LocalSftpNotConfigured as exc:
+        return error_response(
+            str(exc), device=device, host=host,
             next_action=BACKUP_NEXT_ACTION,
         )
 
@@ -190,12 +209,14 @@ def backup_device(
             filename, device=device_key, bucket=bucket,
         ),
         vrf=vrf,
+        user=LOCAL_SFTP_USER,
+        host=LOCAL_SFTP_HOST,
     )
     commands: List[Tuple[str, Optional[str]]] = [
         ("configure", None),
         (f"save {filename}", None),
         ("exit", None),
-        (upload_cmd, DNFTP_PASSWORD),
+        (upload_cmd, local_password),
     ]
     request = {
         "device": device, "host": host, "user": user,
@@ -232,13 +253,13 @@ def backup_device(
 
         response["host"] = result.host
         response["device"] = result.device or device
-        scrubbed = scrub_password(result.output, DNFTP_PASSWORD)
+        scrubbed = scrub_password(result.output, local_password)
         response["stdout"] = scrubbed
         log_invocation(
             result.device or device, result.host,
             upload_cmd, scrubbed,
             result.head_prompt_line, result.tail_prompt,
-            steps=scrub_steps(result.steps, DNFTP_PASSWORD),
+            steps=scrub_steps(result.steps, local_password),
         )
 
         if not result.hit_prompt:
@@ -265,7 +286,7 @@ def backup_device(
             response["status"] = "error"
             response["errors"].append(
                 f"Upload completed without error but {filename!r} is not "
-                "present on dnftp — check sshd landing directory."
+                "present on this host — check the local sshd landing directory."
             )
             response["next_actions"].append(BACKUP_NEXT_ACTION)
             log_request("backup_device", request, response)
@@ -294,18 +315,18 @@ def list_backups(
     bucket: Optional[str] = None,
     limit: int = 100,
 ) -> Dict[str, Any]:
-    """List backups stored on dnftp, newest first.
+    """List backups stored on this host, newest first.
 
-    Pure SFTP read against dnftp — no SSH to any lab device. Each entry
+    Pure local filesystem read — no SSH to any lab device. Each entry
     carries the parsed ``device`` / ``timestamp_utc`` / ``description`` /
-    ``bucket`` plus the file's ``size_bytes`` and absolute POSIX
-    ``path`` on dnftp. Files that don't match the canonical naming
-    shape (or that live where the canonical layout doesn't expect)
-    are surfaced under ``orphans`` so you know to investigate.
+    ``bucket`` plus the file's ``size_bytes`` and absolute local
+    ``path``. Files that don't match the canonical naming shape (or that
+    live where the canonical layout doesn't expect) are surfaced under
+    ``orphans`` so you know to investigate.
 
-    The on-dnftp tree is rooted at the device alias
-    (``cli/backups/<device>/[<bucket>/]<file>``). The result also
-    carries:
+    The local tree is rooted at the device alias
+    (``<state_dir>/backups/cli/<device>/[<bucket>/]<file>``). The result
+    also carries:
 
     - ``buckets``: when ``device`` is set, the sub-bucket names under
       that device (e.g. ``["bug-1234", "nightly"]``); when ``device``
@@ -363,10 +384,9 @@ def list_backups(
     warnings: List[str] = []
     if orphans:
         warnings.append(
-            f"{len(orphans)} entry(ies) under {backup_store.BACKUP_DIR} on "
-            f"{backup_store.BACKUP_HOST} drift from the canonical "
-            f"per-device layout (see 'orphans' field). Rename, move, or "
-            f"remove them to keep the store clean."
+            f"{len(orphans)} entry(ies) under {backup_store.BACKUP_DIR} "
+            f"drift from the canonical per-device layout (see 'orphans' "
+            f"field). Rename, move, or remove them to keep the store clean."
         )
     response = make_response(
         device=device, host="", command="list_backups",
@@ -388,7 +408,7 @@ def restore_device(
     filename: str,
     bucket: Optional[str] = None,
     mode: Literal["override", "merge"] = "override",
-    vrf: str = DNFTP_VRF,
+    vrf: str = LOCAL_SFTP_VRF,
     confirm: bool = False,
     post_load_commands: Optional[List[str]] = None,
     host: Optional[str] = None,
@@ -411,7 +431,7 @@ def restore_device(
     Flow on one ephemeral channel when ``confirm=True``:
 
         1. ``set cli-no-confirm``
-        2. ``request file download dn@dnftp:/.../<filename> config
+        2. ``request file download <local-user>@<this-host>:<path> config
             <filename> protocol sftp vrf <vrf>``    — password fed on prompt.
         3. ``configure``
         4. ``load override <filename>`` | ``load merge <filename>``
@@ -450,8 +470,8 @@ def restore_device(
 
     Args:
         device: Device alias expected to match the filename prefix.
-            Also resolves the on-dnftp folder
-            (``cli/backups/<device>/[<bucket>/]<file>``).
+            Also resolves the local folder
+            (``<state_dir>/backups/cli/<device>/[<bucket>/]<file>``).
         filename: Backup filename as listed by ``list_backups``.
         bucket: Optional sub-bucket under the device folder (must
             match what was passed to ``backup_device``). ``None``
@@ -521,6 +541,19 @@ def restore_device(
             device=device, host=host, next_action=RESTORE_NEXT_ACTION,
         )
 
+    # The device downloads from this host; gate on the local SFTP password
+    # only when actually executing — a dry-run can still preview the command
+    # without it configured.
+    local_password = None
+    if confirm:
+        try:
+            local_password = require_password()
+        except LocalSftpNotConfigured as exc:
+            return error_response(
+                str(exc), device=device, host=host,
+                next_action=RESTORE_NEXT_ACTION,
+            )
+
     download_cmd = build_download_command(
         kind="config",
         local_name=filename,
@@ -528,6 +561,8 @@ def restore_device(
             filename, device=device, bucket=bucket,
         ),
         vrf=vrf,
+        user=LOCAL_SFTP_USER,
+        host=LOCAL_SFTP_HOST,
     )
     load_cmd = f"load {mode} {filename}"
     # NB: no trailing ``exit`` — ``run_sequence_pw`` only returns the LAST
@@ -539,7 +574,7 @@ def restore_device(
     steps, full_command = build_configure_commit_steps(
         pre_commands=[
             ("set cli-no-confirm", None),
-            (download_cmd, DNFTP_PASSWORD),
+            (download_cmd, local_password),
         ],
         body_statements=[load_cmd, *extra_statements],
     )
@@ -576,7 +611,7 @@ def restore_device(
             device=device, host=host, user=user, password=password,
             timeout=timeout, steps=steps, command=full_command,
             request=request, response=response,
-            scrub_secret=DNFTP_PASSWORD,
+            scrub_secret=local_password,
             connect_next_action=(
                 "Verify the device is reachable and credentials are correct."
             ),
@@ -634,11 +669,11 @@ def read_backup(
     device: str,
     bucket: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Fetch a saved backup off dnftp and return its raw text content.
+    """Read a saved backup off this host and return its raw text content.
 
-    Pure SFTP read — no device contact. The agent receives the file's
-    bytes as a UTF-8 string in ``content`` so it can inspect what's in
-    a saved file before invoking :func:`restore_device`.
+    Pure local filesystem read — no device contact. The caller receives
+    the file's bytes as a UTF-8 string in ``content`` so it can inspect
+    what's in a saved file before invoking :func:`restore_device`.
 
     Concrete use case: after ``load_override_factory_default``, the
     device's master key changes and any ``enc-<base64>`` ciphertexts
@@ -655,8 +690,8 @@ def read_backup(
     Args:
         filename: Backup filename as listed by ``list_backups``.
         device: Device alias whose folder holds the file
-            (``cli/backups/<device>/[<bucket>/]<file>``). Must match
-            the in-filename device prefix; mismatch is rejected.
+            (``<state_dir>/backups/cli/<device>/[<bucket>/]<file>``).
+            Must match the in-filename device prefix; mismatch is rejected.
         bucket: Optional sub-bucket under the device folder (must
             match what ``backup_device`` was called with). ``None``
             (default) = directly in the device folder.

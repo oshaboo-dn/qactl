@@ -63,7 +63,9 @@ includes tech-support (`create_techsupport` is fire-and-forget — the `.tar`
 lands on remote `dnftp`, never locally), the cheap read-only / job-poll
 tools, and device + NETCONF **backup/restore** (backups are
 non-destructive; restores execute only with `confirm=true`, otherwise they
-return a dry-run). A tool stays **CLI-only** only when it is *interactive*
+return a dry-run). Config backups land on the **local host** (the device
+SFTPs them back to the machine running `dnctl`); `dnftp` is reserved for
+the big tech-support tarballs. A tool stays **CLI-only** only when it is *interactive*
 or *destructive without a confirm gate*:
 
 - `setup` (one-time device registry / credentials — interactive)

@@ -4,6 +4,27 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-21
+
+### Changed
+- cli config backups now land on the **local host** instead of `dnftp`.
+  The device SFTPs the saved config back to the machine running `dnctl`
+  via `request file upload config <fn> <local-user>@<this-host>:<path>`
+  (host/user resolved dynamically per machine); `list` / `read` / `restore`
+  all operate on the local tree under `<state_dir>/backups/cli`. `dnftp` is
+  now reserved for tech-support tarballs. This fixes backups failing when
+  no `dnftp` password is configured even though device + SSH creds are fine
+  (closes #6).
+
+### Added
+- `[local]` config section / `DNCTL_LOCAL_SFTP_*` env vars (host, user,
+  password, vrf) for the self-SFTP target the device uploads backups to,
+  wired through `dnctl setup` (`--local-sftp-*`). The password is fed to
+  the device at the SFTP prompt, mirroring the dnftp flow.
+- `dnctl.core.local_sftp` module resolving the dynamic self target;
+  `build_upload_command` / `build_download_command` now take optional
+  `user` / `host` (defaulting to dnftp, so tech-support is unchanged).
+
 ## [0.5.0] - 2026-06-21
 
 ### Changed

@@ -88,16 +88,27 @@ def dnftp_sftp(timeout_s: int = _DEFAULT_SFTP_TIMEOUT_S) -> Iterator[paramiko.SF
 
 
 def build_upload_command(
-    *, kind: str, local_name: str, remote_path: str, vrf: str = DNFTP_VRF,
+    *,
+    kind: str,
+    local_name: str,
+    remote_path: str,
+    vrf: str = DNFTP_VRF,
+    user: str = DNFTP_USER,
+    host: str = DNFTP_HOST,
 ) -> str:
     """Render ``request file upload <kind> <local> <remote-uri> protocol sftp vrf <vrf>``.
 
     ``kind`` is the DNOS file-class token (``config`` for backups,
     ``tech-support`` for tech-support tarballs, ``certificate`` /
     ``key`` for cert material). ``remote_path`` is the absolute POSIX
-    path on dnftp; we stitch the ``dn@dnftp:`` prefix.
+    path on the target host; we stitch the ``<user>@<host>:`` prefix.
+
+    ``user`` / ``host`` default to the dnftp account so existing call
+    sites are unchanged; the local-backup flow passes this host's own
+    user/FQDN (see :mod:`dnctl.core.local_sftp`) to make the device
+    upload to us instead of dnftp.
     """
-    remote_uri = f"{DNFTP_USER}@{DNFTP_HOST}:{remote_path}"
+    remote_uri = f"{user}@{host}:{remote_path}"
     return (
         f"request file upload {kind} {local_name} {remote_uri} "
         f"protocol sftp vrf {vrf}"
@@ -105,10 +116,21 @@ def build_upload_command(
 
 
 def build_download_command(
-    *, kind: str, local_name: str, remote_path: str, vrf: str = DNFTP_VRF,
+    *,
+    kind: str,
+    local_name: str,
+    remote_path: str,
+    vrf: str = DNFTP_VRF,
+    user: str = DNFTP_USER,
+    host: str = DNFTP_HOST,
 ) -> str:
-    """Render ``request file download <remote-uri> <kind> <local> protocol sftp vrf <vrf>``."""
-    remote_uri = f"{DNFTP_USER}@{DNFTP_HOST}:{remote_path}"
+    """Render ``request file download <remote-uri> <kind> <local> protocol sftp vrf <vrf>``.
+
+    ``user`` / ``host`` default to the dnftp account; the local-backup
+    flow passes this host's own user/FQDN so the device downloads from
+    us instead of dnftp.
+    """
+    remote_uri = f"{user}@{host}:{remote_path}"
     return (
         f"request file download {remote_uri} {kind} {local_name} "
         f"protocol sftp vrf {vrf}"

@@ -1,4 +1,5 @@
-"""User configuration for ``dnctl`` — credentials, keys, and dnftp.
+"""User configuration for ``dnctl`` — credentials, keys, dnftp, and the
+local SFTP target for config backups.
 
 ``dnctl`` is a standalone tool installed on a user's own machine, so it
 must not ship lab secrets baked into source. Anything sensitive comes
@@ -29,6 +30,12 @@ Config file shape::
     host = "dnftp"
     user = "dn"
     password = "..."
+    vrf = "mgmt0"
+
+    [local]                   # device uploads config backups to this host
+    host = "myhost.example"   # optional; defaults to socket.getfqdn()
+    user = "me"               # optional; defaults to the OS user
+    password = "..."          # this account's password, fed to the device
     vrf = "mgmt0"
 """
 
