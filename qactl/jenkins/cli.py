@@ -80,6 +80,12 @@ def _console(args):
                 as_json=args.json)
 
 
+def _artifacts(args):
+    return emit(tools.jenkins_artifacts(args.branch, args.build_number,
+                                        all_artifacts=args.all, repo=args.repo,
+                                        org=args.org, **_creds(args)), as_json=args.json)
+
+
 def _trigger(args):
     rc = confirm_or_exit(args, kind="jenkins_trigger",
                          action=f"Trigger a {args.repo} build on branch {args.branch!r}.")
@@ -204,6 +210,14 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     c.add_argument("branch"); c.add_argument("build_number", nargs="?", default="lastBuild")
     c.add_argument("--tail", type=int, default=200)
     c.set_defaults(func=_console)
+
+    a = sub.add_parser("artifacts", parents=[parent],
+                       help="a build's published download links (baseos / GI / dnos / cdnos)")
+    _add_common(a)
+    a.add_argument("branch"); a.add_argument("build_number", nargs="?", default="lastBuild")
+    a.add_argument("--all", action="store_true",
+                   help="also include the full archived-artifact listing")
+    a.set_defaults(func=_artifacts)
 
     l = sub.add_parser("list", parents=[parent], help="recent builds for a branch")
     _add_common(l)

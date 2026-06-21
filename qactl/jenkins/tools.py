@@ -34,6 +34,38 @@ CHEETAH_DEFAULT_PARAMS: Dict[str, Any] = {
 }
 
 
+# Cheetah archives the browser-visible download links as tiny one-line text
+# artifacts (one URL each). Map a friendly key -> the archived file name so
+# ``jenkins_artifacts`` can surface the baseos tar / GI / dnos refs without
+# scraping the JS-rendered build page.
+ARTIFACT_LINK_FILES: Dict[str, str] = {
+    "baseos_tar": "gi_base_os_artifact.txt",
+    "gi_tar": "gi_GI_artifact.txt",
+    "dnos_tar": "gi_DNOS_artifact.txt",
+    "gi_swarm_tar": "gi_GI_SWARM_artifact.txt",
+    "mgmt_swarm_tar": "gi_MGMT_SWARM_artifact.txt",
+    "cdnos_tar": "cdnos_artifact.txt",
+}
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _parse_kv_lines(text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
 def _yn(v: bool) -> str:
     return "Yes" if v else "No"
 
@@ -204,6 +236,86 @@ def jenkins_console(
                 }), timeout=timeout, user=user, token=token, url=url)
 
 
+def jenkins_artifacts(
+    branch: str, build_number: str = "lastBuild", *, all_artifacts: bool = False,
+    repo: str = "cheetah", org: str = "drivenets", timeout: float = 30.0,
+    user: Optional[str] = None, token: Optional[str] = None, url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A build's published artifact download links (baseos / GI / dnos / cdnos).
+
+    Reads the small text artifacts cheetah archives (``gi_*_artifact.txt``,
+    ``cdnos_*``, ``metadata.images``) so the baseos tar URL, image tarballs,
+    and registry image refs can be fed straight into ``tar-load`` / an ONIE
+    ``wget`` without scraping the JS-rendered build page. ``all_artifacts``
+    additionally returns the full archived-artifact listing.
+    """
+    job_path = branch_to_job_path(branch, repo=repo, org=org)
+
+    def fn(c: JenkinsClient) -> dict:
+        meta = c.get_build_artifacts(job_path, build_number)
+        build_url = meta["url"]
+        artifacts = meta["artifacts"]
+        by_name = {a.get("fileName"): a.get("relativePath") for a in artifacts}
+        warnings: list = []
+
+        downloads: Dict[str, str] = {}
+        for key, fname in ARTIFACT_LINK_FILES.items():
+            rel = by_name.get(fname)
+            if not rel:
+                continue
+            try:
+                val = _first_line(c.get_artifact_text(build_url, rel))
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"could not read {fname}: {exc}")
+                continue
+            if val:
+                downloads[key] = val
+
+        images: Dict[str, Any] = {}
+        cdnos_rel = by_name.get("cdnos_images.txt")
+        if cdnos_rel:
+            try:
+                kv = _parse_kv_lines(c.get_artifact_text(build_url, cdnos_rel))
+                if kv.get("CDNOS_IMAGE"):
+                    images["cdnos"] = kv["CDNOS_IMAGE"]
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"could not read cdnos_images.txt: {exc}")
+        meta_rel = by_name.get("metadata.images")
+        if meta_rel:
+            try:
+                refs = [ln.strip() for ln in
+                        c.get_artifact_text(build_url, meta_rel).splitlines() if ln.strip()]
+                if refs:
+                    images["registry"] = refs
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"could not read metadata.images: {exc}")
+
+        result: Dict[str, Any] = {
+            "branch": branch, "repo": repo, "org": org,
+            "build_number": meta["number"], "build_url": build_url,
+            "result": meta["result"], "building": meta["building"],
+            "artifact_base_url": f"{build_url.rstrip('/')}/artifact/",
+            "artifact_count": len(artifacts),
+            "downloads": downloads, "images": images,
+        }
+        if all_artifacts:
+            result["artifacts"] = artifacts
+
+        next_actions: list = []
+        if not downloads and not images:
+            if meta.get("building"):
+                warnings.append("Build is still running; artifact links may not be archived yet.")
+            else:
+                warnings.append(
+                    "No published artifact links found. The build may not archive "
+                    "baseos/GI/dnos artifacts; re-run with all_artifacts=true to see "
+                    "the full archived listing.")
+        return ok_envelope(kind="jenkins_artifacts", result=result,
+                           warnings=warnings, next_actions=next_actions)
+
+    return _run("jenkins_artifacts", fn, timeout=timeout, user=user, token=token, url=url)
+
+
 # ---- write / destructive tools -------------------------------------------
 
 def jenkins_trigger(
@@ -305,6 +417,7 @@ def register(mcp) -> None:
     mcp.tool()(jenkins_info)
     mcp.tool()(jenkins_list)
     mcp.tool()(jenkins_console)
+    mcp.tool()(jenkins_artifacts)
     mcp.tool()(jenkins_trigger)
     mcp.tool()(jenkins_trigger_raw)
     mcp.tool()(jenkins_stop)
