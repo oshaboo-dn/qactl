@@ -30,6 +30,7 @@ from qactl.jira import cli as jira_cli
 NATIVE_GROUPS = {"jira", "confluence", "jenkins"}
 DNCTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
+MCP_GROUP = "mcp"
 
 
 TOP_HELP = """\
@@ -54,12 +55,16 @@ Atlassian + CI (native):
   confluence    Confluence comments / attachments
   jenkins       Jenkins builds: trigger / inspect / stop
 
+MCP front (same tools, over stdio):
+  mcp           run a local stdio MCP server: `qactl mcp <group>` / `qactl mcp all`
+
 Options:
   -h, --help     show this help
   -V, --version  show qactl version
 
 Run `qactl <group> --help` for a group's commands
 (e.g. `qactl cli --help`, `qactl ixia --help`, `qactl jenkins --help`).
+Run `qactl mcp --help` for the MCP front (and `qactl mcp --list` for its tools).
 """
 
 
@@ -126,6 +131,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"qactl {__version__}")
         return 0
     group = argv[0]
+    if group == MCP_GROUP:
+        from qactl.mcp.server import main as mcp_main
+        return mcp_main(argv[1:])
     if group in NATIVE_GROUPS:
         return _run_native(argv)
     if group in DNCTL_GROUPS:
