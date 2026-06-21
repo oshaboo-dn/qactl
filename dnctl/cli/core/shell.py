@@ -77,6 +77,25 @@ _CONFIRM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Interactive confirm prompt emitted by the NCM (ICOS/StrataX) nested CLI.
+# Unlike DNOS' ``(yes/no)?`` (see :data:`_CONFIRM_RE`), the NCM phrases its
+# confirm as a ``[y/n]`` / ``[yes/no]`` choice followed by a ``:`` (it waits
+# for input right after the colon, no newline), e.g.::
+#
+#   copy running-config startup-config
+#   This operation will modify your startup configuration.
+#   Do you want to continue? [y/n]:
+#
+# Without an answer the channel never returns to the ``#`` prompt and the
+# read times out even though the command itself is correct. We accept a
+# trailing ``:`` *or* ``?`` so both the NCM colon form and any DNOS-style
+# ``?`` form are caught, anchored at end-of-buffer.
+_NCM_CONFIRM_RE = re.compile(
+    r"[\(\[]\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*[\)\]]"   # [y/n] | (yes/no)
+    r"\s*[:?]?[ \t]*\Z",                              # trailing ':' or '?'
+    re.IGNORECASE,
+)
+
 # Progress-bar frame: the redraws DNOS emits during ``request file upload`` /
 # ``request file download``. After :func:`strip_ansi` turns ``\\r`` into
 # ``\\n`` we get one line per frame — noisy in transcripts and envelopes, so
@@ -556,6 +575,53 @@ def read_until_ncm_prompt(
             time.sleep(0.05)
 
 
+def read_until_ncm_prompt_answering(
+    channel: paramiko.Channel,
+    answer: str = "y",
+    overall_timeout: float = 30.0,
+    idle_timeout: float = 1.0,
+) -> Tuple[str, bool]:
+    """Read until an NCM prompt appears, answering interactive confirms first.
+
+    Same as :func:`read_until_ncm_prompt`, but watches the tail for an NCM
+    ``[y/n]:`` / ``[yes/no]:`` confirmation (see :data:`_NCM_CONFIRM_RE`) and
+    sends ``answer`` + newline when one shows up, instead of waiting for a
+    ``#`` prompt that will never arrive until the prompt is answered. The
+    device echoes the answer character, which pushes the choice token off the
+    end of the buffer so the same confirm is never answered twice; a
+    length-watermark guards against double-answering within a single chunk.
+    A multi-confirm flow (a command that asks more than once) is handled by
+    answering each new confirm as it appears.
+    """
+    buf: list[str] = []
+    text = ""
+    start = time.time()
+    last_rx = start
+    answered_at_len = 0
+    while True:
+        if channel.recv_ready():
+            chunk = channel.recv(65535).decode("utf-8", errors="replace")
+            buf.append(chunk)
+            text = "".join(buf)
+            last_rx = time.time()
+            tail = strip_ansi(text)[-256:]
+            if _NCM_CONFIRM_RE.search(tail) and len(text) > answered_at_len:
+                channel.send(answer + "\n")
+                answered_at_len = len(text)
+                last_rx = time.time()
+                continue
+            if ends_with_ncm_prompt(text):
+                return text, True
+        else:
+            now = time.time()
+            if now - start > overall_timeout:
+                return text, False
+            if now - last_rx > idle_timeout and buf:
+                if ends_with_ncm_prompt(text):
+                    return text, True
+            time.sleep(0.05)
+
+
 def read_until_password_or_ncm_prompt(
     channel: paramiko.Channel,
     overall_timeout: float = 15.0,
@@ -623,6 +689,7 @@ def send_ncm_cli(
     dnos_prompt: str,
     shell_entry: str,
     overall_timeout: float = 30.0,
+    answer: str = "y",
 ) -> Tuple[str, str, str, bool]:
     """Drive the NCM switch's nested (ICOS-style) CLI and return its transcript.
 
@@ -633,7 +700,10 @@ def send_ncm_cli(
         2. if challenged, send ``password`` and wait for the NCM prompt.
         3. send each command in ``ncm_commands`` in order, capturing the
            output between NCM prompts. The prompt shape is tracked across
-           ``configure`` / ``interface eth 0/X`` mode changes.
+           ``configure`` / ``interface eth 0/X`` mode changes. A command
+           that pauses on an interactive ``[y/n]:`` / ``[yes/no]:`` confirm
+           (e.g. ``copy running-config startup-config``) is answered with
+           ``answer`` so it can complete instead of timing out.
         4. ALWAYS try to back out: ``end`` (leave any config mode) then
            ``exit`` (leave the NCM CLI) until the DNOS prompt re-appears —
            so the channel is left on firm ground even on error / timeout.
@@ -685,8 +755,8 @@ def send_ncm_cli(
     hit_cmd = True
     for cmd in ncm_commands:
         channel.send(cmd + "\n")
-        raw, hit_cmd = read_until_ncm_prompt(
-            channel, overall_timeout=overall_timeout,
+        raw, hit_cmd = read_until_ncm_prompt_answering(
+            channel, answer=answer, overall_timeout=overall_timeout,
         )
         seg, seg_tail = _clean_ncm_segment(raw, cmd)
         if seg_tail:

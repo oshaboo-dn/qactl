@@ -570,6 +570,7 @@ def run_ncm_cli(
     ncm_commands: List[str],
     shell_entry: str,
     timeout: float = DEFAULT_CMD_TIMEOUT,
+    answer: str = "y",
 ) -> Invocation:
     """Open a fresh channel and drive the NCM nested CLI, then close it.
 
@@ -577,8 +578,9 @@ def run_ncm_cli(
     of a single DNOS command it enters ``shell_entry``
     (``run start shell ncm <id>``) and runs ``ncm_commands`` against the
     NCM switch's own (ICOS-style) CLI via :func:`send_ncm_cli`, returning
-    the combined transcript. The channel is always left back at the DNOS
-    prompt (best-effort) before teardown.
+    the combined transcript. Interactive ``[y/n]:`` confirms raised by a
+    command are answered with ``answer``. The channel is always left back
+    at the DNOS prompt (best-effort) before teardown.
     """
     if not ncm_commands:
         raise ValueError("ncm_commands must be non-empty")
@@ -596,6 +598,7 @@ def run_ncm_cli(
             output, head, tail, hit = send_ncm_cli(
                 channel, ncm_commands, password, prompt,
                 shell_entry=shell_entry, overall_timeout=timeout,
+                answer=answer,
             )
             transport.last_used = time.time()
             return Invocation(

@@ -4,6 +4,17 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-06-21
+
+### Fixed
+- `cli ncm-cli` (and the `run_ncm_cli` tool) now answer a nested
+  interactive confirm in the NCM (ICOS/StrataX) CLI instead of timing
+  out. Commands like `copy running-config startup-config` pause with
+  `Do you want to continue? [y/n]:`; the driver watches for the
+  `[y/n]:` / `[yes/no]:` confirm and replies with `--answer` (default
+  `y`, pass `n` to decline), so the canonical startup-config save
+  completes (#22).
+
 ## [0.8.0] - 2026-06-21
 
 ### Fixed
