@@ -59,6 +59,17 @@ def get_gitcommit(
             response["commit_sha"] = m.group(1)
             if m.group(2) is not None:
                 response["pr_number"] = int(m.group(2))
+    # `cat /.gitcommit` of a missing/empty file (e.g. "No such file or
+    # directory") leaves status "ok" with no parseable sha — that's a
+    # failed read, not a build with no commit id. Surface it.
+    if response.get("status") == "ok" and "commit_sha" not in response:
+        response["status"] = "error"
+        response.setdefault("errors", []).append(
+            "could not read a commit id from /.gitcommit "
+            f"(got {raw[:200]!r}); the file may be missing or the DNOS "
+            "image layout may have shifted."
+        )
+        response.setdefault("next_actions", []).append(GET_GITCOMMIT_NEXT_ACTION)
     return response
 
 

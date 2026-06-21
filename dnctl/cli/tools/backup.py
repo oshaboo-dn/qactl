@@ -612,6 +612,12 @@ def restore_device(
             timeout=timeout, steps=steps, command=full_command,
             request=request, response=response,
             scrub_secret=local_password,
+            # Capture every step's output, not just the final commit:
+            # the SFTP download and ``load`` happen BEFORE commit, and
+            # their failures don't appear in the commit line. Without
+            # this a failed download + a clean (no-op) commit looked like
+            # a successful restore.
+            capture_all=True,
             connect_next_action=(
                 "Verify the device is reachable and credentials are correct."
             ),
@@ -623,6 +629,40 @@ def restore_device(
             response["status"] = "timeout"
             response["errors"].append(
                 f"Timed out waiting for CLI prompt after {timeout}s."
+            )
+            response["next_actions"].append(RESTORE_NEXT_ACTION)
+            log_request("restore_device", request, response)
+            return response
+
+        # A restore is download → load → commit on one channel. A failure
+        # in the download or load step (unreachable host, missing file,
+        # bad config) must fail the whole op even if a later no-op commit
+        # "succeeds". Scan those upstream steps explicitly — their output
+        # is invisible to parse_commit_output (which only reads the commit).
+        upstream_errors: List[str] = []
+        for step in result.steps:
+            cmd = (step.command or "").strip()
+            if cmd == "set cli-no-confirm" or cmd.startswith("commit"):
+                continue
+            if not step.hit_prompt:
+                upstream_errors.append(
+                    f"step {cmd!r} timed out before the CLI prompt returned."
+                )
+                continue
+            step_err, step_lines = detect_error(step.output)
+            if step_err:
+                label = "download" if "download" in cmd else (
+                    "load" if cmd.startswith("load ") else cmd
+                )
+                upstream_errors.extend(
+                    f"{label}: {ln}" for ln in step_lines[-2:]
+                )
+        if upstream_errors:
+            response["status"] = "error"
+            response["errors"].extend(upstream_errors)
+            response["errors"].append(
+                "restore aborted: a pre-commit step (SFTP download / load) "
+                "failed; the running config was not cleanly restored."
             )
             response["next_actions"].append(RESTORE_NEXT_ACTION)
             log_request("restore_device", request, response)

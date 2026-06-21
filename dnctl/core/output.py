@@ -13,8 +13,10 @@ the single place that turns that dict into either:
   stays clean for piping.
 
 Exit code is derived from the envelope ``status`` so ``&&`` chaining and
-shell loops behave: ``ok`` → 0, ``error`` → 1, ``connect_error`` → 2,
-``timeout`` → 3, any other non-ok → 1.
+shell loops behave: ``ok`` → 0, ``warning`` → 0, ``error`` → 1,
+``connect_error`` → 2, ``timeout`` → 3, any other non-ok → 1. ``ok`` and
+``warning`` are the only zero-exit statuses (per the agent contract: "0
+only on status ok/warning").
 """
 
 from __future__ import annotations
@@ -23,7 +25,9 @@ import json
 import sys
 from typing import Any, Dict
 
-_EXIT = {"ok": 0, "error": 1, "connect_error": 2, "timeout": 3}
+# ``warning`` exits 0 — it's a successful result that merely carries
+# advisory notes, so `&&` chaining must not treat it as a failure.
+_EXIT = {"ok": 0, "warning": 0, "error": 1, "connect_error": 2, "timeout": 3}
 
 # Envelope scaffolding keys handled explicitly by the text renderer; any
 # other key is "tool-specific extra" and gets dumped as JSON in text mode.

@@ -6,6 +6,7 @@ range-checks every numeric argument against the device's CLI limits.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from dnctl.cli.core.envelope import error_response
@@ -13,6 +14,28 @@ from dnctl.cli.core.errors import RUN_PING_NEXT_ACTION
 from dnctl.cli.core.runner import _run_on_device
 from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.validation import _int_in, _num_in, _validate_token
+
+
+# ``N% packet loss`` summary line emitted by the device's ping. 100% loss
+# means every echo timed out — the command ran fine but the ping itself
+# failed, so the envelope must NOT report success (the prompt came back
+# cleanly, so detect_error sees nothing).
+_PACKET_LOSS_RE = re.compile(r"(\d+(?:\.\d+)?)%\s*packet\s*loss", re.IGNORECASE)
+
+
+def _ping_total_loss(output: str) -> bool:
+    """True iff the ping summary reports 100% packet loss."""
+    if not output:
+        return False
+    last = None
+    for m in _PACKET_LOSS_RE.finditer(output):
+        last = m.group(1)
+    if last is None:
+        return False
+    try:
+        return float(last) >= 100.0
+    except ValueError:
+        return False
 
 
 def run_ping_ipv4(
@@ -118,10 +141,20 @@ def run_ping_ipv4(
         eff_interval = float(interval) if interval is not None else 1.0
         timeout = max(30, int(eff_count * eff_interval) + 15)
 
-    return _run_on_device(
+    response = _run_on_device(
         "run_ping_ipv4", device, host, user, password,
         command, timeout, RUN_PING_NEXT_ACTION,
     )
+    # A clean prompt return with 100% packet loss is still a failed ping;
+    # surface it instead of letting status stay "ok".
+    if response.get("status") == "ok" and _ping_total_loss(response.get("stdout") or ""):
+        response["status"] = "error"
+        response.setdefault("errors", []).append(
+            "ping reported 100% packet loss — the destination did not "
+            "answer any echo request."
+        )
+        response.setdefault("next_actions", []).append(RUN_PING_NEXT_ACTION)
+    return response
 
 
 def register(mcp) -> None:

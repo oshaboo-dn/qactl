@@ -33,7 +33,11 @@ from dnctl.cli.core.edit_helpers import (
     validate_edit_statements,
 )
 from dnctl.cli.core.envelope import error_response, make_response
-from dnctl.cli.core.errors import EDIT_CONFIG_NEXT_ACTION, detect_error
+from dnctl.cli.core.errors import (
+    EDIT_CONFIG_NEXT_ACTION,
+    FACTORY_DEFAULT_NEXT_ACTION,
+    detect_error,
+)
 from dnctl.cli.core.locks import device_lock
 from dnctl.cli.core.logging import log_request
 from dnctl.cli.core.registry import transport_registry
@@ -45,6 +49,68 @@ from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
 # cleanup path), so this tool accepts 1..49 — a real prior-commit revert.
 _ROLLBACK_ID_MIN = 1
 _ROLLBACK_ID_MAX = 49
+
+
+def _finalize_apply_commit(
+    *,
+    tool_name: str,
+    inv: Any,
+    timeout: int,
+    request: Dict[str, Any],
+    response: Dict[str, Any],
+    next_action: str,
+) -> Dict[str, Any]:
+    """Fold a ``configure ; <body> ; commit`` outcome into ``response``.
+
+    Shared by ``load_override_factory_default`` / ``rollback_config`` —
+    both are destructive applies whose success must be proven by the
+    commit verdict, not assumed. Without this they returned the default
+    ``status: ok`` even on a timeout or a failed commit (false success).
+    """
+    if not inv.hit_prompt:
+        response["status"] = "timeout"
+        response["errors"].append(
+            f"Timed out waiting for CLI prompt after {timeout}s."
+        )
+        response["next_actions"].append(next_action)
+        log_request(tool_name, request, response)
+        return response
+
+    is_err, err_lines = detect_error(inv.output)
+    commit = parse_commit_output(inv.output)
+    response["commit"] = {
+        "status": commit.status,
+        "user": commit.user,
+        "timestamp": commit.timestamp,
+    }
+    if commit.status == "ok":
+        if is_err:
+            response["warnings"].append(
+                "commit reported success but error-looking lines were "
+                "detected in stdout; review manually."
+            )
+            response["warnings"].extend(err_lines[-3:])
+        log_request(tool_name, request, response)
+        return response
+
+    response["status"] = "error"
+    if commit.status == "no_change":
+        response["errors"].append(
+            "Commit reported no changes — the operation may not have "
+            "altered the running config, or a step before commit failed."
+        )
+    elif commit.status == "check_ok":
+        response["errors"].append(
+            "expected an applied commit but DNOS reported only a "
+            "commit-check result — review stdout and retry."
+        )
+    else:
+        response["errors"].extend(commit.error_lines or [])
+    if is_err:
+        response["errors"].extend(err_lines[-3:])
+    response["next_actions"].append(next_action)
+    log_request(tool_name, request, response)
+    return response
 
 
 def edit_config(
@@ -416,15 +482,24 @@ def load_override_factory_default(
     request = {"device": device, "host": host, "user": user}
     response = make_response(device=device, host=host, command=command)
 
-    if drive_configure_commit(
-        transport_registry, tool_name="load_override_factory_default",
-        device=device, host=host, user=user, password=password,
-        timeout=timeout, steps=steps, command=command,
-        request=request, response=response,
-    ) is None:
-        return response
-    log_request("load_override_factory_default", request, response)
-    return response
+    # Shared candidate is per-device global; serialise with the other
+    # config-touching tools so a concurrent edit can't stomp our staged
+    # factory-default load.
+    device_key = device or host or ""
+    with device_lock(device_key):
+        inv = drive_configure_commit(
+            transport_registry, tool_name="load_override_factory_default",
+            device=device, host=host, user=user, password=password,
+            timeout=timeout, steps=steps, command=command,
+            request=request, response=response,
+        )
+        if inv is None:
+            return response
+        return _finalize_apply_commit(
+            tool_name="load_override_factory_default",
+            inv=inv, timeout=timeout, request=request, response=response,
+            next_action=FACTORY_DEFAULT_NEXT_ACTION,
+        )
 
 
 def rollback_config(
@@ -490,15 +565,21 @@ def rollback_config(
     }
     response = make_response(device=device, host=host, command=command)
 
-    if drive_configure_commit(
-        transport_registry, tool_name="rollback_config",
-        device=device, host=host, user=user, password=password,
-        timeout=timeout, steps=steps, command=command,
-        request=request, response=response,
-    ) is None:
-        return response
-    log_request("rollback_config", request, response)
-    return response
+    device_key = device or host or ""
+    with device_lock(device_key):
+        inv = drive_configure_commit(
+            transport_registry, tool_name="rollback_config",
+            device=device, host=host, user=user, password=password,
+            timeout=timeout, steps=steps, command=command,
+            request=request, response=response,
+        )
+        if inv is None:
+            return response
+        return _finalize_apply_commit(
+            tool_name="rollback_config",
+            inv=inv, timeout=timeout, request=request, response=response,
+            next_action=EDIT_CONFIG_NEXT_ACTION,
+        )
 
 
 def register(mcp) -> None:
