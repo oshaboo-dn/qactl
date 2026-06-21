@@ -31,6 +31,24 @@ _TAIL_PROMPT_RE = re.compile(r"^[\w.\-]+(?:\([^)]*\))?#[ \t]*$")
 _SHELL_PROMPT_RE = re.compile(r"\]#[ \t]*\Z")
 _SHELL_TAIL_RE = re.compile(r"\]#[ \t]*$")
 
+# NCM (ICOS-style) nested-CLI prompts seen inside ``run start shell ncm <id>``.
+# The NCM is a management switch with its own CLI, not Linux and not DNOS:
+#   exec        → ``<hostname>#``                 e.g. ``AAF-NCM-A0#``
+#   config      → ``(config)#`` / ``<hostname>(config)#``
+#   interface   → ``(conf-if-eth-0/X)#``
+# We match on *shape* (a hostname and/or a parenthesised context immediately
+# before ``#``) rather than a fixed token, because the prompt mutates as we
+# descend into config / interface modes. The two alternatives below require
+# either a real hostname or a ``(...)`` block before ``#`` — so a bare ``#``
+# never matches, and the Linux ``...]#`` shell prompt (``]`` is neither) is
+# deliberately excluded too, keeping this disjoint from the shell matcher.
+_NCM_PROMPT_RE = re.compile(
+    r"(?:[\w.\-]+(?:\([^)]*\))?|\([^)]*\))#[ \t]*\Z"
+)
+_NCM_TAIL_RE = re.compile(
+    r"(?:[\w.\-]+(?:\([^)]*\))?|\([^)]*\))#[ \t]*$"
+)
+
 # Password prompt emitted by DNOS immediately after ``run start shell``.
 # Not newline-terminated, so we match it anchored to end-of-buffer.
 _PASSWORD_RE = re.compile(r"[Pp]assword:[ \t]*\Z")
@@ -493,6 +511,196 @@ def send_shell_exec(
     if output and not output.endswith("\n"):
         output += "\n"
     return output, head_prompt_line, tail_prompt, hit_cmd
+
+
+def ends_with_ncm_prompt(text: str) -> bool:
+    """True if ``text`` ends with an NCM (ICOS-style) nested-CLI prompt.
+
+    Matches the exec / config / interface-config prompt shapes the NCM
+    switch renders inside ``run start shell ncm <id>`` (see
+    :data:`_NCM_PROMPT_RE`). Shape-only, so it keeps matching as the
+    prompt mutates between modes.
+    """
+    clean = strip_ansi(text).rstrip()
+    if not clean:
+        return False
+    last = clean.rsplit("\n", 1)[-1]
+    return bool(_NCM_TAIL_RE.search(last.rstrip()))
+
+
+def read_until_ncm_prompt(
+    channel: paramiko.Channel,
+    overall_timeout: float = 30.0,
+    idle_timeout: float = 1.0,
+) -> Tuple[str, bool]:
+    """Read from channel until an NCM nested-CLI prompt appears, or timeout."""
+    buf: list[str] = []
+    text = ""
+    start = time.time()
+    last_rx = start
+    while True:
+        if channel.recv_ready():
+            chunk = channel.recv(65535).decode("utf-8", errors="replace")
+            buf.append(chunk)
+            text = "".join(buf)
+            last_rx = time.time()
+            if ends_with_ncm_prompt(text):
+                return text, True
+        else:
+            now = time.time()
+            if now - start > overall_timeout:
+                return text, False
+            if now - last_rx > idle_timeout and buf:
+                if ends_with_ncm_prompt(text):
+                    return text, True
+            time.sleep(0.05)
+
+
+def read_until_password_or_ncm_prompt(
+    channel: paramiko.Channel,
+    overall_timeout: float = 15.0,
+    idle_timeout: float = 1.0,
+) -> Tuple[str, str]:
+    """Read until a ``Password:`` challenge OR an NCM prompt appears.
+
+    Entering the NCM nested CLI via ``run start shell ncm <id>`` may or may
+    not challenge for a password before landing at the switch prompt, so we
+    watch for both and let the caller branch. Returns ``(text, kind)`` where
+    ``kind`` is ``"password"``, ``"prompt"``, or ``"timeout"``.
+    """
+    buf: list[str] = []
+    text = ""
+    start = time.time()
+    last_rx = start
+    while True:
+        if channel.recv_ready():
+            chunk = channel.recv(65535).decode("utf-8", errors="replace")
+            buf.append(chunk)
+            text = "".join(buf)
+            last_rx = time.time()
+            if _PASSWORD_RE.search(strip_ansi(text)[-256:]):
+                return text, "password"
+            if ends_with_ncm_prompt(text):
+                return text, "prompt"
+        else:
+            now = time.time()
+            if now - start > overall_timeout:
+                return text, "timeout"
+            if now - last_rx > idle_timeout and buf:
+                if ends_with_ncm_prompt(text):
+                    return text, "prompt"
+            time.sleep(0.05)
+
+
+def _clean_ncm_segment(raw: str, command: str) -> Tuple[str, str]:
+    """Strip the echoed command and trailing NCM prompt from one step's output.
+
+    Returns ``(clean_output, tail_prompt)``.
+    """
+    cleaned = strip_ansi(raw).replace("\x07", "")
+    lines = cleaned.splitlines()
+
+    cmd_stripped = command.strip()
+    if cmd_stripped:
+        while lines and cmd_stripped in lines[0]:
+            lines = lines[1:]
+
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    tail_prompt = ""
+    if lines and _NCM_TAIL_RE.search(lines[-1].rstrip()):
+        tail_prompt = lines.pop().rstrip()
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+
+    return "\n".join(lines), tail_prompt
+
+
+def send_ncm_cli(
+    channel: paramiko.Channel,
+    ncm_commands: list[str],
+    password: str,
+    dnos_prompt: str,
+    shell_entry: str,
+    overall_timeout: float = 30.0,
+) -> Tuple[str, str, str, bool]:
+    """Drive the NCM switch's nested (ICOS-style) CLI and return its transcript.
+
+    Flow (all on one channel):
+
+        1. send ``shell_entry`` (``run start shell ncm <id>``); wait for
+           either a ``Password:`` challenge or the NCM prompt.
+        2. if challenged, send ``password`` and wait for the NCM prompt.
+        3. send each command in ``ncm_commands`` in order, capturing the
+           output between NCM prompts. The prompt shape is tracked across
+           ``configure`` / ``interface eth 0/X`` mode changes.
+        4. ALWAYS try to back out: ``end`` (leave any config mode) then
+           ``exit`` (leave the NCM CLI) until the DNOS prompt re-appears —
+           so the channel is left on firm ground even on error / timeout.
+
+    Returns ``(clean_output, head_prompt_line, tail_prompt, hit_prompt)`` —
+    same shape as :func:`send_command`. ``clean_output`` is the combined
+    transcript of every command (segments joined by a blank line);
+    ``hit_prompt`` reflects whether the LAST command returned to a prompt.
+    """
+    def _exit_back() -> None:
+        # Leave any config sub-mode, then exit the NCM CLI back to DNOS.
+        try:
+            channel.send("end\n")
+            read_until_ncm_prompt(
+                channel, overall_timeout=min(overall_timeout, 5.0),
+            )
+        except Exception:
+            pass
+        for _ in range(2):
+            try:
+                channel.send("exit\n")
+                _, hit = read_until_prompt(
+                    channel, dnos_prompt,
+                    overall_timeout=min(overall_timeout, 5.0),
+                )
+                if hit:
+                    return
+            except Exception:
+                return
+
+    channel.send(shell_entry + "\n")
+    _, kind = read_until_password_or_ncm_prompt(
+        channel, overall_timeout=overall_timeout,
+    )
+    if kind == "password":
+        channel.send(password + "\n")
+        _, hit_entry = read_until_ncm_prompt(
+            channel, overall_timeout=overall_timeout,
+        )
+        if not hit_entry:
+            _exit_back()
+            return "", "", "", False
+    elif kind != "prompt":
+        _exit_back()
+        return "", "", "", False
+
+    segments: list[str] = []
+    tail_prompt = ""
+    hit_cmd = True
+    for cmd in ncm_commands:
+        channel.send(cmd + "\n")
+        raw, hit_cmd = read_until_ncm_prompt(
+            channel, overall_timeout=overall_timeout,
+        )
+        seg, seg_tail = _clean_ncm_segment(raw, cmd)
+        if seg_tail:
+            tail_prompt = seg_tail
+        segments.append(seg)
+        if not hit_cmd:
+            break
+
+    _exit_back()
+
+    output = "\n\n".join(s for s in segments if s)
+    if output and not output.endswith("\n"):
+        output += "\n"
+    return output, "", tail_prompt, hit_cmd
 
 
 def send_command_with_password(

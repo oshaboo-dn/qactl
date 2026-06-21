@@ -55,6 +55,40 @@ def test_targets_container(captured):
     assert captured["shell_entry"] == "run start shell ncc 1 container netconf"
 
 
+def test_targets_ncm(captured):
+    shell_tool.run_shell("uptime", device="sa", ncm="A0")
+    assert captured["shell_entry"] == "run start shell ncm A0"
+
+
+def test_targets_ncm_b0(captured):
+    shell_tool.run_shell("uptime", device="sa", ncm="B0")
+    assert captured["shell_entry"] == "run start shell ncm B0"
+
+
+def test_invalid_ncm_error(captured):
+    r = shell_tool.run_shell("ls", device="sa", ncm="bad id")
+    assert r["status"] == "error"
+    assert "linux_command" not in captured
+
+
+def test_ncm_ncc_mutually_exclusive(captured):
+    r = shell_tool.run_shell("ls", device="sa", ncm="A0", ncc="0")
+    assert r["status"] == "error"
+    assert "linux_command" not in captured
+
+
+def test_ncm_ncp_mutually_exclusive(captured):
+    r = shell_tool.run_shell("ls", device="sa", ncm="A0", ncp="0")
+    assert r["status"] == "error"
+    assert "linux_command" not in captured
+
+
+def test_ncm_container_rejected(captured):
+    r = shell_tool.run_shell("ls", device="sa", ncm="A0", container="netconf")
+    assert r["status"] == "error"
+    assert "linux_command" not in captured
+
+
 def test_empty_commands_error(captured):
     r = shell_tool.run_shell([], device="sa")
     assert r["status"] == "error"

@@ -64,6 +64,31 @@ def test_shell_invalid_ncc_errors_before_device():
     assert any("ncc" in e for e in payload["errors"])
 
 
+def test_ncm_cli_refuses_without_yes():
+    # non-interactive (CliRunner has no TTY) → must refuse, exit 2.
+    r = runner.invoke(
+        app,
+        ["cli", "ncm-cli", "show lldp neighbors", "--ncm", "A0", "-d", "sa", "--json"],
+    )
+    assert r.exit_code == 2
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert any("--yes" in n for n in payload["next_actions"])
+
+
+def test_ncm_cli_invalid_ncm_errors_before_device():
+    # --yes passes the gate; bad --ncm is rejected by validation, no SSH.
+    r = runner.invoke(
+        app,
+        ["cli", "ncm-cli", "show lldp neighbors", "--ncm", "bad id",
+         "-d", "sa", "--yes", "--json"],
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert any("ncm" in e for e in payload["errors"])
+
+
 def test_missing_payload_clean_error():
     r = runner.invoke(app, ["nc", "edit", "-d", "sa", "--yes", "--json"], input="")
     assert r.exit_code == 1

@@ -111,6 +111,16 @@ RUN_SHELL_NEXT_ACTION = (
     "(show_system). Commands are chained with '&&' (stop on first failure) "
     "unless continue_on_error chains them with ';' instead."
 )
+RUN_NCM_CLI_NEXT_ACTION = (
+    "run_ncm_cli drives the NCM management switch's own (ICOS-style) nested "
+    "CLI inside 'run start shell ncm <id>' — not Linux, not DNOS. Check "
+    "(1) ncm names a real NCM ('A0' / 'B0' / ...); (2) each command is valid "
+    "NCM CLI, e.g. 'show lldp neighbors' to map ctrl-ncp-<id>/0 to eth 0/X, "
+    "then 'configure' / 'interface eth 0/X' / 'shutdown' (or 'no shutdown') "
+    "to toggle a port; (3) config-mode commands are ordered so each runs in "
+    "the mode the previous one entered. The session always backs out via "
+    "'end' + 'exit' to DNOS, even on error. Works on a GI-mode chassis."
+)
 KILL_NCC_NEXT_ACTION = (
     "Check the daemon name is one of bgpd/zebra/fibmgrd and that the "
     "device password is correct; rerun to confirm the daemon was "

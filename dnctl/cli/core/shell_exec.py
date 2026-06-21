@@ -25,6 +25,9 @@ from dnctl.cli.core.runner import _run_on_device
 
 
 _SHELL_CONTAINER_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+# NCM ids are shelf-relative tokens like ``A0`` / ``B0`` (and similar);
+# keep the matcher permissive but safe (alphanumeric, no whitespace).
+_SHELL_NCM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]*$")
 
 
 # ``run start shell`` grammar (crawled):
@@ -32,31 +35,48 @@ _SHELL_CONTAINER_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 #   run start shell ncc <0|1|active>               → select NCC
 #   run start shell ncc <id> container <name>      → select NCC + container
 #   run start shell ncp <0-191|bfd-master>         → select NCP (line card)
-# ncf / ncm are deferred.
+#   run start shell ncm <A0|B0|...>                → select NCM (fabric mgmt)
+# ncf is deferred.
 
 
 def _build_shell_entry(
     ncc: Optional[str],
     ncp: Optional[str],
     container: Optional[str],
+    ncm: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Translate ncc/ncp/container into the DNOS ``run start shell ...`` line.
+    """Translate ncc/ncp/ncm/container into the DNOS ``run start shell ...`` line.
 
     - all None   → ``run start shell`` (active NCC default container).
     - ncc only   → ``run start shell ncc <id>``.
     - container  → ``run start shell ncc <id|active> container <name>``.
     - ncp only   → ``run start shell ncp <id>``.
-    - ncc + ncp  → error (mutually exclusive).
-    - ncp + container → error (grammar has no container under ncp).
+    - ncm only   → ``run start shell ncm <id>``.
+    - ncc/ncp/ncm together → error (mutually exclusive).
+    - ncp/ncm + container → error (grammar has no container under ncp/ncm).
     """
-    if ncc is not None and ncp is not None:
-        return None, "ncc and ncp are mutually exclusive."
+    targets = [t for t in (ncc, ncp, ncm) if t is not None]
+    if len(targets) > 1:
+        return None, "ncc, ncp, and ncm are mutually exclusive."
     if ncp is not None and container is not None:
         return (
             None,
             "container cannot be combined with ncp; ``run start shell ncp`` "
             "has no container sub-option.",
         )
+    if ncm is not None and container is not None:
+        return (
+            None,
+            "container cannot be combined with ncm; ``run start shell ncm`` "
+            "has no container sub-option.",
+        )
+
+    ncm_val: Optional[str] = None
+    if ncm is not None:
+        s = str(ncm).strip()
+        if not _SHELL_NCM_RE.fullmatch(s):
+            return None, "ncm must be an id like 'A0' or 'B0'."
+        ncm_val = s
 
     ncc_val: Optional[str] = None
     if ncc is not None:
@@ -84,6 +104,8 @@ def _build_shell_entry(
         target = ncc_val or "active"
         return f"run start shell ncc {target} container {cs}", None
 
+    if ncm_val is not None:
+        return f"run start shell ncm {ncm_val}", None
     if ncp_val is not None:
         return f"run start shell ncp {ncp_val}", None
     if ncc_val is not None:

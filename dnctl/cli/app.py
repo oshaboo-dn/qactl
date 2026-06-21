@@ -32,7 +32,7 @@ from dnctl.cli.tools.edit import (
 from dnctl.cli.tools.gitcommit import get_gitcommit
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
 from dnctl.cli.tools.ping import run_ping_ipv4
-from dnctl.cli.tools.shell import run_shell
+from dnctl.cli.tools.shell import run_ncm_cli, run_shell
 from dnctl.cli.tools.restart import (
     kill_9_ncc_process,
     request_system_container_restart,
@@ -284,6 +284,7 @@ def shell(
     commands: Annotated[List[str], typer.Argument(help="Linux command(s) to run in `run start shell`. Each argument is one command; chained with && (or ; with --continue-on-error).")],
     ncc: Annotated[Optional[str], typer.Option("--ncc", help="Target NCC: 0 | 1 | active.")] = None,
     ncp: Annotated[Optional[str], typer.Option("--ncp", help="Target NCP: 0..191 | bfd-master.")] = None,
+    ncm: Annotated[Optional[str], typer.Option("--ncm", help="Target NCM: A0 | B0 | ...")] = None,
     container: Annotated[Optional[str], typer.Option("--container", help="Target container on the selected NCC.")] = None,
     continue_on_error: Annotated[bool, typer.Option("--continue-on-error", help="Chain commands with ';' instead of '&&'.")] = False,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -295,10 +296,25 @@ def shell(
     if not confirm.ensure(f"run start shell on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(
-        O.call(run_shell, c, commands=commands, ncc=ncc, ncp=ncp,
+        O.call(run_shell, c, commands=commands, ncc=ncc, ncp=ncp, ncm=ncm,
                container=container, continue_on_error=continue_on_error),
         c,
     )
+
+
+@app.command("ncm-cli")
+def ncm_cli(
+    commands: Annotated[List[str], typer.Argument(help="NCM CLI command(s) to run in order, e.g. 'show lldp neighbors' or 'configure' 'interface eth 0/5' 'shutdown'.")],
+    ncm: Annotated[str, typer.Option("--ncm", help="Target NCM: A0 | B0 | ...")],
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Drive the NCM switch's nested (ICOS-style) CLI via `run start shell ncm`, then exit (DESTRUCTIVE — needs --yes)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    if not confirm.ensure(f"run start shell ncm {ncm} on {c.device or c.host}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm), c)
 
 
 # --- config (destructive) --------------------------------------------------

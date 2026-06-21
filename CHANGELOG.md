@@ -4,6 +4,23 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-21
+
+### Added
+- `run_shell` (and `cli shell`) gained an `ncm` / `--ncm` target so
+  `run start shell ncm <A0|B0|...>` is reachable, mirroring the existing
+  `ncc` / `ncp` selectors (mutually exclusive with them; no container
+  sub-option). Part 1 of #8.
+- `run_ncm_cli` tool + `cli ncm-cli` command: drives the NCM management
+  switch's own nested (ICOS-style) CLI inside `run start shell ncm <id>`
+  — not Linux, not DNOS — running a sequence of NCM commands (e.g.
+  `show lldp neighbors`, then `configure` / `interface eth 0/X` /
+  `shutdown` | `no shutdown`) and backing out cleanly to DNOS. Handles an
+  optional shell password challenge and tracks the exec/config/interface
+  prompt shapes; works against a GI-mode chassis. Destructive — gated by
+  `--yes`. This automates the cluster-side half of "remove NCP from
+  cluster to act as a SA" (closes #8).
+
 ## [0.6.0] - 2026-06-21
 
 ### Changed
