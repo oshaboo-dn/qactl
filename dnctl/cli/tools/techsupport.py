@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from dnctl.cli.core import slack_notify, ts_store
+from dnctl.cli.core import job_store, slack_notify, ts_store
 from dnctl.cli.core.dnftp import DNFTP_PASSWORD, DNFTP_VRF, build_upload_command
 from dnctl.cli.core.envelope import error_response, make_response
 from dnctl.cli.core.errors import CREATE_TS_NEXT_ACTION, detect_error
@@ -79,6 +79,13 @@ _TS_DEFAULT_MAX_WAIT_S = 30 * 60
 # Keep terminal (done/error/timeout) jobs in memory this long so a late
 # ``get_techsupport_job`` can still fetch the result. Reaped lazily.
 _TS_JOB_TTL_S = 24 * 3600
+
+# On-disk job-cache namespace. The one-shot CLI front runs the worker
+# synchronously (``block=True``) and persists the terminal envelope here
+# so a later ``techsupport show`` in a *different* process can still
+# resolve it (issue #17). Distinct from tar-load's namespace so a
+# ``latest_for_device`` lookup never crosses job families.
+_TS_JOB_STORE_SUBDIR = "techsupport-jobs"
 
 # Status-probe resilience knobs. The probe opens a fresh ephemeral
 # channel each cycle and has to drain the SSH banner + detect a CLI
@@ -306,12 +313,17 @@ def _ts_notify_terminal(job: TsJob, final_state: str) -> None:
 
 
 def _ts_finish(job: TsJob, final_state: str) -> None:
-    """Wrap ``_TS_REGISTRY.finish`` + Slack terminal notify.
+    """Wrap ``_TS_REGISTRY.finish`` + disk persist + Slack terminal notify.
 
-    Use this everywhere the worker reaches a terminal state so we
-    never miss a Slack post.
+    Use this everywhere the worker reaches a terminal state so we never
+    miss a Slack post. The disk persist is what lets
+    ``get_techsupport_job`` resolve a job from a *different* process (the
+    one-shot CLI front): the in-memory registry dies with the process,
+    so the terminal envelope is cached under the state dir for later
+    ``techsupport show`` calls (issue #17).
     """
     _TS_REGISTRY.finish(job, final_state)
+    job_store.save(_ts_job_envelope(job), _TS_JOB_STORE_SUBDIR)
     _ts_notify_terminal(job, final_state)
 
 
@@ -576,8 +588,9 @@ def create_techsupport(
     max_wait_s: int = _TS_DEFAULT_MAX_WAIT_S,
     timeout: int = 120,
     notify_slack: str = "@oshaboo",
+    block: bool = False,
 ) -> Dict[str, Any]:
-    """Start a tech-support tarball generation on a device; returns IMMEDIATELY.
+    """Start a tech-support tarball generation on a device; returns IMMEDIATELY (unless ``block=True``).
 
     Short name: ``ts`` (i.e. "take a ts on <device>" / "grab a ts"
     / "ts it" all map to this tool).
@@ -670,6 +683,17 @@ def create_techsupport(
             [120, 7200]. Default 1800 (30 min).
         timeout: Per-command SSH timeout seconds (kickoff, each status
             probe, upload — each independently).
+        block: Run the whole generate → upload → stat sequence
+            SYNCHRONOUSLY and return the terminal envelope instead of
+            the ``state:"generating"`` kickoff. Default ``False`` (async
+            — the shape the long-running MCP server wants). The one-shot
+            CLI front (``qactl cli techsupport create``) passes ``True``:
+            its process *is* the worker, so it must run to completion
+            in-line (otherwise the daemon worker dies with the process,
+            so generation/upload never finishes and a later
+            ``techsupport show`` finds nothing — issue #17). When
+            ``True`` the terminal envelope is also persisted to disk so a
+            later ``techsupport show <job_id>`` resolves it.
     """
     # --- validate args ---------------------------------------------------
     device_key = device or host or ""
@@ -846,6 +870,17 @@ def create_techsupport(
     )
     worker.start()
 
+    # block=True (the CLI front): run the worker to completion in this
+    # process and return the terminal envelope. The CLI process IS the
+    # worker — a daemon thread would die when the command returns, so
+    # generation/upload would never finish (issue #17). block=False
+    # (the MCP server): fall through to the async kickoff envelope.
+    if block:
+        worker.join()
+        envelope = _ts_job_envelope(job)
+        log_request("create_techsupport", request, envelope)
+        return envelope
+
     envelope = _ts_job_envelope(job)
     # Rough ETA: 10 min covers most devices we've seen. Not a tight
     # guarantee — big chassis can run longer; ``max_wait_s`` is the
@@ -905,6 +940,22 @@ def get_techsupport_job(
     """
     job, err = _TS_REGISTRY.lookup(job_id=job_id, device_key=device)
     if err is not None:
+        # In-memory miss. Under the one-shot CLI front the job ran in a
+        # now-exited process, so fall back to the on-disk cache the
+        # synchronous (``block=True``) path persisted (issue #17).
+        persisted = (
+            job_store.load(job_id, _TS_JOB_STORE_SUBDIR) if job_id
+            else job_store.latest_for_device(device or "", _TS_JOB_STORE_SUBDIR)
+        )
+        if persisted is not None:
+            pdev = persisted.get("device") or persisted.get("host") or ""
+            if not (job_id and device) or pdev == device:
+                log_request(
+                    "get_techsupport_job",
+                    {"job_id": job_id, "device": device},
+                    persisted,
+                )
+                return persisted
         if not job_id and not device:
             return error_response(
                 err,

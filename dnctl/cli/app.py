@@ -317,6 +317,21 @@ def ncm_cli(
     O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm), c)
 
 
+@app.command("clear")
+def clear(
+    command: Annotated[List[str], typer.Argument(help="Operational clear command, e.g. 'clear arp' or 'clear bgp neighbor 1.2.3.4 soft in'.")],
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Run an operational `clear ...` command on the device (DESTRUCTIVE — needs --yes)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    cmd = " ".join(command).strip()
+    if not confirm.ensure(f"{cmd} on {c.device or c.host}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(O.call(clear_tool, c, command=cmd), c)
+
+
 # --- config (destructive) --------------------------------------------------
 
 
@@ -498,7 +513,10 @@ def techsupport_create(
 ):
     """Create a tech-support bundle (long-running job)."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
-    O.finish(O.call(create_techsupport, c, name=name), c)
+    # block=True: the CLI process is the worker. Run the generate +
+    # upload to completion in-process; a daemon thread would die when
+    # the command returns, aborting the job mid-flight (issue #17).
+    O.finish(O.call(create_techsupport, c, name=name, block=True), c)
 
 
 @ts_app.command("show")
@@ -569,16 +587,19 @@ def device_list(as_json: O.Json = False):
 
 @device_app.command("add")
 def device_add(
-    name: Annotated[str, typer.Argument(help="New device alias.")],
-    sn: Annotated[Optional[str], typer.Option("--sn", help="Serial / SSH host to probe.")] = None,
+    sn: Annotated[str, typer.Argument(help="Serial / SSH host to probe. The alias is taken from the chassis System Name.")],
     user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):
-    """Probe a chassis and add it to the registry (DESTRUCTIVE — needs --yes)."""
+    """Probe a chassis and add it to the registry (DESTRUCTIVE — needs --yes).
+
+    The registry alias is the chassis's configured System Name, so it is
+    not passed here — only the SSH-reachable host to probe.
+    """
     c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
-    if not confirm.ensure(f"device add {name}", yes=c.yes, as_json=c.json):
+    if not confirm.ensure(f"device add {sn}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(manage_device, c, operation="add", name=name, sn=sn), c)
+    O.finish(O.call(manage_device, c, operation="add", sn=sn), c)
 
 
 @device_app.command("remove")
