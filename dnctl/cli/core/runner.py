@@ -102,13 +102,15 @@ def _run_ncm_on_device(
     shell_entry: str,
     timeout: float,
     next_action_on_error: str,
+    answer: str = "y",
 ) -> Dict[str, Any]:
     """Drive the NCM nested CLI on a device and build the standard envelope.
 
     Mirrors :func:`_run_on_device` but runs a *sequence* of NCM (ICOS-style)
     CLI commands inside ``shell_entry`` (``run start shell ncm <id>``) and
     returns their combined transcript in ``stdout``. ``command`` carries the
-    joined NCM command line for the transcript log.
+    joined NCM command line for the transcript log. ``answer`` is the reply
+    sent to any interactive ``[y/n]:`` confirm a command raises.
     """
     joined = " ; ".join(ncm_commands)
     request = {
@@ -127,6 +129,7 @@ def _run_ncm_on_device(
             ncm_commands=ncm_commands,
             shell_entry=shell_entry,
             timeout=timeout,
+            answer=answer,
         )
     except ConnectError as exc:
         response.update(

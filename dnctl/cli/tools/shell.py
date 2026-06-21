@@ -107,6 +107,7 @@ def run_ncm_cli(
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = DEFAULT_CMD_TIMEOUT,
+    answer: str = "y",
 ) -> Dict[str, Any]:
     """Drive the NCM management switch's own (ICOS-style) nested CLI.
 
@@ -131,6 +132,12 @@ def run_ncm_cli(
 
     Use ``no shutdown`` in the last step to bring the port back.
 
+    A command that pauses on a nested interactive confirm (e.g.
+    ``copy running-config startup-config`` →
+    ``Do you want to continue? [y/n]:``) is answered with ``answer``
+    (default ``'y'``) so the save completes instead of timing out. Pass
+    ``answer='n'`` to decline.
+
     Args:
         commands: A single NCM CLI command, or a list run in order.
         ncm: Target NCM id — 'A0', 'B0', ...
@@ -140,6 +147,8 @@ def run_ncm_cli(
         password: SSH password (default dnroot); also answers the
             ``run start shell`` challenge if one is presented.
         timeout: Per-command timeout seconds.
+        answer: Reply sent to a nested ``[y/n]:`` / ``[yes/no]:`` confirm
+            (default ``'y'``).
 
     Returns the standard envelope; ``stdout`` carries the combined NCM CLI
     transcript and ``command`` is the joined NCM command line that ran.
@@ -168,6 +177,7 @@ def run_ncm_cli(
     return _run_ncm_on_device(
         "run_ncm_cli", device, host, user, password,
         cmds, shell_entry or "", timeout, RUN_NCM_CLI_NEXT_ACTION,
+        answer=answer,
     )
 
 

@@ -4,6 +4,7 @@ import pytest
 
 from dnctl.cli.core import shell as core_shell
 from dnctl.cli.core.shell import (
+    _NCM_CONFIRM_RE,
     ends_with_ncm_prompt,
     send_ncm_cli,
 )
@@ -155,6 +156,87 @@ def test_send_ncm_cli_config_sequence():
     assert "end\n" in ch.sent
 
 
+# --- interactive confirm prompt ([y/n]:) ----------------------------------
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "Do you want to continue? [y/n]:",
+        "Do you want to continue? [y/n]: ",
+        "Are you sure (yes/no)?",
+        "overwrite? [yes/no]:",
+        "Continue [Y/N]:",
+    ],
+)
+def test_ncm_confirm_matches(tail):
+    assert _NCM_CONFIRM_RE.search(tail)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "AAF-NCM-A0#",
+        "[y/n]:y",                 # already answered — echoed char breaks match
+        "interface eth 0/5",
+        "no confirmation here",
+    ],
+)
+def test_ncm_confirm_rejects(tail):
+    assert not _NCM_CONFIRM_RE.search(tail)
+
+
+def test_send_ncm_cli_answers_yn_confirm():
+    # 'copy running-config startup-config' pauses on a [y/n]: confirm; the
+    # driver must answer it (default 'y') instead of timing out.
+    entry = "\r\nAAF1925AACP#"
+    reactions = {
+        "copy running-config startup-config": (
+            "copy running-config startup-config\r\n"
+            "This operation will modify your startup configuration. "
+            "Do you want to continue? [y/n]:"
+        ),
+        "y": "y\r\nAAF1925AACP#",
+        "end": "AAF1925AACP#",
+        "exit": "\r\nncc1#",
+    }
+    ch = FakeChannel(reactions, entry)
+
+    out, _head, _tail, hit = send_ncm_cli(
+        ch, ["copy running-config startup-config"], password="dnroot",
+        dnos_prompt="ncc1#", shell_entry="run start shell ncm B0",
+        overall_timeout=5.0,
+    )
+
+    assert hit is True
+    assert "y\n" in ch.sent          # the confirm was answered
+    assert "exit\n" in ch.sent       # backed out cleanly
+
+
+def test_send_ncm_cli_custom_decline_answer():
+    # A caller can decline a confirm with answer='n'.
+    entry = "\r\nAAF1925AACP#"
+    reactions = {
+        "copy running-config startup-config": (
+            "copy running-config startup-config\r\n"
+            "Do you want to continue? [y/n]:"
+        ),
+        "n": "n\r\nAborted\r\nAAF1925AACP#",
+        "end": "AAF1925AACP#",
+        "exit": "\r\nncc1#",
+    }
+    ch = FakeChannel(reactions, entry)
+
+    out, _head, _tail, hit = send_ncm_cli(
+        ch, ["copy running-config startup-config"], password="dnroot",
+        dnos_prompt="ncc1#", shell_entry="run start shell ncm B0",
+        overall_timeout=5.0, answer="n",
+    )
+
+    assert hit is True
+    assert "n\n" in ch.sent
+    assert "y\n" not in ch.sent
+
+
 def test_send_ncm_cli_entry_timeout_backs_out():
     # entry never reaches a prompt or password → driver gives up, hit False.
     ch = FakeChannel({"exit": "\r\nncc1#", "end": "AAF-NCM-A0#"},
@@ -175,11 +257,11 @@ def captured(monkeypatch):
     calls = {}
 
     def _fake(tool, device, host, user, password, ncm_commands,
-              shell_entry, timeout, next_action):
+              shell_entry, timeout, next_action, answer="y"):
         calls.update(
             tool=tool, device=device, host=host,
             ncm_commands=ncm_commands, shell_entry=shell_entry,
-            timeout=timeout,
+            timeout=timeout, answer=answer,
         )
         return {"status": "ok", "stdout": "out", "command": " ; ".join(ncm_commands)}
 
@@ -200,6 +282,18 @@ def test_tool_sequence(captured):
     )
     assert captured["ncm_commands"] == ["configure", "interface eth 0/5", "shutdown"]
     assert captured["shell_entry"] == "run start shell ncm B0"
+
+
+def test_tool_default_answer_is_yes(captured):
+    shell_tool.run_ncm_cli("copy running-config startup-config", ncm="B0", device="cl")
+    assert captured["answer"] == "y"
+
+
+def test_tool_answer_passthrough(captured):
+    shell_tool.run_ncm_cli(
+        "copy running-config startup-config", ncm="B0", device="cl", answer="n"
+    )
+    assert captured["answer"] == "n"
 
 
 def test_tool_blank_commands_dropped(captured):

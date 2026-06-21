@@ -306,6 +306,7 @@ def shell(
 def ncm_cli(
     commands: Annotated[List[str], typer.Argument(help="NCM CLI command(s) to run in order, e.g. 'show lldp neighbors' or 'configure' 'interface eth 0/5' 'shutdown'.")],
     ncm: Annotated[str, typer.Option("--ncm", help="Target NCM: A0 | B0 | ...")],
+    answer: Annotated[str, typer.Option("--answer", help="Reply sent to a nested interactive confirm ([y/n]: / [yes/no]:), e.g. for 'copy running-config startup-config'. Default 'y'; pass 'n' to decline.")] = "y",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -314,7 +315,7 @@ def ncm_cli(
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     if not confirm.ensure(f"run start shell ncm {ncm} on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm), c)
+    O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm, answer=answer), c)
 
 
 @app.command("clear")
