@@ -42,6 +42,7 @@ from .shell import (
     send_command_with_password,
     send_config_help,
     send_help,
+    send_ncm_cli,
     send_shell_exec,
 )
 
@@ -560,6 +561,72 @@ def run_once(
     raise RuntimeError(f"run_once failed: {last_exc}")
 
 
+def run_ncm_cli(
+    registry: TransportRegistry,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    ncm_commands: List[str],
+    shell_entry: str,
+    timeout: float = DEFAULT_CMD_TIMEOUT,
+) -> Invocation:
+    """Open a fresh channel and drive the NCM nested CLI, then close it.
+
+    Same transport-reuse + retry semantics as :func:`run_once`, but instead
+    of a single DNOS command it enters ``shell_entry``
+    (``run start shell ncm <id>``) and runs ``ncm_commands`` against the
+    NCM switch's own (ICOS-style) CLI via :func:`send_ncm_cli`, returning
+    the combined transcript. The channel is always left back at the DNOS
+    prompt (best-effort) before teardown.
+    """
+    if not ncm_commands:
+        raise ValueError("ncm_commands must be non-empty")
+    joined = " ; ".join(ncm_commands)
+    last_exc: Optional[Exception] = None
+    for attempt in (1, 2):
+        transport = registry.get(
+            device=device, host=host, user=user, password=password,
+        )
+        channel = None
+        try:
+            channel = transport.client.invoke_shell(width=500, height=1000)
+            channel.settimeout(0.5)
+            prompt = _init_channel(channel)
+            output, head, tail, hit = send_ncm_cli(
+                channel, ncm_commands, password, prompt,
+                shell_entry=shell_entry, overall_timeout=timeout,
+            )
+            transport.last_used = time.time()
+            return Invocation(
+                output=output,
+                hit_prompt=hit,
+                head_prompt_line=head,
+                tail_prompt=tail,
+                host=transport.host,
+                device=transport.device,
+                steps=[StepCapture(joined, head, output, tail, hit)],
+            )
+        except (paramiko.SSHException, EOFError, OSError) as exc:
+            last_exc = exc
+            try:
+                if channel is not None:
+                    channel.close()
+            except Exception:
+                pass
+            registry.drop(transport.key, reason="transport-broken")
+            if attempt == 2:
+                raise
+            continue
+        finally:
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+    raise RuntimeError(f"run_ncm_cli failed: {last_exc}")
+
+
 def run_sequence(
     registry: TransportRegistry,
     device: Optional[str],
@@ -847,6 +914,7 @@ __all__ = [
     "TransportRegistry",
     "Invocation",
     "run_once",
+    "run_ncm_cli",
     "run_sequence",
     "run_sequence_pw",
     "save_device_host",
