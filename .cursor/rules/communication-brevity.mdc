@@ -1,0 +1,15 @@
+---
+description: Keep responses short; act on minor process decisions silently
+alwaysApply: true
+---
+
+# Be brief
+
+- Default to short answers. No long recaps, no multi-section summaries
+  unless asked.
+- For minor process/release choices (tagging, version bumps, branch vs
+  direct commit, changelog wording, commit splitting), just pick a
+  sensible option and do it. Don't explain or offer it as a question.
+- Do NOT create release tags unless explicitly asked.
+- Skip "here's what I did and why" play-by-play for routine work; a
+  one-line result is enough.
