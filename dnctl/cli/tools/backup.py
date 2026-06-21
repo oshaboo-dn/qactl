@@ -69,6 +69,10 @@ from dnctl.cli.core.session import (
 # Minimum plausible size for a saved DNOS config. Real configs are multi-KB;
 # an empty file means the transfer silently truncated or never happened.
 _BACKUP_MIN_BYTES = 64
+# Upper bound for read_backup: a saved config is text and realistically a few
+# hundred KB at most. Refuse to slurp a pathologically large file into the
+# JSON envelope (OOM / huge response) — point the caller at the file path.
+_READ_BACKUP_MAX_BYTES = 16 * 1024 * 1024
 # Upload / download + commit can take a while on large configs; override with
 # the ``timeout`` kwarg on each tool.
 _BACKUP_DEFAULT_TIMEOUT = 120
@@ -756,6 +760,14 @@ def read_backup(
         return error_response(
             f"filename device prefix {stat.device!r} does not match "
             f"device argument {device!r}; refusing to read.",
+            device=device,
+        )
+    if stat.size_bytes > _READ_BACKUP_MAX_BYTES:
+        return error_response(
+            f"backup {filename!r} is {stat.size_bytes} bytes, over the "
+            f"{_READ_BACKUP_MAX_BYTES}-byte read_backup cap; inspect it "
+            f"directly at {stat.path} instead of loading it into the "
+            f"response.",
             device=device,
         )
 
