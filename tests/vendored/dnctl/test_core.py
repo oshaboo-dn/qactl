@@ -146,3 +146,67 @@ def test_unknown_name_resolves_to_none(device_map):
     assert dn_devices.resolve_canonical("ghost", path=device_map) is None
     assert dn_devices.resolve_mgmt0("ghost", path=device_map) is None
     assert dn_devices.get_device_entry("ghost", path=device_map) is None
+
+
+# --- rename (System Name drift) -------------------------------------------
+
+
+def test_rename_device_preserves_entry_and_keeps_old_alias(device_map):
+    aliases = dn_devices.rename_device("sa", "spine-new", path=device_map)
+    # old key is gone, new key carries the same entry
+    assert dn_devices.list_device_aliases(path=device_map) == ["cl", "spine-new"]
+    entry = dn_devices.get_device_entry("spine-new", path=device_map)
+    assert entry["mgmt0"] == "10.0.0.1"
+    assert entry["expected_sns"] == ["SN-SA"]
+    # old name retained as a secondary alias by default, still resolves
+    assert aliases == ["sa"]
+    assert dn_devices.resolve_canonical("sa", path=device_map) == "spine-new"
+    assert dn_devices.resolve_mgmt0("sa", path=device_map) == "10.0.0.1"
+
+
+def test_rename_device_drop_old_alias(device_map):
+    aliases = dn_devices.rename_device(
+        "sa", "spine-new", keep_old_as_alias=False, path=device_map
+    )
+    assert aliases == []
+    assert dn_devices.resolve_canonical("sa", path=device_map) is None
+    assert dn_devices.get_device_entry("spine-new", path=device_map) is not None
+
+
+def test_rename_device_carries_existing_aliases(device_map):
+    dn_devices.add_alias("nick", "sa", path=device_map)
+    aliases = dn_devices.rename_device("sa", "spine-new", path=device_map)
+    assert aliases == ["nick", "sa"]
+    # both old canonical and the prior nickname resolve to the new key
+    assert dn_devices.resolve_canonical("nick", path=device_map) == "spine-new"
+    assert dn_devices.resolve_canonical("sa", path=device_map) == "spine-new"
+
+
+def test_rename_when_new_was_existing_alias_promotes_it(device_map):
+    # 'spine-a' was a nickname of sa; renaming sa -> spine-a promotes it
+    dn_devices.add_alias("spine-a", "sa", path=device_map)
+    aliases = dn_devices.rename_device("sa", "spine-a", path=device_map)
+    assert dn_devices.list_device_aliases(path=device_map) == ["cl", "spine-a"]
+    # the promoted alias must not linger in the alias list
+    assert "spine-a" not in aliases
+    assert "sa" in aliases  # old name kept as alias
+
+
+def test_rename_rejects_collisions_and_unknown(device_map):
+    with pytest.raises(ValueError):
+        dn_devices.rename_device("sa", "cl", path=device_map)  # would collide
+    with pytest.raises(ValueError):
+        dn_devices.rename_device("ghost", "x", path=device_map)  # unknown old
+    with pytest.raises(ValueError):
+        dn_devices.rename_device("sa", "sa", path=device_map)  # no-op equal
+    # cannot take a name that's a secondary alias of a different device
+    dn_devices.add_alias("edge", "cl", path=device_map)
+    with pytest.raises(ValueError):
+        dn_devices.rename_device("sa", "edge", path=device_map)
+
+
+def test_rename_old_as_secondary_alias_is_rejected(device_map):
+    dn_devices.add_alias("spine-a", "sa", path=device_map)
+    with pytest.raises(ValueError) as exc:
+        dn_devices.rename_device("spine-a", "spine-new", path=device_map)
+    assert "secondary alias" in str(exc.value)

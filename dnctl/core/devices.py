@@ -304,6 +304,81 @@ def remove_alias(alias: str, path: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def rename_device(
+    old: str,
+    new: str,
+    keep_old_as_alias: bool = True,
+    path: Optional[str] = None,
+) -> List[str]:
+    """Rename a canonical device key in place, preserving its entry.
+
+    The whole entry (``mgmt0`` / ``expected_role`` / ``expected_sns`` /
+    ``system_id`` / ``aliases``) moves from ``old`` to ``new`` with no
+    re-probe — use this when a chassis's ``System Name`` changed and the
+    registry key needs to catch up without dropping creds/history.
+
+    ``old`` must be a **canonical** key (not a secondary alias). When
+    ``keep_old_as_alias`` is true the old name is retained as a secondary
+    alias so ``-d <old>`` keeps resolving to the same box.
+
+    Returns the renamed entry's secondary-alias list. Raises
+    ``ValueError`` when:
+
+    - ``old`` / ``new`` are empty or equal,
+    - ``old`` is not a registered canonical device,
+    - ``new`` is already a canonical device key (would collide), or
+    - ``new`` is a secondary alias of a *different* device.
+    """
+    if not isinstance(old, str) or not old:
+        raise ValueError("old must be a non-empty string")
+    if not isinstance(new, str) or not new:
+        raise ValueError("new must be a non-empty string")
+    if old == new:
+        raise ValueError("new must differ from old")
+
+    p = _resolve_path(path)
+    data = load_device_map(p)
+    devices = data.get("devices") or {}
+    data["devices"] = devices
+
+    entry = devices.get(old)
+    if not isinstance(entry, dict):
+        # Help the caller who passed a secondary alias by mistake.
+        canonical = resolve_canonical(old, p)
+        if canonical and canonical != old:
+            raise ValueError(
+                f"'{old}' is a secondary alias of '{canonical}', not a "
+                f"canonical device; rename '{canonical}' instead"
+            )
+        raise ValueError(f"device '{old}' is not registered")
+    if new in devices:
+        raise ValueError(
+            f"'{new}' is already a canonical device name; remove it first "
+            f"or pick a different name"
+        )
+    for key, other in devices.items():
+        if key != old and new in _entry_aliases(other):
+            raise ValueError(
+                f"'{new}' is already a secondary alias of device '{key}'"
+            )
+
+    # ``new`` may currently be a secondary alias of ``old`` itself — drop
+    # it from the alias list since it's becoming the canonical key.
+    aliases = [a for a in _entry_aliases(entry) if a != new]
+    if keep_old_as_alias and old not in aliases:
+        aliases.append(old)
+    if aliases:
+        entry["aliases"] = sorted(aliases)
+    else:
+        entry.pop("aliases", None)
+
+    devices.pop(old)
+    devices[new] = entry
+    _bump_generated_at(data)
+    _write_map(p, data)
+    return sorted(_entry_aliases(entry))
+
+
 def remove_device(device: str, path: Optional[str] = None) -> bool:
     """Drop the alias entirely. Returns True if it existed.
 
@@ -335,5 +410,6 @@ __all__ = [
     "add_alias",
     "remove_alias",
     "update_device",
+    "rename_device",
     "remove_device",
 ]
