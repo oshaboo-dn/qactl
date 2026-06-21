@@ -37,6 +37,12 @@ _ACCOUNTING_MAX_BYTES = 500_000
 _ACCOUNTING_TAIL_DEFAULT = 500
 _ACCOUNTING_TAIL_MAX = 50_000
 
+# Stable marker the path-resolve preamble prints when no candidate log
+# file exists. It goes to the shell's stderr (merged into the PTY output),
+# so the run looks "successful" with empty stdout unless we detect it —
+# otherwise an agent reads "no log file" as "no activity".
+_LOG_NOT_FOUND_MARKER = "log file not found; tried:"
+
 
 # On-disk log paths are candidate lists — tried in order at runtime, first
 # existing wins. This lets us follow DNOS layout changes across versions
@@ -225,6 +231,18 @@ def _run_log_tool(
         tool_name, device, host, user, password,
         linux_cmd, timeout, next_action,
     )
+    # No candidate path existed on the box: the preamble printed the
+    # not-found marker and exited 2. detect_error doesn't know that shape,
+    # so the envelope would otherwise stay "ok" with empty stdout — an
+    # agent reads that as "no activity" rather than "couldn't read the
+    # log". Escalate to an error.
+    if response.get("status") == "ok" and _LOG_NOT_FOUND_MARKER in (response.get("stdout") or ""):
+        response["status"] = "error"
+        response.setdefault("errors", []).append(
+            "log file not found on the device — none of the candidate "
+            "paths exist (the on-disk layout may have shifted)."
+        )
+        response.setdefault("next_actions", []).append(next_action)
     # head -c caps raw output at _ACCOUNTING_MAX_BYTES. send_shell_exec strips
     # the echo + trailing shell prompt from stdout, so the body byte count we
     # see here is at most ~N bytes off the cap. If we're anywhere near the
