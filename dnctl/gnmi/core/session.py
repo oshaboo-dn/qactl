@@ -4,7 +4,8 @@ Mirrors the spirit of `netconf-mcp/dnctl.nc.core/session.py` but adapted for
 gRPC: pygnmi's ``gNMIclient`` is itself a context manager so we don't pool
 TCP sessions here — we just translate the agent's input
 (``device``/``host``/``user``/``password``/``tls_mode``) into the right
-constructor arguments and apply the credential fallback.
+constructor arguments. Every connection uses the single lab account
+(``DEFAULT_USER`` / ``DEFAULT_PASSWORD``); there is no auth-failure fallback.
 
 TLS modes:
 
@@ -35,7 +36,6 @@ from dnctl.core import devices as _devices
 
 DEFAULT_USER = _creds.DEFAULT_USER
 DEFAULT_PASSWORD = _creds.DEFAULT_PASSWORD
-FALLBACK_CREDENTIALS = _creds.PROTOCOL_FALLBACK
 DEFAULT_PORT = 50051
 DEFAULT_TIMEOUT_S = 15
 
@@ -126,12 +126,12 @@ def open_client(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
-) -> tuple[gNMIclient, Resolved, str, bool]:
-    """Open a gNMIclient with credential fallback.
+) -> tuple[gNMIclient, Resolved, str]:
+    """Open a gNMIclient with the single lab account.
 
-    Returns (client, resolved, final_user, fallback_used). The caller
-    is responsible for ``client.__enter__()`` / ``__exit__`` since some
-    paths need to inspect attributes before opening the channel.
+    Returns (client, resolved, final_user). The caller is responsible
+    for ``client.__enter__()`` / ``__exit__`` since some paths need to
+    inspect attributes before opening the channel.
     """
     resolved = resolve_host(device, host)
     target = (resolved.host, port or resolved.port)
@@ -144,4 +144,4 @@ def open_client(
         ca_file=ca_file,
     )
     client = gNMIclient(**base_kwargs)
-    return client, resolved, final_user, False
+    return client, resolved, final_user

@@ -90,7 +90,7 @@ def _do_get(
     out: Dict[str, Any] = {"result": None, "error": None,
                            "slept_s": 0.0, "latency_ms": 0}
     try:
-        client, resolved, _, _ = open_client(
+        client, resolved, _ = open_client(
             device=device, host=host, port=port,
             user=user, password=password,
             tls_mode=tls_mode,
@@ -628,7 +628,7 @@ def gnmi_set(
 
     # Live path.
     try:
-        client, resolved, _, _ = open_client(
+        client, resolved, _ = open_client(
             device=device, host=host, port=port,
             user=user, password=password,
             tls_mode=tls_mode,

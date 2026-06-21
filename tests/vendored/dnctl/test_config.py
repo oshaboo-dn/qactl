@@ -36,12 +36,29 @@ def test_resolved_source_labels(cfg_file, monkeypatch):
     assert config.resolved_source("DNCTL_USER", "auth", "user", "dnroot") == "env:DNCTL_USER"
 
 
-def test_no_secret_baked_into_credentials():
+def test_no_secret_baked_into_credentials(tmp_path, monkeypatch):
+    # Hermetic: resolve against an empty config with no env overrides, so
+    # the assertions reflect the *shipped defaults* and not whatever the
+    # developer happens to have in ~/.config/dnctl/config.toml. The
+    # import-time constants are re-resolved via importlib.reload under the
+    # clean environment.
+    monkeypatch.setenv("DNCTL_CONFIG", str(tmp_path / "empty.toml"))
+    for var in (
+        "DNCTL_USER", "DNCTL_PASSWORD", "DNCTL_SSH_KEY",
+        "DNCTL_DNFTP_PASSWORD",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    config.load_config.cache_clear()
+
     import dnctl.core.credentials as creds
     import dnctl.core.dnftp as dnftp
-    src = importlib.util.find_spec("dnctl.core.credentials").origin
-    assert "drive1234" not in open(src, encoding="utf-8").read()
+    creds = importlib.reload(creds)
+    dnftp = importlib.reload(dnftp)
+
+    # No secret literal baked into either source file.
+    for mod in (creds, dnftp):
+        src = importlib.util.find_spec(mod.__name__).origin
+        assert "drive1234" not in open(src, encoding="utf-8").read()
     # No-config defaults: dnroot works, secrets are absent.
     assert creds.DEFAULT_USER == "dnroot"
-    assert creds.NETCONF_PASSWORD in (None, "") or "drive1234" not in str(creds.NETCONF_PASSWORD)
-    assert dnftp.DNFTP_PASSWORD in (None, "") or "drive1234" not in str(dnftp.DNFTP_PASSWORD)
+    assert dnftp.DNFTP_PASSWORD in (None, "")

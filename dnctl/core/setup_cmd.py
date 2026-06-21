@@ -32,15 +32,13 @@ SETTINGS: List[_Setting] = [
     ("DNCTL_USER", "auth", "user", "dnroot", False, "SSH / API user"),
     ("DNCTL_PASSWORD", "auth", "password", "dnroot", True, "Password"),
     ("DNCTL_SSH_KEY", "auth", "ssh_key", None, False, "SSH private-key path (blank to skip)"),
-    ("DNCTL_NETCONF_USER", "netconf", "user", "netconf", False, "NETCONF fallback user"),
-    ("DNCTL_NETCONF_PASSWORD", "netconf", "password", None, True, "NETCONF fallback password (blank to skip)"),
     ("DNCTL_DNFTP_HOST", "dnftp", "host", "dnftp", False, "dnftp host"),
     ("DNCTL_DNFTP_USER", "dnftp", "user", "dn", False, "dnftp user"),
     ("DNCTL_DNFTP_PASSWORD", "dnftp", "password", None, True, "dnftp password (blank to skip)"),
     ("DNCTL_DNFTP_VRF", "dnftp", "vrf", "mgmt0", False, "dnftp VRF"),
 ]
 
-_SECTION_ORDER = ["auth", "netconf", "dnftp"]
+_SECTION_ORDER = ["auth", "dnftp"]
 
 
 def _toml_escape(value: str) -> str:
@@ -121,8 +119,6 @@ def setup(
     user: Optional[str] = typer.Option(None, "--user", help="SSH / API user."),
     password: Optional[str] = typer.Option(None, "--password", help="Password."),
     ssh_key: Optional[str] = typer.Option(None, "--ssh-key", help="SSH private-key path."),
-    netconf_user: Optional[str] = typer.Option(None, "--netconf-user", help="NETCONF fallback user."),
-    netconf_password: Optional[str] = typer.Option(None, "--netconf-password", help="NETCONF fallback password."),
     dnftp_host: Optional[str] = typer.Option(None, "--dnftp-host", help="dnftp host."),
     dnftp_user: Optional[str] = typer.Option(None, "--dnftp-user", help="dnftp user."),
     dnftp_password: Optional[str] = typer.Option(None, "--dnftp-password", help="dnftp password."),
@@ -140,8 +136,6 @@ def setup(
         ("auth", "user"): user,
         ("auth", "password"): password,
         ("auth", "ssh_key"): ssh_key,
-        ("netconf", "user"): netconf_user,
-        ("netconf", "password"): netconf_password,
         ("dnftp", "host"): dnftp_host,
         ("dnftp", "user"): dnftp_user,
         ("dnftp", "password"): dnftp_password,

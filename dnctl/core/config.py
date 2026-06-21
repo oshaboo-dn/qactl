@@ -5,7 +5,7 @@ must not ship lab secrets baked into source. Anything sensitive comes
 from the user at setup time via one of two channels:
 
 * **env vars** — ``DNCTL_USER`` / ``DNCTL_PASSWORD`` / ``DNCTL_SSH_KEY`` /
-  ``DNCTL_NETCONF_USER`` / ``DNCTL_NETCONF_PASSWORD`` / ``DNCTL_DNFTP_*``.
+  ``DNCTL_DNFTP_*``.
 * **config file** — TOML at ``$DNCTL_CONFIG`` or
   ``~/.config/dnctl/config.toml`` (written by ``dnctl setup``, mode 0600).
 
@@ -24,10 +24,6 @@ Config file shape::
     user = "dnroot"
     password = "..."          # optional; omit to use a key or the default
     ssh_key = "~/.ssh/id_ed25519"
-
-    [netconf]
-    user = "netconf"
-    password = "..."
 
     [dnftp]
     host = "dnftp"

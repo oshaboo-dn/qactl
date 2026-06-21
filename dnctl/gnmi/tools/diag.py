@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from dnctl.gnmi.core.envelope import make_envelope, error_envelope
 from dnctl.gnmi.core.session import (
     DEFAULT_TIMEOUT_S,
-    FALLBACK_CREDENTIALS,
     open_client,
     VALID_TLS_MODES,
 )
@@ -55,7 +54,7 @@ def gnmi_ping(
     }
 
     try:
-        client, resolved, final_user, _ = open_client(
+        client, resolved, final_user = open_client(
             device=device, host=host, port=port,
             user=user, password=password,
             tls_mode=tls_mode,
@@ -130,7 +129,7 @@ def gnmi_capabilities(
     }
 
     try:
-        client, resolved, _, _ = open_client(
+        client, resolved, _ = open_client(
             device=device, host=host, port=port,
             user=user, password=password,
             tls_mode=tls_mode,

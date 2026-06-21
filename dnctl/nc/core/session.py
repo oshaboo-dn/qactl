@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 from lxml import etree
 from ncclient import manager
-from ncclient.transport.errors import AuthenticationError
 
 from dnctl.core import credentials as _creds
 from dnctl.core import devices as _devices
@@ -27,7 +26,6 @@ ROOT_DIR = _paths.state_dir("nc")
 OPERATIONS_DIR = ROOT_DIR / "operations"
 IL_TZ = ZoneInfo("Asia/Jerusalem")
 
-FALLBACK_CREDENTIALS = _creds.PROTOCOL_FALLBACK
 DEFAULT_USER = _creds.DEFAULT_USER
 DEFAULT_PASSWORD = _creds.DEFAULT_PASSWORD
 DEFAULT_PORT = 830
@@ -193,7 +191,6 @@ class ConnectResult:
     port: int
     user: str
     device: Optional[str] = field(default=None, repr=False)
-    fallback_used: bool = field(default=False, repr=False)
     sn_verified: bool = field(default=False, repr=False)
     serial_numbers: List[str] = field(default_factory=list, repr=False)
     role: Optional[str] = field(default=None, repr=False)
@@ -217,36 +214,18 @@ def _raw_connect(
     password: str,
     hostkey_verify: bool,
     timeout: int,
-) -> tuple:
-    """Low-level NETCONF connect with credential fallback. Returns (mgr, actual_user, fallback_used)."""
+) -> manager.Manager:
+    """Low-level NETCONF connect with the single lab account. Returns the manager."""
     key = _creds.SSH_KEY
-    try:
-        mgr = manager.connect(
-            host=host, port=port,
-            username=user, password=password,
-            key_filename=key,
-            allow_agent=bool(key), look_for_keys=bool(key),
-            hostkey_verify=hostkey_verify,
-            device_params={"name": "default"},
-            timeout=timeout,
-        )
-        return mgr, user, False
-    except AuthenticationError:
-        fb_user, fb_pass = FALLBACK_CREDENTIALS
-        # Fallback only exists if the user configured a NETCONF password
-        # (or has an SSH key to offer). Otherwise re-raise the original.
-        if not fb_pass and not key:
-            raise
-        mgr = manager.connect(
-            host=host, port=port,
-            username=fb_user, password=fb_pass,
-            key_filename=key,
-            allow_agent=bool(key), look_for_keys=bool(key),
-            hostkey_verify=hostkey_verify,
-            device_params={"name": "default"},
-            timeout=timeout,
-        )
-        return mgr, fb_user, True
+    return manager.connect(
+        host=host, port=port,
+        username=user, password=password,
+        key_filename=key,
+        allow_agent=bool(key), look_for_keys=bool(key),
+        hostkey_verify=hostkey_verify,
+        device_params={"name": "default"},
+        timeout=timeout,
+    )
 
 
 def connect(
@@ -278,12 +257,11 @@ def connect(
     actual_pass = password if password is not None else DEFAULT_PASSWORD
 
     if host:
-        mgr, final_user, fallback = _raw_connect(
+        mgr = _raw_connect(
             host, port, actual_user, actual_pass, hostkey_verify, timeout,
         )
         return ConnectResult(
-            mgr=mgr, host=host, port=port, user=final_user,
-            fallback_used=fallback,
+            mgr=mgr, host=host, port=port, user=actual_user,
         )
 
     if not device:
@@ -301,7 +279,7 @@ def connect(
     expected_sns = _get_expected_sns(device, map_file)
 
     def _try_connect(target_host: str) -> ConnectResult:
-        mgr, final_user, fallback = _raw_connect(
+        mgr = _raw_connect(
             target_host, port, actual_user, actual_pass, hostkey_verify, timeout,
         )
 
@@ -322,8 +300,8 @@ def connect(
             _update_device_map_entry(map_file, device, expected_sns=actual_sns)
 
         return ConnectResult(
-            mgr=mgr, host=target_host, port=port, user=final_user,
-            device=device, fallback_used=fallback,
+            mgr=mgr, host=target_host, port=port, user=actual_user,
+            device=device,
             sn_verified=sn_verified, serial_numbers=actual_sns,
             role=expected_role,
         )
