@@ -348,6 +348,10 @@ def _refresh_device(
             f"operation='add' with sn=<ssh-host> to register it first.",
             hosts=[], refreshed=False,
         )
+    # Operate on the canonical key, not a passed-in secondary nickname —
+    # otherwise the map write below forks a ghost canonical entry and the
+    # drift check compares the chassis name against the wrong key.
+    name = _dn_devices.resolve_canonical(name) or name
     raw_sns = entry.get("expected_sns") if isinstance(entry, dict) else None
     sns: List[str] = (
         [s for s in raw_sns if isinstance(s, str) and s]

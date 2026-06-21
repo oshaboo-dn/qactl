@@ -101,16 +101,27 @@ def reload_device_hosts() -> Dict[str, List[str]]:
 
 
 def _refresh_alias_in_cache(alias: str) -> List[str]:
-    """Re-read ``alias``'s SN list from the canonical map into the cache."""
-    entry = _dn_devices.get_device_entry(alias)
+    """Re-read ``alias``'s SN list from the canonical map into the cache.
+
+    The cache is keyed by **canonical** alias (mirroring
+    :func:`_load_device_hosts`), so resolve a secondary nickname back to
+    its canonical key before touching the cache — otherwise a refresh
+    keyed off a nickname would leave a stale entry under the nickname and
+    never update the real one.
+    """
+    canonical = _dn_devices.resolve_canonical(alias) or alias
+    entry = _dn_devices.get_device_entry(canonical)
     sns: List[str] = []
     if isinstance(entry, dict):
         raw = entry.get("expected_sns")
         if isinstance(raw, list):
             sns = [s for s in raw if isinstance(s, str) and s]
     if sns:
-        DEVICE_HOSTS[alias] = list(sns)
+        DEVICE_HOSTS[canonical] = list(sns)
     else:
+        DEVICE_HOSTS.pop(canonical, None)
+    # Drop any stale entry left under a secondary nickname.
+    if alias != canonical:
         DEVICE_HOSTS.pop(alias, None)
     return list(sns)
 
@@ -134,7 +145,11 @@ def save_device_host(alias: str, sn: str) -> Tuple[bool, List[str]]:
     if not sn or not isinstance(sn, str):
         raise ValueError("sn must be a non-empty string")
 
-    entry = _dn_devices.get_device_entry(alias) or {}
+    # Write under the canonical key, never a secondary nickname — passing
+    # a nickname to update_device would fork a ghost canonical entry. A
+    # brand-new name (resolves to nothing) becomes its own canonical key.
+    canonical = _dn_devices.resolve_canonical(alias) or alias
+    entry = _dn_devices.get_device_entry(canonical) or {}
     current_raw = entry.get("expected_sns") if isinstance(entry, dict) else None
     if current_raw is None:
         current: List[str] = []
@@ -142,15 +157,15 @@ def save_device_host(alias: str, sn: str) -> Tuple[bool, List[str]]:
         current = list(current_raw)
     else:
         raise ValueError(
-            f"devices_mgmt0.json: entry '{alias}'.expected_sns must be a list of strings"
+            f"devices_mgmt0.json: entry '{canonical}'.expected_sns must be a list of strings"
         )
 
     added = sn not in current
     hosts_after = list(current) + ([sn] if added else [])
     if added:
-        _dn_devices.update_device(alias, expected_sns=hosts_after)
+        _dn_devices.update_device(canonical, expected_sns=hosts_after)
 
-    _refresh_alias_in_cache(alias)
+    _refresh_alias_in_cache(canonical)
     return added, hosts_after
 
 
@@ -169,7 +184,12 @@ def remove_device_host(alias: str, sn: Optional[str] = None) -> Tuple[bool, List
     if not alias or not isinstance(alias, str):
         raise ValueError("name must be a non-empty string")
 
-    entry = _dn_devices.get_device_entry(alias)
+    # Resolve a secondary nickname to its canonical key first. Operating
+    # on the raw nickname would make remove_device a silent no-op (it only
+    # pops canonical keys) while we report success, and update_device would
+    # fork a ghost entry under the nickname.
+    canonical = _dn_devices.resolve_canonical(alias) or alias
+    entry = _dn_devices.get_device_entry(canonical)
     if entry is None:
         return False, []
 
@@ -180,12 +200,12 @@ def remove_device_host(alias: str, sn: Optional[str] = None) -> Tuple[bool, List
         current = list(current_raw)
     else:
         raise ValueError(
-            f"devices_mgmt0.json: entry '{alias}'.expected_sns must be a list of strings"
+            f"devices_mgmt0.json: entry '{canonical}'.expected_sns must be a list of strings"
         )
 
     if sn is None:
-        _dn_devices.remove_device(alias)
-        _refresh_alias_in_cache(alias)
+        _dn_devices.remove_device(canonical)
+        _refresh_alias_in_cache(canonical)
         return True, []
 
     if sn not in current:
@@ -193,10 +213,10 @@ def remove_device_host(alias: str, sn: Optional[str] = None) -> Tuple[bool, List
 
     remaining = [h for h in current if h != sn]
     if not remaining:
-        _dn_devices.remove_device(alias)
+        _dn_devices.remove_device(canonical)
     else:
-        _dn_devices.update_device(alias, expected_sns=remaining)
-    _refresh_alias_in_cache(alias)
+        _dn_devices.update_device(canonical, expected_sns=remaining)
+    _refresh_alias_in_cache(canonical)
     return True, remaining
 
 
