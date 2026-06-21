@@ -1,10 +1,15 @@
 # qactl
 
-One **agent-shaped** command-line tool for an entire QA workflow — DNOS
-devices, IxNetwork traffic generation, Jira, Confluence, and Jenkins —
-behind a single consistent contract. It collapses a fleet of local MCP
-servers and scattered helper scripts into one executable an AI agent (or
-a human) drives over a shell.
+One **agent-shaped** tool for an entire QA workflow — DNOS devices,
+IxNetwork traffic generation, Jira, Confluence, and Jenkins — behind a
+single consistent contract, exposed over **two interchangeable fronts**:
+
+- a **CLI** (`qactl <group> <cmd> --json`) for shells, scripting, and CI, and
+- a **local stdio MCP server** (`qactl mcp <group>`) for AI agents.
+
+Both fronts drive the *same* shared tool layer, so they stay in lockstep.
+It collapses a fleet of MCP servers and scattered helper scripts into one
+executable.
 
 | Group | Domain | Source |
 |---|---|---|
@@ -18,7 +23,60 @@ a human) drives over a shell.
 groups delegate to the bundled `dnctl` / `ixiactl` entrypoints unchanged
 (full surface, help, and behaviour preserved), while `jira` /
 `confluence` / `jenkins` are implemented natively. All groups share the
-same contract.
+same contract, and the same envelope-returning tool functions back both
+the CLI and the MCP front.
+
+## MCP front (stdio)
+
+```bash
+qactl mcp jira          # serve the jira tools over stdio
+qactl mcp all           # one server exposing every group
+qactl mcp --list        # print each group's exposed MCP tools (JSON)
+qactl mcp --help
+```
+
+Register it in your MCP client (Cursor/Claude) — stdio, no HTTP ports, no
+systemd. See [`mcp.example.json`](mcp.example.json):
+
+```json
+{
+  "mcpServers": {
+    "qactl-jira":    { "command": "qactl", "args": ["mcp", "jira"] },
+    "qactl-jenkins": { "command": "qactl", "args": ["mcp", "jenkins"] },
+    "qactl-cli":     { "command": "qactl", "args": ["mcp", "cli"] }
+  }
+}
+```
+
+Because the server runs **locally over stdio** (same host as the agent),
+tools that touch local files behave exactly as they do under the CLI, and
+credentials resolve from the **environment** the client launches `qactl`
+with (`ATLASSIAN_*`, `JENKINS_*`, device creds via `qactl setup`) — there
+are no per-request HTTP headers. Destructive MCP tools require a
+`confirm=true` argument (the MCP equivalent of the CLI's `--yes`).
+
+### What's on MCP vs CLI-only
+
+Agent-driven surfaces are exposed over MCP: all of `jira`, `confluence`,
+`jenkins`, `gnmi`, `rc`, `ixia`, plus the operational subset of `cli` and
+`nc`. A small set stays **CLI-only** because it moves large artifacts over
+remote `dnftp` SFTP and/or runs long — the process-per-invocation CLI fits
+it better and it gains nothing from the local stdio model:
+
+- `setup` (one-time device registry / credentials)
+- `cli`: `backup_device`, `list_backups`, `read_backup`, `restore_device`,
+  `create_techsupport`, `get_techsupport_job`, `request_system_tar_load`,
+  `request_system_pre_check`, `get_tar_load_job`, `scale_deploy`
+- `nc`: `netconf_backup`, `netconf_restore`, `netconf_list_backups`,
+  `netconf_read_backup`
+
+Run those as `qactl cli ... --yes` / `qactl nc ...` / `qactl setup`.
+
+> Migrating from the old HTTP MCP servers (ports 8200–8207 under systemd):
+> replace each `http://127.0.0.1:820N/mcp` URL entry with a stdio
+> `{"command": "qactl", "args": ["mcp", "<group>"]}` entry, drop the
+> systemd units, and move credentials from request headers to the
+> environment.
 
 ## The contract
 
@@ -165,12 +223,20 @@ Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
 ```
 qactl/
   qactl/
-    core/        envelope, output/exit-codes, creds (env), CLI plumbing
-    jira/        client.py (REST) + cli.py  -> qactl jira ...
-    confluence/  client.py (REST) + cli.py  -> qactl confluence ...
-    jenkins/     client.py (REST) + cli.py  -> qactl jenkins ...
-    __main__.py  dispatcher: native groups + delegation to dnctl / ixiactl
-  dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup
-  ixiactl/ ixia/ ixia_core/ ixia_tools/    vendored Ixia CLI -> qactl ixia
-tests/           native CLI tests + vendored dnctl / ixiactl suites
+    core/        envelope, output/exit-codes, creds (env), request_log, CLI plumbing
+    jira/        client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jira ...
+    confluence/  client.py (REST) + tools.py (envelopes) + cli.py  -> qactl confluence ...
+    jenkins/     client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jenkins ...
+    mcp/         registry.py (group->tool surface map) + server.py -> qactl mcp ...
+    __main__.py  dispatcher: native groups, mcp front, delegation to dnctl / ixiactl
+  dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup (+ MCP tools)
+  ixiactl/ ixia/ ixia_core/ ixia_tools/    vendored Ixia CLI -> qactl ixia (+ MCP tools)
+  mcp.example.json   stdio mcp.json template for MCP clients
+tests/           native CLI tests + MCP front tests + vendored dnctl / ixiactl suites
 ```
+
+The `tools.py` layer is the shared "compute an envelope" boundary: each
+function returns the one envelope dict, the CLI prints it via `emit()`,
+and the MCP front serializes it as the tool result. The vendored
+`dnctl/*/tools/*` and `ixia_tools/*` already are this layer (they kept
+their `register(mcp)` hooks), so the MCP front re-exposes them directly.

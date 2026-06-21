@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Example Cursor/Claude mcp.json for qactl's stdio MCP front.",
+    "Copy the entries you want into your client's mcp.json (e.g. ~/.cursor/mcp.json",
+    "or the project .cursor/mcp.json) and toggle the servers on.",
+    "",
+    "Each server is a local stdio process: `qactl mcp <group>`. No HTTP ports,",
+    "no systemd units. Credentials resolve from the environment the client",
+    "launches qactl with (ATLASSIAN_* for jira/confluence, JENKINS_* for jenkins,",
+    "device creds via `qactl setup`); never put secrets in this file.",
+    "",
+    "Per-group servers keep tool schemas small and let you enable only what you",
+    "need (e.g. skip the heavy ixia stack). Use the single 'qactl-all' entry",
+    "instead if you prefer one server exposing every group.",
+    "",
+    "Heavy dnftp / large-artifact tools (device + netconf backups, tech-support,",
+    "tar-load, scale-deploy) and `setup` are intentionally CLI-only; run those as",
+    "`qactl cli ...` / `qactl nc ...` / `qactl setup` from a shell."
+  ],
+  "mcpServers": {
+    "qactl-jira": {
+      "command": "qactl",
+      "args": ["mcp", "jira"]
+    },
+    "qactl-confluence": {
+      "command": "qactl",
+      "args": ["mcp", "confluence"]
+    },
+    "qactl-jenkins": {
+      "command": "qactl",
+      "args": ["mcp", "jenkins"]
+    },
+    "qactl-cli": {
+      "command": "qactl",
+      "args": ["mcp", "cli"]
+    },
+    "qactl-nc": {
+      "command": "qactl",
+      "args": ["mcp", "nc"]
+    },
+    "qactl-gnmi": {
+      "command": "qactl",
+      "args": ["mcp", "gnmi"]
+    },
+    "qactl-rc": {
+      "command": "qactl",
+      "args": ["mcp", "rc"]
+    },
+    "qactl-ixia": {
+      "command": "qactl",
+      "args": ["mcp", "ixia"]
+    },
+    "qactl-all": {
+      "command": "qactl",
+      "args": ["mcp", "all"]
+    }
+  }
+}

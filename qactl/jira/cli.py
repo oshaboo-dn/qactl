@@ -1,104 +1,47 @@
 """``qactl jira ...`` — Jira Cloud watchers, attachments, comments, transitions.
 
-Fills the same gaps the local atlassian-mcp filled (watcher CRUD,
-attachment upload/delete, comment delete, workflow transitions) plus a
-quick ``status`` read — but as shell subcommands with ``--json``, real
-exit codes, and a ``--yes`` gate on the destructive ones.
+Thin argparse front: every handler resolves args, applies the ``--yes`` /
+TTY confirm gate for destructive ops, then calls the shared envelope layer
+in :mod:`qactl.jira.tools` (the same functions the stdio MCP server
+exposes) and prints the result via :func:`qactl.core.output.emit`.
 """
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict
 
 from qactl.core.common import confirm_or_exit, resolve_timeout
-from qactl.core.creds import CredentialError
-from qactl.core.envelope import error_envelope, ok_envelope
 from qactl.core.output import emit
-from qactl.jira.client import JiraClient, JiraError
+from qactl.jira import tools
 
 
-def _client(args: argparse.Namespace, *, kind: str) -> Tuple[Optional[JiraClient], Optional[dict]]:
-    try:
-        client = JiraClient.from_env(
-            timeout=resolve_timeout(args, 30.0),
-            email=getattr(args, "email", None),
-            api_token=getattr(args, "token", None),
-            base_url=getattr(args, "base_url", None),
-        )
-        return client, None
-    except CredentialError as e:
-        return None, error_envelope(str(e), kind=kind, status="bad_argument")
-
-
-def _jira_err(e: JiraError, *, kind: str) -> dict:
-    return error_envelope(
-        f"Jira REST {e.method} -> HTTP {e.status_code}: {e.body[:300]}",
-        kind=kind,
-        next_actions=[
-            "Check the issue key / id and that the token can see this issue; "
-            "401/403 means auth or permissions, 404 means it's missing."
-        ],
-        result={"http_status": e.status_code, "http_body": e.body[:1000]},
-    )
-
-
-def _run(args, *, kind, fn):
-    """Build a client, run ``fn(client)``, and emit the resulting envelope."""
-    client, err = _client(args, kind=kind)
-    if err is not None:
-        return emit(err, as_json=args.json)
-    try:
-        env = fn(client)
-    except JiraError as e:
-        env = _jira_err(e, kind=kind)
-    except Exception as e:  # noqa: BLE001
-        env = error_envelope(f"{kind} failed: {e}", kind=kind)
-    return emit(env, as_json=args.json)
+def _creds(args: argparse.Namespace) -> Dict[str, Any]:
+    return {
+        "timeout": resolve_timeout(args, 30.0),
+        "email": getattr(args, "email", None),
+        "token": getattr(args, "token", None),
+        "base_url": getattr(args, "base_url", None),
+    }
 
 
 # ---- handlers ------------------------------------------------------------
 
 def _whoami(args):
-    def fn(c):
-        me = c.myself()
-        return ok_envelope(kind="jira_whoami", result={
-            "account_id": me.get("accountId"),
-            "email": me.get("emailAddress"),
-            "display_name": me.get("displayName"),
-            "active": me.get("active"),
-            "time_zone": me.get("timeZone"),
-        })
-    return _run(args, kind="jira_whoami", fn=fn)
+    return emit(tools.jira_whoami(**_creds(args)), as_json=args.json)
 
 
 def _status(args):
-    return _run(args, kind="jira_status",
-                fn=lambda c: ok_envelope(kind="jira_status",
-                                         result=c.get_issue_status(args.issue_key)))
+    return emit(tools.jira_status(args.issue_key, **_creds(args)), as_json=args.json)
 
 
 def _watchers_list(args):
-    def fn(c):
-        data = c.list_watchers(args.issue_key)
-        return ok_envelope(kind="jira_list_watchers", result={
-            "issue_key": args.issue_key,
-            "is_watching": bool(data.get("isWatching")),
-            "watch_count": int(data.get("watchCount") or 0),
-            "watchers": list(data.get("watchers") or []),
-        })
-    return _run(args, kind="jira_list_watchers", fn=fn)
+    return emit(tools.jira_list_watchers(args.issue_key, **_creds(args)), as_json=args.json)
 
 
 def _watchers_add(args):
-    def fn(c):
-        code = c.add_watcher(args.issue_key, args.account_id)
-        return ok_envelope(kind="jira_add_watcher", result={
-            "issue_key": args.issue_key, "account_id": args.account_id,
-            "http_status": code,
-        })
-    return _run(args, kind="jira_add_watcher", fn=fn)
+    return emit(tools.jira_add_watcher(args.issue_key, args.account_id, **_creds(args)),
+                as_json=args.json)
 
 
 def _watchers_remove(args):
@@ -106,51 +49,17 @@ def _watchers_remove(args):
                          action=f"Remove watcher {args.account_id} from {args.issue_key}.")
     if rc is not None:
         return rc
-
-    def fn(c):
-        code = c.remove_watcher(args.issue_key, args.account_id)
-        return ok_envelope(kind="jira_remove_watcher", result={
-            "issue_key": args.issue_key, "account_id": args.account_id,
-            "http_status": code,
-        })
-    return _run(args, kind="jira_remove_watcher", fn=fn)
+    return emit(tools.jira_remove_watcher(args.issue_key, args.account_id,
+                                          confirm=True, **_creds(args)), as_json=args.json)
 
 
 def _attachments_list(args):
-    def fn(c):
-        raw = c.list_attachments(args.issue_key)
-        summary = [{
-            "id": a.get("id"),
-            "filename": a.get("filename"),
-            "size": a.get("size"),
-            "mime_type": a.get("mimeType"),
-            "created": a.get("created"),
-            "author_display_name": (a.get("author") or {}).get("displayName"),
-            "content_url": a.get("content"),
-        } for a in raw]
-        return ok_envelope(kind="jira_list_attachments", result={
-            "issue_key": args.issue_key, "count": len(summary),
-            "attachments": summary,
-        })
-    return _run(args, kind="jira_list_attachments", fn=fn)
+    return emit(tools.jira_list_attachments(args.issue_key, **_creds(args)), as_json=args.json)
 
 
 def _attachments_upload(args):
-    path = Path(args.file)
-    if not path.is_file():
-        return emit(error_envelope(f"not a file: {path}", kind="jira_upload_attachment",
-                                   status="bad_argument"), as_json=args.json)
-
-    def fn(c):
-        created = c.upload_attachment(args.issue_key, path, name=args.name)
-        return ok_envelope(kind="jira_upload_attachment", result={
-            "issue_key": args.issue_key,
-            "attachments": [{
-                "id": a.get("id"), "filename": a.get("filename"),
-                "size": a.get("size"), "content_url": a.get("content"),
-            } for a in created],
-        })
-    return _run(args, kind="jira_upload_attachment", fn=fn)
+    return emit(tools.jira_upload_attachment(args.issue_key, args.file, name=args.name,
+                                             **_creds(args)), as_json=args.json)
 
 
 def _attachments_delete(args):
@@ -158,12 +67,8 @@ def _attachments_delete(args):
                          action=f"Delete attachment {args.attachment_id} (no undo).")
     if rc is not None:
         return rc
-
-    def fn(c):
-        code = c.delete_attachment(args.attachment_id)
-        return ok_envelope(kind="jira_delete_attachment",
-                           result={"attachment_id": args.attachment_id, "http_status": code})
-    return _run(args, kind="jira_delete_attachment", fn=fn)
+    return emit(tools.jira_delete_attachment(args.attachment_id, confirm=True, **_creds(args)),
+                as_json=args.json)
 
 
 def _comment_delete(args):
@@ -171,28 +76,12 @@ def _comment_delete(args):
                          action=f"Delete comment {args.comment_id} on {args.issue_key} (no undo).")
     if rc is not None:
         return rc
-
-    def fn(c):
-        code = c.delete_comment(args.issue_key, args.comment_id)
-        return ok_envelope(kind="jira_delete_comment", result={
-            "issue_key": args.issue_key, "comment_id": args.comment_id,
-            "http_status": code,
-        })
-    return _run(args, kind="jira_delete_comment", fn=fn)
+    return emit(tools.jira_delete_comment(args.issue_key, args.comment_id,
+                                          confirm=True, **_creds(args)), as_json=args.json)
 
 
 def _transitions_list(args):
-    def fn(c):
-        ts = c.list_transitions(args.issue_key)
-        return ok_envelope(kind="jira_list_transitions", result={
-            "issue_key": args.issue_key,
-            "transitions": [{
-                "id": t.get("id"), "name": t.get("name"),
-                "to_status": (t.get("to") or {}).get("name"),
-                "has_screen": t.get("hasScreen"),
-            } for t in ts],
-        })
-    return _run(args, kind="jira_list_transitions", fn=fn)
+    return emit(tools.jira_list_transitions(args.issue_key, **_creds(args)), as_json=args.json)
 
 
 def _transitions_do(args):
@@ -200,30 +89,8 @@ def _transitions_do(args):
                          action=f"Transition {args.issue_key} via transition id {args.transition_id}.")
     if rc is not None:
         return rc
-
-    def fn(c):
-        available = c.list_transitions(args.issue_key)
-        match = next((t for t in available if str(t.get("id")) == str(args.transition_id)), None)
-        if match is None:
-            legal = ", ".join(
-                f"{t.get('id')}={t.get('name')!r}->{(t.get('to') or {}).get('name')!r}"
-                for t in available
-            ) or "(none — terminal status or no permission)"
-            return error_envelope(
-                f"transition_id={args.transition_id!r} is not valid for "
-                f"{args.issue_key} right now. Valid: [{legal}].",
-                kind="jira_transition_issue", status="bad_argument",
-                next_actions=["qactl jira transitions list <issue> to see valid ids."],
-                result={"issue_key": args.issue_key, "available_transitions": available},
-            )
-        c.transition_issue(args.issue_key, str(args.transition_id))
-        to = match.get("to") or {}
-        return ok_envelope(kind="jira_transition_issue", result={
-            "issue_key": args.issue_key,
-            "transition": {"id": match.get("id"), "name": match.get("name")},
-            "to_status": to.get("name"),
-        })
-    return _run(args, kind="jira_transition_issue", fn=fn)
+    return emit(tools.jira_transition_issue(args.issue_key, args.transition_id,
+                                            confirm=True, **_creds(args)), as_json=args.json)
 
 
 # ---- registration --------------------------------------------------------

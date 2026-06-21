@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qactl"
-version = "0.2.0"
-description = "One agent-shaped CLI for a QA workflow: DNOS devices (cli/nc/gnmi/rc), Ixia traffic, Jira, Confluence, and Jenkins."
+version = "0.3.0"
+description = "One agent-shaped tool for a QA workflow over CLI or stdio MCP: DNOS devices (cli/nc/gnmi/rc), Ixia traffic, Jira, Confluence, and Jenkins."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -14,6 +14,8 @@ keywords = ["dnos", "netconf", "gnmi", "restconf", "ixia", "ixnetwork",
             "jira", "confluence", "jenkins", "cli", "qa", "automation"]
 
 dependencies = [
+    # MCP front (stdio servers exposing the shared tool layer)
+    "mcp>=1.2",
     # Atlassian / Jenkins (native groups)
     "requests>=2.28",
     # DNOS device groups (vendored dnctl)

@@ -1,4 +1,4 @@
-"""qactl — one agent-shaped CLI for an entire QA workflow.
+"""qactl — one agent-shaped tool for an entire QA workflow, CLI or MCP.
 
 A single executable that unifies every surface a QA engineer drives:
 
@@ -6,10 +6,11 @@ A single executable that unifies every surface a QA engineer drives:
     ixia                           IxNetwork      (vendored ixiactl)
     jira / confluence / jenkins    Atlassian/CI   (native)
 
-One shell-driven contract across all of them: ``--json`` everywhere,
-real exit codes, stdin payloads, and a ``--yes`` confirm gate on
-destructive ops. Credentials resolve at runtime from the environment;
-none are stored in the repo.
+Two fronts over one shared tool layer: the shell-driven CLI
+(``--json`` everywhere, real exit codes, stdin payloads, ``--yes``
+confirm gate) and a local stdio MCP server (``qactl mcp <group>``).
+Credentials resolve at runtime from the environment; none are stored in
+the repo.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

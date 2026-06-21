@@ -1,176 +1,83 @@
 """``qactl jenkins ...`` — trigger and inspect Jenkins (cheetah) builds.
 
-Reuses the jenkins-mcp cheetah parameter mapping. Unlike the MCP (which
-kicked off an async background worker), ``trigger`` is synchronous from
-the shell's point of view: by default it returns the queued handle
-immediately; with ``--wait`` it polls the queue then the build to
-completion and exits non-zero if the build didn't succeed.
+Thin argparse front over :mod:`qactl.jenkins.tools` (the same envelope
+layer the stdio MCP server exposes). ``build_cheetah_params`` and
+``_parse_params`` are kept here (delegating to ``tools``) so existing
+imports/tests keep working.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from qactl.core.common import confirm_or_exit, resolve_timeout
-from qactl.core.creds import CredentialError
-from qactl.core.envelope import error_envelope, ok_envelope
+from qactl.core.envelope import error_envelope
 from qactl.core.output import emit
-from qactl.jenkins.client import JenkinsClient, branch_to_job_path
+from qactl.jenkins import tools
+from qactl.jenkins.client import JenkinsClient
 
 
-_CHEETAH_DEFAULT_PARAMS: dict[str, Any] = {
-    "HTML_ADDITIONS": "", "SHOULD_LINT": "Yes", "SHOULD_BUILD_DNOS_CONTAINERS": "Yes",
-    "SHOULD_BUILD_TARBALLS": "Yes", "SHOULD_BUILD_BASEOS_CONTAINERS": "No",
-    "SHOULD_RUN_SMOKE_TESTS": "Yes", "SHOULD_ALLOW_DELTA_BUILD": "No",
-    "TESTS_TO_RUN": "Choose test suites to run", "TEST_NAMES": "", "SINGLE_TEST": "",
-    "SINGLE_TEST_LABEL": "test-tiny", "SINGLE_TEST_CUSTOM": "", "SINGLE_TEST_PARALLEL": "1",
-    "KEEP_SETUP_ON_FAILURE": "False", "SINGLE_TEST_LOOP": "1", "QA_VERSION": "False",
-    "PROMOTE_RELEASE": "False", "PUSH_MODEL_FILES": "False", "ALTERNATEREG": "",
-    "SLACK_CHANNEL": "", "BUILD_SPECIAL_ENV": "", "NIGHTLY": "False", "NIGHTLY_SPECIAL": "",
-    "SYNC_TO_RO": "False", "SYNC_TO_AWS": "False", "SUPPORT_NCCM": "False",
-}
+def build_cheetah_params(args, client: Optional[JenkinsClient], job_path: str) -> Tuple[dict, Optional[str]]:
+    """Resolve cheetah params from parsed args (delegates to the tool layer)."""
+    return tools.build_cheetah_params(
+        client, job_path,
+        inherit_from=args.inherit_from, sanitizer=args.sanitizer, baseos=args.baseos,
+        no_lint=args.no_lint, no_dnos=args.no_dnos, no_tarballs=args.no_tarballs,
+        no_smoke=args.no_smoke, delta_build=args.delta_build, single_test=args.single_test,
+        single_test_label=args.single_test_label, single_test_parallel=args.single_test_parallel,
+        single_test_loop=args.single_test_loop, keep_setup_on_failure=args.keep_setup_on_failure,
+        nightly=args.nightly, qa_version=args.qa_version, slack_channel=args.slack_channel,
+        extra_params=json.loads(args.extra_params) if args.extra_params else None,
+    )
 
 
-def _yn(v: bool) -> str:
-    return "Yes" if v else "No"
+def _parse_params(pairs, extra_params_json) -> Dict[str, Any]:
+    """Merge repeated ``--param K=V`` with an ``--extra-params`` JSON dict."""
+    out: Dict[str, Any] = {}
+    for item in pairs or []:
+        if "=" not in item:
+            raise ValueError(f"--param {item!r} must be of the form KEY=VALUE")
+        k, _, v = item.partition("=")
+        out[k.strip()] = v
+    if extra_params_json:
+        extra = json.loads(extra_params_json)
+        if not isinstance(extra, dict):
+            raise ValueError("--extra-params must be a JSON object")
+        out.update(extra)
+    return out
 
 
-def _tf(v: bool) -> str:
-    return "True" if v else "False"
-
-
-def build_cheetah_params(args, client: JenkinsClient, job_path: str) -> Tuple[dict, Optional[str]]:
-    """Resolve cheetah params: defaults → inherit → named overrides → extra."""
-    params = dict(_CHEETAH_DEFAULT_PARAMS)
-    warning: Optional[str] = None
-    if args.inherit_from is not None:
-        try:
-            params.update(client.get_build_parameters(job_path, args.inherit_from))
-        except Exception as exc:  # noqa: BLE001
-            warning = f"Could not inherit from build {args.inherit_from}: {exc}. Using defaults."
-    params.update({
-        "SHOULD_LINT": _yn(not args.no_lint),
-        "SHOULD_BUILD_DNOS_CONTAINERS": _yn(not args.no_dnos),
-        "SHOULD_BUILD_TARBALLS": _yn(not args.no_tarballs),
-        "SHOULD_BUILD_BASEOS_CONTAINERS": _yn(args.baseos),
-        "SHOULD_RUN_SMOKE_TESTS": _yn(not args.no_smoke),
-        "SHOULD_ALLOW_DELTA_BUILD": _yn(args.delta_build),
-        "TEST_NAMES": "ENABLE_SANITIZER" if args.sanitizer else "",
-        "SINGLE_TEST": args.single_test,
-        "SINGLE_TEST_LABEL": args.single_test_label,
-        "SINGLE_TEST_PARALLEL": str(args.single_test_parallel),
-        "SINGLE_TEST_LOOP": str(args.single_test_loop),
-        "KEEP_SETUP_ON_FAILURE": _tf(args.keep_setup_on_failure),
-        "NIGHTLY": _tf(args.nightly),
-        "QA_VERSION": _tf(args.qa_version),
-        "SLACK_CHANNEL": args.slack_channel,
-    })
-    if args.extra_params:
-        params.update(json.loads(args.extra_params))
-    return params, warning
-
-
-def _client(args, *, kind) -> Tuple[Optional[JenkinsClient], Optional[dict]]:
-    try:
-        return JenkinsClient.from_env(
-            timeout=resolve_timeout(args, 30.0),
-            user=getattr(args, "user", None),
-            token=getattr(args, "token", None),
-            url=getattr(args, "url", None),
-        ), None
-    except CredentialError as e:
-        return None, error_envelope(str(e), kind=kind, status="bad_argument")
-
-
-def _run(args, *, kind, fn):
-    client, err = _client(args, kind=kind)
-    if err is not None:
-        return emit(err, as_json=args.json)
-    try:
-        env = fn(client)
-    except Exception as e:  # noqa: BLE001
-        env = error_envelope(f"{kind} failed: {e}", kind=kind)
-    return emit(env, as_json=args.json)
+def _creds(args: argparse.Namespace) -> Dict[str, Any]:
+    return {
+        "timeout": resolve_timeout(args, 30.0),
+        "user": getattr(args, "user", None),
+        "token": getattr(args, "token", None),
+        "url": getattr(args, "url", None),
+    }
 
 
 # ---- handlers ------------------------------------------------------------
 
 def _whoami(args):
-    return _run(args, kind="jenkins_whoami",
-                fn=lambda c: ok_envelope(kind="jenkins_whoami", result=c.whoami()))
+    return emit(tools.jenkins_whoami(**_creds(args)), as_json=args.json)
 
 
 def _info(args):
-    job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-    return _run(args, kind="jenkins_info",
-                fn=lambda c: ok_envelope(kind="jenkins_info", result={
-                    "branch": args.branch, "repo": args.repo, "org": args.org,
-                    **c.get_build(job_path, args.build_number),
-                }))
+    return emit(tools.jenkins_info(args.branch, args.build_number, repo=args.repo,
+                                   org=args.org, **_creds(args)), as_json=args.json)
 
 
 def _list(args):
-    job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-    def fn(c):
-        builds = c.list_recent_builds(job_path, limit=args.limit)
-        return ok_envelope(kind="jenkins_list", result={
-            "branch": args.branch, "repo": args.repo, "count": len(builds), "builds": builds,
-        })
-    return _run(args, kind="jenkins_list", fn=fn)
+    return emit(tools.jenkins_list(args.branch, limit=args.limit, repo=args.repo,
+                                   org=args.org, **_creds(args)), as_json=args.json)
 
 
 def _console(args):
-    job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-    return _run(args, kind="jenkins_console",
-                fn=lambda c: ok_envelope(kind="jenkins_console", result={
-                    "branch": args.branch, "build_number": args.build_number,
-                    **c.get_console(job_path, args.build_number, tail_lines=args.tail),
-                }))
-
-
-def _do_trigger(args, c, *, kind, job_path, params, result_base, warnings, console_ref):
-    """Trigger ``job_path`` and, with --wait, poll the build to completion.
-
-    Shared by the cheetah ``trigger`` and the generic ``trigger-raw``.
-    ``console_ref`` is the ``qactl jenkins console ...`` hint for failures.
-    """
-    trig = c.trigger_build(job_path, params)
-    result: dict[str, Any] = {
-        **result_base,
-        "job_url": trig["job_url"], "queue_id": trig["queue_id"],
-        "queue_url": trig["queue_url"], "parameters": params,
-    }
-    if not args.wait:
-        return ok_envelope(
-            kind=kind, result=result, warnings=warnings,
-            next_actions=[
-                f"Build queued (queue_id={trig['queue_id']}). Poll it with "
-                f"`qactl jenkins info ...` or re-run with --wait."
-            ],
-        )
-    if trig["queue_id"] is None:
-        return error_envelope("Triggered but Jenkins returned no queue id to wait on.",
-                              kind=kind, result=result)
-    q = c.wait_for_build_number(trig["queue_id"], timeout_s=args.wait_timeout, poll_s=args.poll)
-    if q.get("status") != "started":
-        return error_envelope(
-            f"Build did not start (queue status={q.get('status')}).",
-            kind=kind, status="error" if q.get("status") == "timeout" else "aborted",
-            result={**result, "queue": q},
-        )
-    bnum = q["build_number"]
-    b = c.wait_for_build_result(job_path, bnum, timeout_s=args.wait_timeout, poll_s=args.poll)
-    result.update({"build_number": bnum, "build_url": q.get("build_url"), "build": b})
-    if b.get("status") == "timeout":
-        return error_envelope(f"Build #{bnum} still running after {args.wait_timeout}s.",
-                              kind=kind, status="error", result=result)
-    if b.get("result") == "SUCCESS":
-        return ok_envelope(kind=kind, result=result, warnings=warnings)
-    return error_envelope(f"Build #{bnum} finished with result={b.get('result')}.",
-                          kind=kind, result=result,
-                          next_actions=[console_ref.format(bnum=bnum)])
+    return emit(tools.jenkins_console(args.branch, args.build_number, tail=args.tail,
+                                      repo=args.repo, org=args.org, **_creds(args)),
+                as_json=args.json)
 
 
 def _trigger(args):
@@ -178,17 +85,18 @@ def _trigger(args):
                          action=f"Trigger a {args.repo} build on branch {args.branch!r}.")
     if rc is not None:
         return rc
-    job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-
-    def fn(c):
-        params, warning = build_cheetah_params(args, c, job_path)
-        return _do_trigger(
-            args, c, kind="jenkins_trigger", job_path=job_path, params=params,
-            result_base={"branch": args.branch, "repo": args.repo, "org": args.org},
-            warnings=[warning] if warning else [],
-            console_ref=f"qactl jenkins console {args.branch} {{bnum}} --tail 300",
-        )
-    return _run(args, kind="jenkins_trigger", fn=fn)
+    return emit(tools.jenkins_trigger(
+        args.branch, confirm=True, repo=args.repo, org=args.org,
+        sanitizer=args.sanitizer, baseos=args.baseos, no_lint=args.no_lint,
+        no_dnos=args.no_dnos, no_tarballs=args.no_tarballs, no_smoke=args.no_smoke,
+        delta_build=args.delta_build, single_test=args.single_test,
+        single_test_label=args.single_test_label, single_test_parallel=args.single_test_parallel,
+        single_test_loop=args.single_test_loop, keep_setup_on_failure=args.keep_setup_on_failure,
+        nightly=args.nightly, qa_version=args.qa_version, slack_channel=args.slack_channel,
+        inherit_from=args.inherit_from,
+        extra_params=json.loads(args.extra_params) if args.extra_params else None,
+        wait=args.wait, wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
+    ), as_json=args.json)
 
 
 def _trigger_raw(args):
@@ -201,30 +109,10 @@ def _trigger_raw(args):
     except (ValueError, json.JSONDecodeError) as e:
         return emit(error_envelope(f"bad parameters: {e}", kind="jenkins_trigger_raw",
                                    status="bad_argument"), as_json=args.json)
-
-    def fn(c):
-        return _do_trigger(
-            args, c, kind="jenkins_trigger_raw", job_path=args.job_path, params=params,
-            result_base={"job_path": args.job_path}, warnings=[],
-            console_ref="inspect the build URL above for failure details (build #{bnum})",
-        )
-    return _run(args, kind="jenkins_trigger_raw", fn=fn)
-
-
-def _parse_params(pairs, extra_params_json):
-    """Merge repeated ``--param K=V`` with an ``--extra-params`` JSON dict."""
-    out: dict[str, Any] = {}
-    for item in pairs or []:
-        if "=" not in item:
-            raise ValueError(f"--param {item!r} must be of the form KEY=VALUE")
-        k, _, v = item.partition("=")
-        out[k.strip()] = v
-    if extra_params_json:
-        extra = json.loads(extra_params_json)
-        if not isinstance(extra, dict):
-            raise ValueError("--extra-params must be a JSON object")
-        out.update(extra)
-    return out
+    return emit(tools.jenkins_trigger_raw(
+        args.job_path, params, confirm=True, wait=args.wait,
+        wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
+    ), as_json=args.json)
 
 
 def _stop(args):
@@ -240,13 +128,10 @@ def _stop(args):
     rc = confirm_or_exit(args, kind="jenkins_stop", action=action)
     if rc is not None:
         return rc
-
-    def fn(c):
-        if args.queue_id is not None:
-            return ok_envelope(kind="jenkins_stop", result=c.cancel_queue_item(args.queue_id))
-        job_path = branch_to_job_path(args.branch, repo=args.repo, org=args.org)
-        return ok_envelope(kind="jenkins_stop", result=c.stop_build(job_path, args.build_number))
-    return _run(args, kind="jenkins_stop", fn=fn)
+    return emit(tools.jenkins_stop(
+        args.branch, build_number=args.build_number, queue_id=args.queue_id,
+        confirm=True, repo=args.repo, org=args.org, **_creds(args),
+    ), as_json=args.json)
 
 
 # ---- registration --------------------------------------------------------
