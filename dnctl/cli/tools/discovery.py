@@ -32,6 +32,7 @@ from dnctl.cli.core.errors import (
 )
 from dnctl.cli.core.runner import _run_on_device
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
+from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory
 from dnctl.cli.core.validation import _quote_list, _validate_quoted, _validate_show_command
 
 
@@ -460,11 +461,54 @@ def show_system(
         user: SSH username (default dnroot).
         password: SSH password (default dnroot).
         timeout: Per-command timeout seconds.
+
+    Response adds:
+        - ``mode``: ``"operational"`` when the device is running DNOS,
+          ``"gi"`` when it's sitting in the golden-image / installer
+          environment (after a ``delete to GI`` + redeploy, before DNOS is
+          up), or ``"unknown"`` when neither schema is recognised. Both
+          schemas print ``System status: running``, so consumers MUST read
+          ``mode`` — not the ``running`` line — to decide whether
+          operational DNOS is actually up.
+        - ``gi_inventory`` (GI mode only): per-node rows parsed from the
+          GI-mode inventory table (``status`` / ``baseos_version`` /
+          ``gi_version`` / ``onie_version`` / ...).
     """
-    return _run_on_device(
+    response = _run_on_device(
         "show_system", device, host, user, password,
         "show system", timeout, SHOW_NEXT_ACTION,
     )
+    if response.get("status") in {"ok", "warning"}:
+        _annotate_system_mode(response)
+    return response
+
+
+def _annotate_system_mode(response: Dict[str, Any]) -> None:
+    """Tag a ``show_system`` envelope with ``mode`` and, in GI mode, inventory.
+
+    Keeps ``status`` untouched (the command itself succeeded) but flags GI
+    mode loudly via ``mode`` + a warning + a next action, so neither a
+    human nor an agent mistakes the bare ``System status: running`` for
+    "operational DNOS is up".
+    """
+    stdout = response.get("stdout") or ""
+    mode = detect_system_mode(stdout)
+    response["mode"] = mode
+    if mode == "gi":
+        inventory = parse_gi_inventory(stdout)
+        if inventory:
+            response["gi_inventory"] = inventory
+        response.setdefault("warnings", []).append(
+            "Device is in GI mode (golden-image installer environment), NOT "
+            "running operational DNOS — `System status: running` here reflects "
+            "the installer, not DNOS. Operational-only tools (get_gitcommit, "
+            "show config, ...) will fail/time out until DNOS is up."
+        )
+        response.setdefault("next_actions", []).append(
+            "Wait for the redeploy to finish (DNOS to come up) before running "
+            "operational commands; re-run show_system and confirm mode is "
+            "'operational'."
+        )
 
 
 def cli_crawler(
