@@ -526,7 +526,15 @@ def tar_load_start(
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     if not confirm.ensure(f"tar-load on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(request_system_tar_load, c, jenkins_url=jenkins_url, pre_check=not no_pre_check), c)
+    # block=True: the CLI process is the worker. Run the load to
+    # completion in-line and return the terminal envelope (issue #17).
+    O.finish(
+        O.call(
+            request_system_tar_load, c,
+            jenkins_url=jenkins_url, pre_check=not no_pre_check, block=True,
+        ),
+        c,
+    )
 
 
 @tarload_app.command("show")
@@ -547,7 +555,7 @@ def tar_load_pre_check(
 ):
     """Run the pre-upgrade system pre-check (read-only)."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
-    O.finish(O.call(request_system_pre_check, c), c)
+    O.finish(O.call(request_system_pre_check, c, block=True), c)
 
 
 # --- device registry -------------------------------------------------------

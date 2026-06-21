@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from dnctl.cli.core import slack_notify
+from dnctl.cli.core import job_store, slack_notify
 from dnctl.cli.core.envelope import error_response
 from dnctl.cli.core.errors import REQUEST_TAR_LOAD_NEXT_ACTION, detect_error
 from dnctl.cli.core.jobs import BaseJob, JobRegistry
@@ -126,6 +126,19 @@ _NO_CONFIRM_CMD = "set cli-no-confirm"
 #   show system | grep -q '^Version: DNOS' && echo deployed || echo gi
 _DNOS_VERSION_RE = re.compile(r"(?m)^Version:\s+DNOS\b")
 _SHOW_SYSTEM_CMD = "show system"
+
+# DNOS refuses to re-register a tarball the device is already pulling:
+#   "error downloading package. error: file is already registered for
+#    download"
+# For staging purposes that is NOT a failure — the file is already
+# (being) downloaded onto the box, which is exactly the end state a load
+# step wants. detect_error() flags it (it matches the generic
+# ``error downloading package`` pattern), so without this the whole
+# sequence aborts and every retry re-hits the same line — leaving the
+# device permanently un-loadable until the registration clears (issue
+# #17's "can't upload anything" symptom). Treat it as already-staged and
+# continue to the next component.
+_ALREADY_REGISTERED_RE = re.compile(r"(?i)already registered for download")
 
 # Valid values for the ``components`` arg. Order matters: it controls
 # the on-device load order (``base_os`` is loaded first when present —
@@ -383,9 +396,10 @@ def request_system_tar_load(
     pre_check_poll_interval_s: int = _DEFAULT_PRECHECK_POLL_S,
     pre_check_max_wait_s: int = _DEFAULT_PRECHECK_WAIT_S,
     notify_slack: str = "@oshaboo",
+    block: bool = False,
 ) -> Dict[str, Any]:
     """Stage upgrade tarballs on a device from a cheetah Jenkins build;
-    returns IMMEDIATELY.
+    returns IMMEDIATELY (unless ``block=True``).
 
     ASYNC / NON-BLOCKING. Kickoff is synchronous (Jenkins-artifact
     fetches + ``show system`` device-mode probe, ~3-5 s); the slow
@@ -575,6 +589,16 @@ def request_system_tar_load(
             clamped to [5, 60].
         pre_check_max_wait_s: Hard cap on total polling time, in
             seconds. Default 600, clamped to [60, 3600].
+        block: Run the whole load (+ optional pre-check) SYNCHRONOUSLY
+            and return the terminal envelope instead of the
+            ``state:"loading"`` kickoff. Default ``False`` (async — the
+            shape the long-running MCP server wants). The one-shot CLI
+            front (``qactl cli tar-load start``) passes ``True``: its
+            process *is* the worker, so it must run to completion in-line
+            (otherwise the worker thread dies with the process, aborting
+            the on-device load mid-download — issue #17). When ``True``
+            the terminal envelope is also persisted to disk so a later
+            ``tar-load show <job_id>`` resolves it.
 
     Returns:
         Kickoff envelope:
@@ -910,13 +934,19 @@ def request_system_tar_load(
     )
     worker.start()
 
-    # Settle window: real loads take minutes, so the worker is still
-    # alive after 2 s and we fall through to the standard async kickoff
-    # envelope. Fast-fails (device-busy refusal, connect_error, bad URL
-    # rejected by DNOS) terminate in ~1-3 s; if so, build the envelope
-    # AFTER the worker has finished so the kickoff itself carries the
-    # terminal verdict instead of making the agent do a second call.
-    worker.join(timeout=2.0)
+    # block=True (the CLI front): run the worker to completion in this
+    # process and return the terminal envelope. The CLI process IS the
+    # worker — a daemon thread would die when the command returns,
+    # aborting the on-device load mid-download (issue #17).
+    #
+    # block=False (the MCP server): settle window only. Real loads take
+    # minutes, so the worker is still alive after 2 s and we fall through
+    # to the async kickoff envelope. Fast-fails (device-busy refusal,
+    # connect_error, bad URL rejected by DNOS) terminate in ~1-3 s; if
+    # so, build the envelope AFTER the worker has finished so the kickoff
+    # itself carries the terminal verdict instead of making the agent do
+    # a second call.
+    worker.join() if block else worker.join(timeout=2.0)
 
     envelope = _tarload_job_envelope(job)
     if job.state in {"done", "error", "timeout"}:
@@ -1017,8 +1047,15 @@ def _tarload_notify_terminal(job: TarLoadJob, final_state: str) -> None:
 
 
 def _tarload_finish(job: TarLoadJob, final_state: str) -> None:
-    """Wrap ``_TARLOAD_REGISTRY.finish`` + Slack terminal notify."""
+    """Wrap ``_TARLOAD_REGISTRY.finish`` + disk persist + Slack notify.
+
+    The disk persist is what lets ``get_tar_load_job`` resolve a job
+    from a *different* process (the one-shot CLI front): the in-memory
+    registry dies with the process, so the terminal envelope is cached
+    under the state dir for later ``tar-load show`` calls (issue #17).
+    """
     _TARLOAD_REGISTRY.finish(job, final_state)
+    job_store.save(_tarload_job_envelope(job))
     _tarload_notify_terminal(job, final_state)
 
 
@@ -1058,6 +1095,10 @@ def _tar_load_worker(
         if step.command == _NO_CONFIRM_CMD:
             return False
         is_err, _ = detect_error(step.output)
+        # "file is already registered for download" is benign — the
+        # file is already staged on the device; keep going.
+        if is_err and _ALREADY_REGISTERED_RE.search(step.output or ""):
+            return False
         return is_err
 
     try:
@@ -1146,6 +1187,19 @@ def _tar_load_worker(
             })
             continue
         is_err, err_lines = detect_error(s.output)
+        if is_err and _ALREADY_REGISTERED_RE.search(s.output or ""):
+            # Benign: the device already has this tarball registered for
+            # download (e.g. from a prior load). Treat as already staged
+            # and keep the overall run healthy.
+            job.warnings.append(
+                f"{cmd}: file already registered for download on the "
+                "device — treated as already staged (no re-load needed)."
+            )
+            step_envelopes.append({
+                "command": cmd, "status": "already_staged",
+                "errors": [], "stdout": s.output,
+            })
+            continue
         if is_err:
             overall_status = "error" if overall_status == "ok" else overall_status
             tail = err_lines[-5:]
@@ -1273,6 +1327,24 @@ def get_tar_load_job(
     """
     job, err = _TARLOAD_REGISTRY.lookup(job_id=job_id, device_key=device)
     if err is not None:
+        # In-memory miss. Under the one-shot CLI front the job ran in a
+        # now-exited process, so fall back to the on-disk cache the
+        # synchronous (``block=True``) path persisted (issue #17).
+        persisted = (
+            job_store.load(job_id) if job_id
+            else job_store.latest_for_device(device or "")
+        )
+        if persisted is not None:
+            pdev = persisted.get("device") or persisted.get("host") or ""
+            # When both job_id and device were given, only honour the
+            # cached hit if it actually belongs to that device.
+            if not (job_id and device) or pdev == device:
+                log_request(
+                    "get_tar_load_job",
+                    {"job_id": job_id, "device": device},
+                    persisted,
+                )
+                return persisted
         if not job_id and not device:
             return error_response(
                 err,
@@ -1318,10 +1390,11 @@ def request_system_pre_check(
     pre_check_poll_interval_s: int = _DEFAULT_PRECHECK_POLL_S,
     pre_check_max_wait_s: int = _DEFAULT_PRECHECK_WAIT_S,
     notify_slack: str = "@oshaboo",
+    block: bool = False,
 ) -> Dict[str, Any]:
     """Kick off ``request system target-stack pre-check`` on a device
     that already has tarballs staged, and wait for the verdict; returns
-    IMMEDIATELY.
+    IMMEDIATELY (unless ``block=True``).
 
     ASYNC / NON-BLOCKING. Same async-job shape as
     ``request_system_tar_load`` — kickoff returns ~3-5 s with
@@ -1379,6 +1452,11 @@ def request_system_pre_check(
         notify_slack: Slack channel/user for kickoff + terminal
             notifications, threaded under the kickoff message. Default
             ``"@oshaboo"``; pass ``""`` to disable.
+        block: Run the pre-check sequence + poll SYNCHRONOUSLY and return
+            the terminal envelope. Default ``False`` (async — the MCP
+            server shape). The one-shot CLI front passes ``True`` so the
+            worker runs to completion in-process and the result is
+            persisted for a later ``tar-load show`` (issue #17).
 
     Returns:
         Same envelope shape as ``request_system_tar_load``. Notable
@@ -1552,7 +1630,9 @@ def request_system_pre_check(
         daemon=True,
     )
     worker.start()
-    worker.join(timeout=2.0)
+    # block=True (CLI front): run to completion in-process; block=False
+    # (MCP server): settle window then return the async kickoff envelope.
+    worker.join() if block else worker.join(timeout=2.0)
 
     envelope = _tarload_job_envelope(job)
     if job.state in {"done", "error", "timeout"}:

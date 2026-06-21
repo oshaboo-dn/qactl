@@ -4,7 +4,25 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] - 2026-06-21
+## [0.8.0] - 2026-06-21
+
+### Fixed
+- `cli tar-load start` / `tar-load pre-check` now run **synchronously**
+  on the CLI front and return the terminal envelope (real exit code)
+  instead of a `state:"loading"` kickoff with an untrackable `job_id`.
+  The async model (in-memory registry + daemon worker) only works inside
+  the long-running MCP server; under the one-shot CLI the worker thread
+  died when the process exited, aborting the on-device load mid-download
+  and leaving `tar-load show` unable to find the job (#17). The terminal
+  envelope is also persisted under the state dir so a later
+  `tar-load show <job_id>` (or `-d <device>`) resolves it. The MCP front
+  is unchanged (new `block=` arg defaults to async).
+- tar-load no longer aborts the whole sequence when the device reports
+  `file is already registered for download` — that just means the tarball
+  is already staged, so the step is marked `already_staged` and the run
+  continues to the next component.
+
+
 
 ### Added
 - `run_shell` (and `cli shell`) gained an `ncm` / `--ncm` target so
