@@ -124,6 +124,109 @@ def test_device_alias_roundtrip(tmp_path, monkeypatch):
     assert json.loads(r.stdout)["removed"] is True
 
 
+def test_device_rename_in_place(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(
+        json.dumps(
+            {"devices": {"Hybrid_Omer": {
+                "mgmt0": "10.0.0.9", "expected_role": "CL",
+                "expected_sns": ["SN-A", "SN-B"], "system_id": "uuid-1",
+            }}}
+        )
+    )
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+
+    r = runner.invoke(
+        app, ["cli", "device", "rename", "Hybrid_Omer", "Hybrid-CL",
+              "--yes", "--json"]
+    )
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "ok"
+    assert payload["renamed"] is True
+    assert payload["new_name"] == "Hybrid-CL"
+    # entry preserved (creds / sns / role / system_id), no re-probe
+    assert payload["entry"]["expected_sns"] == ["SN-A", "SN-B"]
+    assert payload["entry"]["system_id"] == "uuid-1"
+
+    # the new name is canonical; the old name still resolves as an alias
+    r = runner.invoke(app, ["cli", "device", "list", "--json"])
+    listing = json.loads(r.stdout)
+    names = {d["device"] for d in listing["devices"]}
+    assert "Hybrid-CL" in names
+    assert "Hybrid_Omer" not in names
+    cl = next(d for d in listing["devices"] if d["device"] == "Hybrid-CL")
+    assert cl["aliases"] == ["Hybrid_Omer"]
+
+
+def test_device_rename_drop_old_alias(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(
+        json.dumps({"devices": {"old": {"mgmt0": "10.0.0.9", "expected_sns": ["SN"]}}})
+    )
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    r = runner.invoke(
+        app, ["cli", "device", "rename", "old", "new", "--drop-old-alias",
+              "--yes", "--json"]
+    )
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["aliases"] == []
+
+
+def test_device_rename_refuses_without_yes(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(json.dumps({"devices": {"a": {"mgmt0": "10.0.0.1"}}}))
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    r = runner.invoke(app, ["cli", "device", "rename", "a", "b", "--json"])
+    assert r.exit_code == 2
+    assert any("--yes" in n for n in json.loads(r.stdout)["next_actions"])
+
+
+def test_device_rename_collision_errors(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(
+        json.dumps({"devices": {
+            "a": {"mgmt0": "10.0.0.1"}, "b": {"mgmt0": "10.0.0.2"},
+        }})
+    )
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    r = runner.invoke(app, ["cli", "device", "rename", "a", "b", "--yes", "--json"])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["status"] == "error"
+
+
+def test_device_refresh_warns_on_system_name_drift(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(
+        json.dumps({"devices": {"old": {
+            "mgmt0": "10.0.0.1", "expected_role": "CL", "expected_sns": ["SN-1"],
+        }}})
+    )
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+
+    from dnctl.cli.tools import devices as devtool
+    from dnctl.core.cli_probe import DeviceProbe
+
+    monkeypatch.setattr(
+        devtool, "probe_device",
+        lambda *a, **k: DeviceProbe(
+            system_name="new-name", system_id="uuid-1",
+            expected_role="CL", mgmt0="10.0.0.1", ncc_serials=[],
+        ),
+    )
+
+    r = runner.invoke(app, ["cli", "device", "refresh", "old", "--yes", "--json"])
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    # refresh does NOT silently change the key...
+    assert payload["device"] == "old"
+    # ...but it flags the drift and points at rename
+    assert any(
+        "new-name" in w and "rename" in w for w in payload["warnings"]
+    )
+
+
 def test_device_alias_rejects_shadowing_device(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(

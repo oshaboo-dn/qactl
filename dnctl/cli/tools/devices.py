@@ -424,6 +424,18 @@ def _refresh_device(
         warnings.append(
             "earlier SN candidates were unreachable: " + "; ".join(failures)
         )
+    # The chassis may have been renamed since it was registered. refresh
+    # deliberately does NOT change the registry key (other MCPs hold
+    # references to it), but surface the drift so the operator can adopt
+    # the new name with a single rename.
+    if probe.system_name and probe.system_name != name:
+        warnings.append(
+            f"chassis System Name is now {probe.system_name!r} but the "
+            f"registry key is still {name!r}; run "
+            f"manage_device(operation='rename', name={name!r}, "
+            f"new_name={probe.system_name!r}) to adopt it "
+            f"(qactl cli device rename {name} {probe.system_name})."
+        )
 
     final_entry = _dn_devices.get_device_entry(name) or {}
     response = make_response(
@@ -438,10 +450,12 @@ def _refresh_device(
 
 
 def manage_device(
-    operation: Literal["add", "remove", "refresh", "alias", "unalias"],
+    operation: Literal["add", "remove", "refresh", "rename", "alias", "unalias"],
     name: Optional[str] = None,
     sn: Optional[str] = None,
     alias: Optional[str] = None,
+    new_name: Optional[str] = None,
+    keep_old_alias: bool = True,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = 20,
@@ -462,9 +476,12 @@ def manage_device(
 
     The registry alias for any device is **always** the chassis's
     configured ``System Name`` — there is no override on ``add``.
-    To rename a device, change ``System Name`` on the chassis
-    (``set system name <new>`` + commit), then ``remove`` the old
-    alias and ``add`` the SN again; the new alias is auto-derived.
+    When a chassis's ``System Name`` changes, use
+    ``operation="rename"`` to move the registry key in place
+    (preserving creds / ``expected_sns`` / history, no re-probe);
+    the old name is kept as a secondary alias by default. ``add`` of
+    the new SN would instead create a duplicate entry, so prefer
+    ``rename``.
 
     Operations:
 
@@ -545,6 +562,18 @@ def manage_device(
                     cached mgmt0 stops responding — those MCPs never
                     SSH the chassis themselves. Pass only ``name=``;
                     ``sn=`` is ignored.
+    - ``rename`` – rename a canonical device key in place: move the
+                    whole entry (``mgmt0`` / ``expected_role`` /
+                    ``expected_sns`` / ``system_id`` / secondary
+                    aliases) from ``name`` (the current/stale key) to
+                    ``new_name`` (the chassis's new ``System Name``).
+                    No SSH / re-probe — creds and backup history are
+                    preserved. By default the old name is retained as a
+                    secondary alias (``keep_old_alias=True``) so
+                    ``-d <old>`` keeps resolving; pass
+                    ``keep_old_alias=False`` to drop it. Rejected when
+                    ``new_name`` is already a canonical key or a
+                    secondary alias of a different device.
     - ``alias``   – attach a secondary ``alias`` (nickname) to an
                     existing canonical device ``name``. The canonical
                     name (the chassis ``System Name``) stays the
@@ -562,12 +591,18 @@ def manage_device(
             ``"alias"``, ``"unalias"``.
         name: Alias to operate on. NOT accepted for ``add`` (the
             alias is the chassis's System Name, not configurable);
-            REQUIRED for ``remove`` / ``refresh``; the canonical
-            device for ``alias``; IGNORED for ``unalias``.
+            REQUIRED for ``remove`` / ``refresh``; the current
+            (stale) key for ``rename``; the canonical device for
+            ``alias``; IGNORED for ``unalias``.
         sn: SSH-reachable hostname for ``add``; host to drop
             (optional) for ``remove``; IGNORED for ``refresh``.
         alias: Secondary nickname to add (``alias``) or remove
             (``unalias``). Ignored for the other operations.
+        new_name: The new canonical name for ``rename`` (the chassis's
+            new ``System Name``). REQUIRED for ``rename``; ignored
+            otherwise.
+        keep_old_alias: For ``rename`` only — keep the old ``name`` as
+            a secondary alias so it still resolves (default ``True``).
         user: SSH username used for the registration / refresh probe
             and the post-add backup. Default: ``dnroot``.
         password: SSH password. Default: ``dnroot``.
@@ -575,7 +610,8 @@ def manage_device(
     """
     request = {
         "operation": operation, "name": name, "sn": sn,
-        "alias": alias, "user": user,
+        "alias": alias, "new_name": new_name,
+        "keep_old_alias": keep_old_alias, "user": user,
     }
 
     def _fail(msg: str, **extra: Any) -> Dict[str, Any]:
@@ -669,6 +705,40 @@ def manage_device(
             timeout=timeout, request=request, fail=_fail,
         )
 
+    if operation == "rename":
+        if not new_name or not isinstance(new_name, str) or not new_name.strip():
+            return _fail(
+                "new_name= (the new canonical System Name) is required "
+                "for operation='rename'."
+            )
+        if not _dn_devices.get_device_entry(name):
+            return _fail(
+                f"device '{name}' is not registered; nothing to rename.",
+                renamed=False,
+            )
+        # Operate on the canonical key, not a passed-in secondary alias.
+        canonical = _dn_devices.resolve_canonical(name) or name
+        try:
+            aliases = _dn_devices.rename_device(
+                canonical, new_name.strip(),
+                keep_old_as_alias=keep_old_alias,
+            )
+        except ValueError as exc:
+            return _fail(str(exc), renamed=False)
+        reload_device_hosts()
+        final_entry = _dn_devices.get_device_entry(new_name.strip()) or {}
+        response = make_response(
+            device=new_name.strip(),
+            warnings=[],
+            operation=operation, renamed=True,
+            old_name=canonical, new_name=new_name.strip(),
+            kept_old_alias=keep_old_alias,
+            aliases=aliases,
+            entry=final_entry,
+        )
+        log_request("manage_device", request, response)
+        return response
+
     if operation == "remove":
         try:
             changed, remaining = remove_device_host(name, sn)
@@ -691,11 +761,10 @@ def manage_device(
     else:
         return _fail(
             f"unknown operation {operation!r} (must be one of "
-            f"add/remove/refresh/alias/unalias). To rename a device, "
-            f"rename it on the chassis (`set system name <new>` + "
-            f"commit), then remove the old alias and add the sn again; "
-            f"to give a device an extra nickname, use "
-            f"operation='alias'."
+            f"add/remove/refresh/rename/alias/unalias). To rename a "
+            f"device whose chassis System Name changed, use "
+            f"operation='rename' with name=<old> new_name=<new>; to "
+            f"give a device an extra nickname, use operation='alias'."
         )
 
     log_request("manage_device", request, response)

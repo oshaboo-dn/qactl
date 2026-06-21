@@ -627,6 +627,31 @@ def device_refresh(
     O.finish(O.call(manage_device, c, operation="refresh", name=name), c)
 
 
+@device_app.command("rename")
+def device_rename(
+    old: Annotated[str, typer.Argument(help="Current (stale) device name.")],
+    new: Annotated[str, typer.Argument(help="New canonical name (the chassis System Name).")],
+    keep_old_alias: Annotated[bool, typer.Option("--keep-old-alias/--drop-old-alias", help="Keep the old name as a secondary alias (default: keep).")] = True,
+    as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Rename a device's canonical key in place (DESTRUCTIVE — needs --yes).
+
+    Use when a chassis's System Name changed: moves the whole registry
+    entry (creds / expected_sns / history) with no re-probe. The old
+    name stays a secondary alias unless --drop-old-alias is given.
+    """
+    c = O.build_ctx(as_json=as_json, yes=yes)
+    if not confirm.ensure(f"device rename {old} -> {new}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        manage_device(
+            operation="rename", name=old, new_name=new,
+            keep_old_alias=keep_old_alias,
+        ),
+        c,
+    )
+
+
 @device_app.command("alias")
 def device_alias(
     name: Annotated[str, typer.Argument(help="Canonical device (chassis System Name).")],
