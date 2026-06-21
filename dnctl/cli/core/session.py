@@ -245,6 +245,12 @@ class Transport:
     user: str
     client: paramiko.SSHClient
     last_used: float = field(default_factory=time.time)
+    # >0 while a command/sequence is actively running on this transport.
+    # The idle reaper must never close a busy transport: a single long
+    # step (e.g. a 2-hour ``target-stack load``) doesn't touch
+    # ``last_used`` mid-read, so without this flag it would be reaped
+    # ~30 min in and the download would die under us.
+    in_use: int = 0
 
     def close(self, reason: str = "closed") -> None:  # noqa: ARG002 - reason is for log parity
         try:
@@ -315,6 +321,11 @@ class TransportRegistry:
             self._transports[key] = t
             return t
 
+    def _mark(self, transport: "Transport", delta: int) -> None:
+        """Adjust a transport's in-flight counter under the registry lock."""
+        with self._registry_lock:
+            transport.in_use = max(0, transport.in_use + delta)
+
     def drop(self, key: Tuple[str, str], reason: str = "dropped") -> bool:
         """Close and forget the transport for ``key`` (if any)."""
         with self._key_lock(key):
@@ -344,16 +355,24 @@ class TransportRegistry:
                 for t in self._transports.values()
             ]
 
+    def _select_stale(self, now: float) -> List[Tuple[str, str]]:
+        """Keys eligible for reaping: idle-past-max or dead, AND not busy.
+
+        A transport with ``in_use > 0`` is mid-command and must never be
+        reaped — closing its client would kill the in-flight channel
+        (this is what used to truncate long ``target-stack load`` reads).
+        """
+        with self._registry_lock:
+            return [
+                k for k, t in self._transports.items()
+                if t.in_use == 0
+                and (now - t.last_used > self._idle_max or not t.is_alive())
+            ]
+
     def _reap_loop(self) -> None:
         while True:
             time.sleep(60)
-            now = time.time()
-            with self._registry_lock:
-                stale_keys = [
-                    k for k, t in self._transports.items()
-                    if now - t.last_used > self._idle_max or not t.is_alive()
-                ]
-            for k in stale_keys:
+            for k in self._select_stale(time.time()):
                 self.drop(k, reason="idle-reap")
 
 
@@ -526,6 +545,7 @@ def run_once(
         transport = registry.get(
             device=device, host=host, user=user, password=password,
         )
+        registry._mark(transport, 1)
         channel = None
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
@@ -572,6 +592,7 @@ def run_once(
                 raise
             continue
         finally:
+            registry._mark(transport, -1)
             if channel is not None:
                 try:
                     channel.close()
@@ -608,6 +629,7 @@ def run_ncm_cli(
         transport = registry.get(
             device=device, host=host, user=user, password=password,
         )
+        registry._mark(transport, 1)
         channel = None
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
@@ -639,6 +661,7 @@ def run_ncm_cli(
                 raise
             continue
         finally:
+            registry._mark(transport, -1)
             if channel is not None:
                 try:
                     channel.close()
@@ -694,6 +717,7 @@ def run_sequence(
         transport = registry.get(
             device=device, host=host, user=user, password=password,
         )
+        registry._mark(transport, 1)
         channel = None
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
@@ -751,6 +775,7 @@ def run_sequence(
                 raise
             continue
         finally:
+            registry._mark(transport, -1)
             if channel is not None:
                 try:
                     channel.close()
@@ -795,6 +820,7 @@ def run_sequence_pw(
         transport = registry.get(
             device=device, host=host, user=user, password=password,
         )
+        registry._mark(transport, 1)
         channel = None
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
@@ -852,6 +878,7 @@ def run_sequence_pw(
                 raise
             continue
         finally:
+            registry._mark(transport, -1)
             if channel is not None:
                 try:
                     channel.close()
