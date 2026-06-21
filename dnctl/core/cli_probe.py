@@ -64,6 +64,21 @@ _SYSTEM_TYPE_RE = re.compile(
 # anywhere in that column.
 _MGMT0_IPV4_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})(?:/\d{1,2})?\b")
 
+# GI-mode (golden-image / installer environment) discriminators. After a
+# ``delete to GI`` + redeploy, ``show system`` emits a structurally
+# different schema than operational DNOS: it prints ``Active NCC: <SN>``
+# instead of ``System Name:`` / ``System Type:`` / ``Version: DNOS [...]``,
+# and its inventory table carries a ``GI version`` column. Both schemas
+# open with ``System status: running``, so that line alone is NOT a
+# reliable "DNOS is up" signal — we key off the structural differences.
+_GI_ACTIVE_NCC_RE = re.compile(
+    r"^\s*Active\s+NCC\s*:\s*\S", re.MULTILINE | re.IGNORECASE
+)
+_DNOS_VERSION_RE = re.compile(
+    r"^\s*Version\s*:\s*DNOS\s*\[", re.MULTILINE | re.IGNORECASE
+)
+_GI_VERSION_COL_RE = re.compile(r"\bGI\s+version\b", re.IGNORECASE)
+
 
 def parse_system_name(show_system_output: str) -> Optional[str]:
     """Return the ``System Name`` token from a ``show system`` capture.
@@ -162,6 +177,88 @@ def parse_ncc_serials(show_system_output: str) -> List[str]:
     return serials
 
 
+def detect_system_mode(show_system_output: str) -> str:
+    """Classify a ``show system`` capture as ``"operational"`` / ``"gi"`` / ``"unknown"``.
+
+    Both the operational and GI-mode (golden-image installer environment)
+    schemas open with ``System status: running``, so that line is useless
+    as a discriminator — a box sitting in GI mode is *not* running
+    operational DNOS. We instead key off the structural differences:
+
+    - **operational**: carries ``System Type: ...`` and/or
+      ``Version: DNOS [...]``.
+    - **gi**: lacks both of those but carries ``Active NCC: <SN>`` and/or
+      a ``GI version`` inventory column.
+    - **unknown**: neither schema's markers are present (empty output, a
+      DNOS error, or a non-DNOS device).
+
+    Operational markers win when both appear, so the rare box that prints
+    ``Active NCC:`` alongside a real ``Version: DNOS [...]`` is still
+    reported as operational.
+    """
+    text = show_system_output or ""
+    if _SYSTEM_TYPE_RE.search(text) or _DNOS_VERSION_RE.search(text):
+        return "operational"
+    if _GI_ACTIVE_NCC_RE.search(text) or _GI_VERSION_COL_RE.search(text):
+        return "gi"
+    return "unknown"
+
+
+def parse_gi_inventory(show_system_output: str) -> List[dict]:
+    """Parse the per-node GI-mode inventory rows from a ``show system`` capture.
+
+    GI mode prints a pipe-delimited table whose columns include
+    ``Status`` / ``BaseOS version`` / ``GI version`` (and ``ONIE version``
+    / ``FW MU version``) instead of the operational
+    ``Admin | Operational | Uptime | ...`` set::
+
+        | Type | Id | Status | ... | ONIE version | FW MU version | BaseOS version | GI version |
+        | NCC  | 0  | stable | ... | 2022.08_...   | N/A           | 2.2630318015   | 26.3.0.50_priv... |
+
+    Returns one dict per data row in table order, keyed by a normalised
+    subset of columns (``type`` / ``id`` / ``status`` / ``serial_number``
+    / ``onie_version`` / ``fw_mu_version`` / ``baseos_version`` /
+    ``gi_version``), each present only when its column exists and the cell
+    is non-empty. Returns ``[]`` when no GI inventory table is found, so
+    callers can treat an empty list as "nothing structured to surface".
+    """
+    col_map = {
+        "type": "type",
+        "id": "id",
+        "status": "status",
+        "serial number": "serial_number",
+        "onie version": "onie_version",
+        "fw mu version": "fw_mu_version",
+        "baseos version": "baseos_version",
+        "gi version": "gi_version",
+    }
+    header: Optional[List[str]] = None
+    rows: List[dict] = []
+    for line in show_system_output.splitlines():
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        lowered = [c.lower() for c in cells]
+        if header is None:
+            if "gi version" in lowered and "type" in lowered:
+                header = lowered
+            continue
+        # Skip the markdown-style separator row (``+----+----+...``).
+        if all(set(c) <= {"-", "+", ":", ""} for c in cells):
+            continue
+        row: dict = {}
+        for idx, key in enumerate(header):
+            field_name = col_map.get(key)
+            if field_name is None or idx >= len(cells):
+                continue
+            value = cells[idx]
+            if value:
+                row[field_name] = value
+        if row.get("type", "").upper() in {"NCC", "NCP", "NCM", "NCF"}:
+            rows.append(row)
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -236,5 +333,7 @@ __all__ = [
     "parse_expected_role",
     "parse_mgmt0_ipv4",
     "parse_ncc_serials",
+    "detect_system_mode",
+    "parse_gi_inventory",
     "probe_via",
 ]
