@@ -6,13 +6,16 @@ ship a ``register(mcp)`` function (native ``qactl.{jira,confluence,jenkins}
 their MCP days). This module re-exposes those over a stdio FastMCP server,
 applying:
 
-  * the **surface map** -- which tools each group exposes over MCP. Heavy
-    dnftp / large-artifact tools (device backups, tech-support, tar-load,
-    scale-deploy) and the one-time ``setup`` flow stay **CLI-only**: they
-    move big files over remote SFTP and/or run long, so the
-    process-per-invocation CLI fits them and they gain nothing from the
-    local stdio model. They are listed in :data:`CLI_ONLY` and skipped
-    here.
+  * the **surface map** -- which tools each group exposes over MCP. A tool
+    is kept **CLI-only** only when it is *interactive* (e.g. the one-time
+    ``setup`` credential flow) or *writes a large config onto the device*
+    in a long, destructive way (device/NETCONF backup + restore, image
+    tar-load, scale-deploy). Fire-and-forget kickoffs (tech-support) and
+    cheap read-only / job-poll calls (backup listing/read-back, the
+    tech-support / tar-load job lookups, pre-check) ARE exposed: their
+    artifacts land on remote dnftp, never in the local agent context, so
+    the stdio model fits them fine. The CLI-only set lives in
+    :data:`CLI_ONLY` and is skipped here.
   * an optional per-tool **wrap** (the JSONL request logger).
 
 Registration goes through :class:`_Selector`, a thin proxy around the real
@@ -44,22 +47,27 @@ _DNCTL_PKG: Dict[str, str] = {
 
 
 # --- CLI-only surface (skipped on MCP) -------------------------------------
-# These keep a CLI front but are NOT exposed over MCP: big dnftp transfers
-# and long-running jobs. Keyed by group, valued by tool function name.
+# These keep a CLI front but are NOT exposed over MCP. The bar for hiding a
+# tool: it is either *interactive* (no clean one-shot mapping) or it
+# *writes a large config to the device* in a long, destructive way. "Output
+# lands on remote dnftp" is NOT a reason to hide a tool — that data never
+# touches the local agent context, so a fire-and-forget kickoff or a cheap
+# read-only / job-poll call is perfectly MCP-shaped. Keyed by group, valued
+# by tool function name.
 CLI_ONLY: Dict[str, Set[str]] = {
     "cli": {
-        # dnftp-backed device backups / restores
-        "backup_device", "list_backups", "restore_device", "read_backup",
-        # tech-support bundle creation + async job (dnftp, large)
-        "create_techsupport", "get_techsupport_job",
-        # tar-load workflow (long-running, dnftp)
-        "request_system_tar_load", "request_system_pre_check", "get_tar_load_job",
+        # writes the device's running config to dnftp (mutates /config/)
+        "backup_device",
+        # long-running + destructive: downloads + load/commit onto the box
+        "restore_device",
+        # long-running image staging (multi-GB loads, then install territory)
+        "request_system_tar_load",
         # scale config deploy (heavy, audit-trail artifacts on host)
         "scale_deploy",
     },
     "nc": {
-        # dnftp-backed NETCONF config backups / restores
-        "netconf_backup", "netconf_restore", "netconf_list_backups", "netconf_read_backup",
+        # writes/commits a full config onto the device
+        "netconf_backup", "netconf_restore",
     },
 }
 
