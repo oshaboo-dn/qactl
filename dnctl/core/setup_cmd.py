@@ -36,9 +36,13 @@ SETTINGS: List[_Setting] = [
     ("DNCTL_DNFTP_USER", "dnftp", "user", "dn", False, "dnftp user"),
     ("DNCTL_DNFTP_PASSWORD", "dnftp", "password", None, True, "dnftp password (blank to skip)"),
     ("DNCTL_DNFTP_VRF", "dnftp", "vrf", "mgmt0", False, "dnftp VRF"),
+    ("DNCTL_LOCAL_SFTP_HOST", "local", "host", None, False, "Local SFTP host the device uploads to (blank = auto FQDN)"),
+    ("DNCTL_LOCAL_SFTP_USER", "local", "user", None, False, "Local SFTP user (blank = current OS user)"),
+    ("DNCTL_LOCAL_SFTP_PASSWORD", "local", "password", None, True, "Local SFTP password for config backups (blank to skip)"),
+    ("DNCTL_LOCAL_SFTP_VRF", "local", "vrf", "mgmt0", False, "Local SFTP VRF"),
 ]
 
-_SECTION_ORDER = ["auth", "dnftp"]
+_SECTION_ORDER = ["auth", "dnftp", "local"]
 
 
 def _toml_escape(value: str) -> str:
@@ -123,8 +127,12 @@ def setup(
     dnftp_user: Optional[str] = typer.Option(None, "--dnftp-user", help="dnftp user."),
     dnftp_password: Optional[str] = typer.Option(None, "--dnftp-password", help="dnftp password."),
     dnftp_vrf: Optional[str] = typer.Option(None, "--dnftp-vrf", help="dnftp VRF."),
+    local_sftp_host: Optional[str] = typer.Option(None, "--local-sftp-host", help="Local SFTP host the device uploads to (blank = auto FQDN)."),
+    local_sftp_user: Optional[str] = typer.Option(None, "--local-sftp-user", help="Local SFTP user (blank = current OS user)."),
+    local_sftp_password: Optional[str] = typer.Option(None, "--local-sftp-password", help="Local SFTP password for config backups."),
+    local_sftp_vrf: Optional[str] = typer.Option(None, "--local-sftp-vrf", help="Local SFTP VRF."),
 ) -> None:
-    """Write credentials / keys / dnftp config, or inspect what's resolved."""
+    """Write credentials / keys / dnftp / local config, or inspect what's resolved."""
     if path:
         typer.echo(str(_config.config_path()))
         return
@@ -140,6 +148,10 @@ def setup(
         ("dnftp", "user"): dnftp_user,
         ("dnftp", "password"): dnftp_password,
         ("dnftp", "vrf"): dnftp_vrf,
+        ("local", "host"): local_sftp_host,
+        ("local", "user"): local_sftp_user,
+        ("local", "password"): local_sftp_password,
+        ("local", "vrf"): local_sftp_vrf,
     }
     provided = {k: v for k, v in flag_map.items() if v is not None}
 

@@ -421,7 +421,7 @@ def backup_create(
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
 ):
-    """Back up a device's config to dnftp."""
+    """Back up a device's config to this host."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     O.finish(O.call(backup_device, c, description=description, bucket=bucket), c)
 
