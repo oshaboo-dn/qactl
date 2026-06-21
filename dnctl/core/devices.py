@@ -42,19 +42,28 @@ Writer API (only the device-registry tools should call these)::
 
     update_device("kira", mgmt0="100.64.11.64", expected_role="SA")
 
-The writer is atomic-ish (read-modify-write under a single open) but
-NOT cross-process-safe; if two MCPs were to write concurrently we'd
-need a flock. In practice only ``netconf_add_device`` ever writes, and
-agent calls serialise per session.
+Every mutator holds a cross-process exclusive ``flock`` (on a sidecar
+``<map>.lock``) for the whole read-modify-write, and writes via a temp
+file + ``os.replace`` so a crash mid-write can never truncate the map
+(a reader either sees the old file or the new one, never a half-written
+one). On non-POSIX hosts the flock degrades to a no-op (the atomic
+rename still holds).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
+
+try:
+    import fcntl  # POSIX-only; used for the cross-process map lock.
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None  # type: ignore[assignment]
 
 
 def default_device_map_path() -> str:
@@ -191,10 +200,50 @@ def _bump_generated_at(data: Dict[str, Any]) -> None:
 
 
 def _write_map(path: str, data: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-        f.write("\n")
+    """Atomically replace the map file (temp write + ``os.replace``).
+
+    A crash between truncate and write would otherwise leave a
+    half-written / empty JSON that ``load_device_map`` reads as an empty
+    registry. Writing a sibling temp file and renaming it into place
+    makes the swap atomic on POSIX.
+    """
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".devices_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _map_lock(path: str) -> Iterator[None]:
+    """Hold a cross-process exclusive lock for one read-modify-write.
+
+    Serialises concurrent writers (e.g. two MCPs on the same host) so a
+    later writer always sees the earlier writer's committed state instead
+    of clobbering it. No-op where ``fcntl`` is unavailable.
+    """
+    if fcntl is None:  # pragma: no cover - non-POSIX fallback
+        yield
+        return
+    lock_path = os.path.abspath(path) + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as lf:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 def update_device(
@@ -212,14 +261,15 @@ def update_device(
     if not isinstance(device, str) or not device:
         raise ValueError("device must be a non-empty string")
     p = _resolve_path(path)
-    data = load_device_map(p)
-    entry = data["devices"].get(device)
-    if not isinstance(entry, dict):
-        entry = {}
-    entry.update(fields)
-    data["devices"][device] = entry
-    _bump_generated_at(data)
-    _write_map(p, data)
+    with _map_lock(p):
+        data = load_device_map(p)
+        entry = data["devices"].get(device)
+        if not isinstance(entry, dict):
+            entry = {}
+        entry.update(fields)
+        data["devices"][device] = entry
+        _bump_generated_at(data)
+        _write_map(p, data)
 
 
 def add_alias(
@@ -245,35 +295,36 @@ def add_alias(
         raise ValueError("canonical must be a non-empty string")
 
     p = _resolve_path(path)
-    data = load_device_map(p)
-    devices = data.get("devices") or {}
-    data["devices"] = devices
+    with _map_lock(p):
+        data = load_device_map(p)
+        devices = data.get("devices") or {}
+        data["devices"] = devices
 
-    entry = devices.get(canonical)
-    if not isinstance(entry, dict):
-        raise ValueError(f"device '{canonical}' is not registered")
-    if alias == canonical:
-        raise ValueError("alias must differ from the canonical name")
-    if alias in devices:
-        raise ValueError(
-            f"'{alias}' is already a canonical device name; a secondary "
-            f"alias must not shadow a registered device"
-        )
-    for key, other in devices.items():
-        if key != canonical and alias in _entry_aliases(other):
+        entry = devices.get(canonical)
+        if not isinstance(entry, dict):
+            raise ValueError(f"device '{canonical}' is not registered")
+        if alias == canonical:
+            raise ValueError("alias must differ from the canonical name")
+        if alias in devices:
             raise ValueError(
-                f"alias '{alias}' is already assigned to device '{key}'"
+                f"'{alias}' is already a canonical device name; a secondary "
+                f"alias must not shadow a registered device"
             )
+        for key, other in devices.items():
+            if key != canonical and alias in _entry_aliases(other):
+                raise ValueError(
+                    f"alias '{alias}' is already assigned to device '{key}'"
+                )
 
-    aliases = _entry_aliases(entry)
-    if alias in aliases:
-        return False
-    aliases.append(alias)
-    entry["aliases"] = sorted(aliases)
-    devices[canonical] = entry
-    _bump_generated_at(data)
-    _write_map(p, data)
-    return True
+        aliases = _entry_aliases(entry)
+        if alias in aliases:
+            return False
+        aliases.append(alias)
+        entry["aliases"] = sorted(aliases)
+        devices[canonical] = entry
+        _bump_generated_at(data)
+        _write_map(p, data)
+        return True
 
 
 def remove_alias(alias: str, path: Optional[str] = None) -> Optional[str]:
@@ -286,22 +337,23 @@ def remove_alias(alias: str, path: Optional[str] = None) -> Optional[str]:
     if not isinstance(alias, str) or not alias:
         raise ValueError("alias must be a non-empty string")
     p = _resolve_path(path)
-    data = load_device_map(p)
-    devices = data.get("devices") or {}
-    for key, entry in devices.items():
-        aliases = _entry_aliases(entry)
-        if alias in aliases:
-            remaining = [a for a in aliases if a != alias]
-            if remaining:
-                entry["aliases"] = remaining
-            else:
-                entry.pop("aliases", None)
-            devices[key] = entry
-            data["devices"] = devices
-            _bump_generated_at(data)
-            _write_map(p, data)
-            return key
-    return None
+    with _map_lock(p):
+        data = load_device_map(p)
+        devices = data.get("devices") or {}
+        for key, entry in devices.items():
+            aliases = _entry_aliases(entry)
+            if alias in aliases:
+                remaining = [a for a in aliases if a != alias]
+                if remaining:
+                    entry["aliases"] = remaining
+                else:
+                    entry.pop("aliases", None)
+                devices[key] = entry
+                data["devices"] = devices
+                _bump_generated_at(data)
+                _write_map(p, data)
+                return key
+        return None
 
 
 def rename_device(
@@ -337,46 +389,47 @@ def rename_device(
         raise ValueError("new must differ from old")
 
     p = _resolve_path(path)
-    data = load_device_map(p)
-    devices = data.get("devices") or {}
-    data["devices"] = devices
+    with _map_lock(p):
+        data = load_device_map(p)
+        devices = data.get("devices") or {}
+        data["devices"] = devices
 
-    entry = devices.get(old)
-    if not isinstance(entry, dict):
-        # Help the caller who passed a secondary alias by mistake.
-        canonical = resolve_canonical(old, p)
-        if canonical and canonical != old:
+        entry = devices.get(old)
+        if not isinstance(entry, dict):
+            # Help the caller who passed a secondary alias by mistake.
+            canonical = resolve_canonical(old, p)
+            if canonical and canonical != old:
+                raise ValueError(
+                    f"'{old}' is a secondary alias of '{canonical}', not a "
+                    f"canonical device; rename '{canonical}' instead"
+                )
+            raise ValueError(f"device '{old}' is not registered")
+        if new in devices:
             raise ValueError(
-                f"'{old}' is a secondary alias of '{canonical}', not a "
-                f"canonical device; rename '{canonical}' instead"
+                f"'{new}' is already a canonical device name; remove it first "
+                f"or pick a different name"
             )
-        raise ValueError(f"device '{old}' is not registered")
-    if new in devices:
-        raise ValueError(
-            f"'{new}' is already a canonical device name; remove it first "
-            f"or pick a different name"
-        )
-    for key, other in devices.items():
-        if key != old and new in _entry_aliases(other):
-            raise ValueError(
-                f"'{new}' is already a secondary alias of device '{key}'"
-            )
+        for key, other in devices.items():
+            if key != old and new in _entry_aliases(other):
+                raise ValueError(
+                    f"'{new}' is already a secondary alias of device '{key}'"
+                )
 
-    # ``new`` may currently be a secondary alias of ``old`` itself — drop
-    # it from the alias list since it's becoming the canonical key.
-    aliases = [a for a in _entry_aliases(entry) if a != new]
-    if keep_old_as_alias and old not in aliases:
-        aliases.append(old)
-    if aliases:
-        entry["aliases"] = sorted(aliases)
-    else:
-        entry.pop("aliases", None)
+        # ``new`` may currently be a secondary alias of ``old`` itself — drop
+        # it from the alias list since it's becoming the canonical key.
+        aliases = [a for a in _entry_aliases(entry) if a != new]
+        if keep_old_as_alias and old not in aliases:
+            aliases.append(old)
+        if aliases:
+            entry["aliases"] = sorted(aliases)
+        else:
+            entry.pop("aliases", None)
 
-    devices.pop(old)
-    devices[new] = entry
-    _bump_generated_at(data)
-    _write_map(p, data)
-    return sorted(_entry_aliases(entry))
+        devices.pop(old)
+        devices[new] = entry
+        _bump_generated_at(data)
+        _write_map(p, data)
+        return sorted(_entry_aliases(entry))
 
 
 def remove_device(device: str, path: Optional[str] = None) -> bool:
@@ -388,15 +441,16 @@ def remove_device(device: str, path: Optional[str] = None) -> bool:
     if not isinstance(device, str) or not device:
         raise ValueError("device must be a non-empty string")
     p = _resolve_path(path)
-    data = load_device_map(p)
-    devices = data.get("devices") or {}
-    if device not in devices:
-        return False
-    devices.pop(device)
-    data["devices"] = devices
-    _bump_generated_at(data)
-    _write_map(p, data)
-    return True
+    with _map_lock(p):
+        data = load_device_map(p)
+        devices = data.get("devices") or {}
+        if device not in devices:
+            return False
+        devices.pop(device)
+        data["devices"] = devices
+        _bump_generated_at(data)
+        _write_map(p, data)
+        return True
 
 
 __all__ = [
