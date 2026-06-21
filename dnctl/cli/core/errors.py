@@ -187,20 +187,25 @@ REQUEST_TAR_LOAD_NEXT_ACTION = (
     "failing step's URL or freeing the disk."
 )
 BACKUP_NEXT_ACTION = (
-    "Verify (1) the device can reach dnftp in vrf mgmt0 "
-    "(run_ping_ipv4 dest=dnftp vrf=mgmt0), (2) sshd on dnftp accepts the "
-    "dn account, (3) /ftpdisk/dn/oshaboo/cli/backups on dnftp is "
-    "writable (the MCP auto-creates the leaf and any sub-bucket dir, but "
-    "the parent /ftpdisk/dn/oshaboo must already exist and be owned by "
-    "dn), and (4) the MCP host can SFTP into dnftp with the same dn "
-    "account (verification stat after upload runs from the MCP)."
+    "Config backups land on THIS host (the machine running dnctl), not "
+    "dnftp — the device SFTPs the saved config back to us. Verify (1) the "
+    "device can reach this host in the backup VRF "
+    "(run_ping_ipv4 dest=<DNCTL_LOCAL_SFTP_HOST> vrf=mgmt0), (2) "
+    "DNCTL_LOCAL_SFTP_PASSWORD (or [local].password) is set — the device "
+    "authenticates to our sshd with it at the SFTP prompt; run "
+    "`dnctl setup` to write the config, (3) this host's sshd accepts the "
+    "DNCTL_LOCAL_SFTP_USER account, and (4) the local backup root is "
+    "writable. (dnftp is only used for the large tech-support tarballs.)"
 )
 RESTORE_NEXT_ACTION = (
-    "Check (1) list_backups to confirm the file exists on dnftp and its "
-    "device prefix matches, (2) if the file lives in a sub-bucket pass "
-    "the same bucket=... arg you used at backup time, (3) the device can "
-    "reach dnftp in vrf mgmt0, and (4) commit did not conflict with a "
-    "concurrent session."
+    "Backups live on THIS host (the machine running dnctl), not dnftp — "
+    "the device pulls the file back from us. Check (1) list_backups to "
+    "confirm the file exists and its device prefix matches, (2) if the "
+    "file lives in a sub-bucket pass the same bucket=... arg you used at "
+    "backup time, (3) the device can reach this host in the backup VRF "
+    "(run_ping_ipv4 dest=<DNCTL_LOCAL_SFTP_HOST> vrf=mgmt0) and "
+    "DNCTL_LOCAL_SFTP_PASSWORD is set, and (4) commit did not conflict "
+    "with a concurrent session."
 )
 CREATE_TS_NEXT_ACTION = (
     "Verify (1) the device can reach dnftp in vrf mgmt0 "
