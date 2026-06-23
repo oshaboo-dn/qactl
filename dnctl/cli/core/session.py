@@ -16,6 +16,7 @@ First command on every freshly-opened channel is
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -229,6 +230,31 @@ DEFAULT_CMD_TIMEOUT = 30
 DEFAULT_IDLE_MAX = 1800  # seconds — idle transports are reaped after this.
 DEFAULT_INIT_TIMEOUT = 10.0
 DEFAULT_BANNER_WAIT = 2.0
+# Total budget for coaxing a CLI prompt out of a freshly-opened channel.
+# A responsive box lands a prompt inside the first ``DEFAULT_BANNER_WAIT``
+# window; a slow-to-print one (odd login banner / MOTD / sluggish PTY, e.g.
+# DNAAS-LEAF-B13) needs a few extra nudges. We keep re-draining + nudging
+# until this budget is spent before declaring the prompt undetectable.
+# Override per-environment with ``DNCTL_CLI_PROMPT_TIMEOUT`` (seconds), and
+# the per-drain window with ``DNCTL_CLI_BANNER_WAIT``.
+DEFAULT_PROMPT_TIMEOUT = 15.0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a positive float from env ``name``; fall back to ``default``.
+
+    Anything missing, unparseable, or non-positive yields ``default`` — a bad
+    knob value must never make prompt detection give up faster than the
+    built-in behaviour.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return val if val > 0 else default
 
 
 class ConnectError(RuntimeError):
@@ -440,12 +466,31 @@ def _open_transport(
 
 
 def _init_channel(channel: paramiko.Channel) -> str:
-    """Drain banner, detect prompt, disable pagination. Returns the prompt."""
-    banner = drain(channel, max_wait=DEFAULT_BANNER_WAIT, stop_on_prompt=True)
+    """Drain banner, detect prompt, disable pagination. Returns the prompt.
+
+    Prompt detection on a fresh channel is best-effort and timing-sensitive:
+    a responsive box paints its prompt inside the first short banner-drain
+    window, but a slow-to-print one (long login banner / MOTD, sluggish PTY,
+    odd prompt-print timing — e.g. DNAAS-LEAF-B13) can miss it. Rather than
+    declaring failure after a single nudge, we re-drain and nudge (send a
+    bare newline to coax a fresh prompt) in a bounded loop until either a
+    prompt appears or the overall budget (``DNCTL_CLI_PROMPT_TIMEOUT``,
+    default :data:`DEFAULT_PROMPT_TIMEOUT`) is spent. Fast boxes stay fast —
+    ``drain(stop_on_prompt=True)`` bails in ~100-300 ms once the prompt lands
+    — while slow boxes get the extra time they need before we give up.
+    """
+    banner_wait = _env_float("DNCTL_CLI_BANNER_WAIT", DEFAULT_BANNER_WAIT)
+    total_timeout = _env_float("DNCTL_CLI_PROMPT_TIMEOUT", DEFAULT_PROMPT_TIMEOUT)
+
+    deadline = time.time() + total_timeout
+    banner = drain(channel, max_wait=banner_wait, stop_on_prompt=True)
     prompt = detect_prompt(banner)
-    if not prompt:
+    # Bounded nudge/backoff loop: keep poking the channel for a prompt until
+    # the budget is exhausted. The first iteration runs even if the deadline
+    # has already passed (a zero/tiny banner_wait shouldn't skip every nudge).
+    while not prompt and time.time() < deadline:
         channel.send("\n")
-        banner += drain(channel, max_wait=DEFAULT_BANNER_WAIT, stop_on_prompt=True)
+        banner += drain(channel, max_wait=banner_wait, stop_on_prompt=True)
         prompt = detect_prompt(banner)
     if not prompt:
         raise RuntimeError("Could not detect CLI prompt on fresh channel")
