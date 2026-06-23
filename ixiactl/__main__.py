@@ -10,6 +10,7 @@ once from those globals before the handler runs.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import List, Optional
 
@@ -39,7 +40,25 @@ def build_parser(prog: str = "ixiactl") -> argparse.ArgumentParser:
     return parser
 
 
+def _warn_if_standalone() -> None:
+    """Nudge direct callers toward the umbrella ``qactl`` CLI.
+
+    ``qactl`` delegates here with ``prog="qactl ixia"`` and leaves
+    ``sys.argv[0]`` as ``qactl``; only a leftover standalone ``ixiactl`` on
+    PATH still presents as ``ixiactl``. Warn on stderr so stdout stays
+    lossless for ``--json`` piping.
+    """
+    invoked = os.path.basename(sys.argv[0] or "").removesuffix(".exe")
+    if invoked == "ixiactl":
+        print(
+            "ixiactl: the standalone `ixiactl` command is deprecated; "
+            "use `qactl ixia ...` instead.",
+            file=sys.stderr,
+        )
+
+
 def main(argv: Optional[List[str]] = None, prog: str = "ixiactl") -> int:
+    _warn_if_standalone()
     parser = build_parser(prog)
     args = parser.parse_args(argv)
 
