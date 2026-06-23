@@ -158,18 +158,33 @@ def _add_device(
     timeout: int,
     request: Dict[str, Any],
     fail: Any,
+    alias_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Implementation of ``manage_device(operation="add")``.
 
     Probes the chassis once via SSH (``show system`` +
-    ``show interfaces management``), uses ``System Name`` as the
-    alias (no override — the registry alias and the chassis name
-    stay in lockstep so the registry never disagrees with the
-    device about what to call it), checks for System-Id collisions,
-    persists the full entry (``expected_sns`` + ``expected_role`` +
-    ``mgmt0`` + ``system_id``) to the canonical map, and runs the
-    post-add backup. Split out from ``manage_device`` to keep the
-    add path linear — every other operation is a one-liner.
+    ``show interfaces management``), derives the alias, checks for
+    System-Id collisions, persists the full entry (``expected_sns`` +
+    ``expected_role`` + ``mgmt0`` + ``system_id``) to the canonical map,
+    and runs the post-add backup. Split out from ``manage_device`` to
+    keep the add path linear — every other operation is a one-liner.
+
+    Alias derivation keeps the registry alias and the chassis name in
+    lockstep when it can, with two escape hatches for a box that has no
+    ``System Name`` to expose (e.g. one sitting in GI mode — golden-image
+    installer, DNOS not yet deployed — which we still need in the
+    registry to drive the deploy):
+
+    1. ``alias_override`` — when set, it wins; the caller has named the
+       device explicitly (``derived_name_source="explicit"``).
+    2. ``System Name`` — the normal operational path
+       (``derived_name_source="system-name"``).
+    3. probed ``sn`` fallback — when no name and no override but the box
+       is a recognisable GI-mode chassis, register it under the SSH host
+       we probed (``derived_name_source="sn-fallback"``).
+
+    An unparseable / non-DNOS box with no name and no override is still
+    rejected — we don't invent an alias for output we don't understand.
 
     Multi-NCC auto-discovery: the same ``show system`` capture already
     lists every NCC slot and its Serial Number, so on a dual-NCC (CL)
@@ -186,6 +201,7 @@ def _add_device(
         probe: DeviceProbe = probe_device(
             transport_registry, host=sn,
             user=user, password=password, timeout=float(timeout),
+            allow_missing_name=True,
         )
     except ConnectError as exc:
         return fail(
@@ -202,7 +218,24 @@ def _add_device(
             hosts=[], added=False, derived_name=None,
         )
 
-    alias = probe.system_name
+    override = alias_override.strip() if isinstance(alias_override, str) else ""
+    if override:
+        alias = override
+        derived_name_source = "explicit"
+    elif probe.system_name:
+        alias = probe.system_name
+        derived_name_source = "system-name"
+    elif probe.mode == "gi":
+        alias = sn
+        derived_name_source = "sn-fallback"
+    else:
+        return fail(
+            f"could not derive an alias for sn={sn!r}: `show system` "
+            f"yielded no 'System Name:' and the box isn't a recognisable "
+            f"GI-mode chassis (mode={probe.mode!r}). Pass --alias <name> "
+            f"to register it under an explicit alias.",
+            hosts=[], added=False, derived_name=None,
+        )
 
     existing_entry = _dn_devices.get_device_entry(alias) or {}
     existing_hosts: List[str] = []
@@ -275,6 +308,20 @@ def _add_device(
     reload_device_hosts()
 
     warnings: List[str] = []
+    if derived_name_source == "sn-fallback":
+        warnings.append(
+            f"chassis exposes no 'System Name:' (mode={probe.mode!r}); "
+            f"registered under the probed SSH host '{sn}' as the alias. "
+            f"Once DNOS is deployed and a System Name is set, "
+            f"manage_device(rename, name={sn!r}, new_name=<system-name>) "
+            f"to bring the alias back in lockstep with the chassis name."
+        )
+    elif derived_name_source == "explicit" and probe.system_name and probe.system_name != alias:
+        warnings.append(
+            f"registered under explicit alias '{alias}', but the chassis "
+            f"reports System Name '{probe.system_name}'; the registry alias "
+            f"and the chassis name are not in lockstep."
+        )
     if not sn_added:
         warnings.append(
             f"'{sn}' was already registered under device '{alias}'."
@@ -313,6 +360,7 @@ def _add_device(
         auto_enrolled_ncc_sns=auto_enrolled,
         initial_backup_path=initial_backup_path,
         derived_name=alias,
+        derived_name_source=derived_name_source,
         entry=final_entry,
     )
     log_request("manage_device", request, response)
@@ -478,9 +526,16 @@ def manage_device(
     refreshes the in-memory ``DEVICE_HOSTS`` cache, so the change is
     live for subsequent tool calls without restarting any server.
 
-    The registry alias for any device is **always** the chassis's
-    configured ``System Name`` — there is no override on ``add``.
-    When a chassis's ``System Name`` changes, use
+    The registry alias for any device is normally the chassis's
+    configured ``System Name``, kept in lockstep with the device on
+    purpose. The two exceptions are a box with no ``System Name`` to
+    expose (e.g. one in GI mode — golden-image installer, DNOS not yet
+    deployed — which we still need registered to drive the deploy): pass
+    ``alias=<name>`` on ``add`` to set the key explicitly, or let ``add``
+    fall back to the probed ``sn`` for a recognisable GI-mode chassis.
+    ``derived_name_source`` on the response records which rule applied
+    (``"system-name"`` / ``"explicit"`` / ``"sn-fallback"``).
+    When a chassis's ``System Name`` later changes, use
     ``operation="rename"`` to move the registry key in place
     (preserving creds / ``expected_sns`` / history, no re-probe);
     the old name is kept as a secondary alias by default. ``add`` of
@@ -494,7 +549,11 @@ def manage_device(
                    to ``sn`` once and captures everything every other
                    MCP needs from a single pass:
 
-                   1. ``System Name``  → alias (no override possible).
+                   1. ``System Name``  → alias, unless ``alias=`` is
+                                         given (explicit override) or the
+                                         box has no System Name and falls
+                                         back to the probed ``sn``
+                                         (GI mode).
                    2. ``System-Id``    → recorded so a future ``add`` of
                                          the same chassis's other NCC
                                          can confirm it really is the
@@ -535,7 +594,8 @@ def manage_device(
                    the SSH probe and the post-add backup; defaults
                    match the lab dnroot credentials. ``name=`` is
                    NOT accepted on ``add`` — pass it only on
-                   ``remove`` / ``refresh``.
+                   ``remove`` / ``refresh``; to set the alias
+                   explicitly use ``alias=``.
 
                    On a NEW alias two best-effort side effects fire:
 
@@ -600,8 +660,10 @@ def manage_device(
             ``alias``; IGNORED for ``unalias``.
         sn: SSH-reachable hostname for ``add``; host to drop
             (optional) for ``remove``; IGNORED for ``refresh``.
-        alias: Secondary nickname to add (``alias``) or remove
-            (``unalias``). Ignored for the other operations.
+        alias: For ``add``, an explicit registry alias override (used
+            when the chassis has no ``System Name`` to derive from, e.g.
+            in GI mode). For ``alias`` / ``unalias``, the secondary
+            nickname to add or remove. Ignored for the other operations.
         new_name: The new canonical name for ``rename`` (the chassis's
             new ``System Name``). REQUIRED for ``rename``; ignored
             otherwise.
@@ -644,6 +706,7 @@ def manage_device(
         return _add_device(
             sn=sn or "", user=user, password=password,
             timeout=timeout, request=request, fail=_fail,
+            alias_override=alias,
         )
 
     if operation == "alias":

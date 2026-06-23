@@ -6,7 +6,9 @@ just like operational DNOS, so ``show_system`` must classify ``mode`` from
 the schema, not that line.
 """
 
-from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory
+import pytest
+
+from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory, probe_via
 from dnctl.cli.tools.discovery import _annotate_system_mode
 
 
@@ -89,3 +91,37 @@ def test_annotate_marks_operational_without_noise():
     assert response["mode"] == "operational"
     assert response["warnings"] == []
     assert "gi_inventory" not in response
+
+
+# --------------------------------------------------------------------------
+# probe_via: GI-mode boxes have no System Name (issue #32)
+# --------------------------------------------------------------------------
+
+def _run_show(mapping):
+    """Build a run_show closure that returns canned per-command output."""
+    return lambda cmd: mapping.get(cmd, "")
+
+
+def test_probe_via_gi_without_allow_missing_name_raises():
+    # Default contract is unchanged: no System Name is still a hard error.
+    with pytest.raises(RuntimeError):
+        probe_via(_run_show({"show system": GI_OUTPUT}))
+
+
+def test_probe_via_gi_allow_missing_name_returns_none_name_gi_mode():
+    probe = probe_via(
+        _run_show({"show system": GI_OUTPUT}), allow_missing_name=True
+    )
+    assert probe.system_name is None
+    assert probe.mode == "gi"
+    # The GI inventory table still surfaces the NCC serials.
+    assert probe.ncc_serials == ["CZ22500CW4", "CZ22260685"]
+
+
+def test_probe_via_operational_still_parses_name_and_mode():
+    probe = probe_via(
+        _run_show({"show system": OPERATIONAL_OUTPUT}), allow_missing_name=True
+    )
+    assert probe.system_name == "cl-chassis"
+    assert probe.mode == "operational"
+    assert probe.expected_role == "CL"

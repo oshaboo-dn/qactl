@@ -603,19 +603,22 @@ def device_list(as_json: O.Json = False):
 
 @device_app.command("add")
 def device_add(
-    sn: Annotated[str, typer.Argument(help="Serial / SSH host to probe. The alias is taken from the chassis System Name.")],
+    sn: Annotated[str, typer.Argument(help="Serial / SSH host to probe. The alias is taken from the chassis System Name unless --alias is given.")],
+    alias: Annotated[Optional[str], typer.Option("--alias", help="Explicit registry alias. Use for a GI-mode chassis (no System Name); otherwise the alias is the chassis System Name.")] = None,
     user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Probe a chassis and add it to the registry (DESTRUCTIVE — needs --yes).
 
-    The registry alias is the chassis's configured System Name, so it is
-    not passed here — only the SSH-reachable host to probe.
+    The registry alias is normally the chassis's configured System Name.
+    A box with no System Name (e.g. in GI mode) can still be registered:
+    pass --alias <name> to set the key explicitly, or let add fall back
+    to the probed SN for a recognisable GI-mode chassis.
     """
     c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
     if not confirm.ensure(f"device add {sn}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(manage_device, c, operation="add", sn=sn), c)
+    O.finish(O.call(manage_device, c, operation="add", sn=sn, alias=alias), c)
 
 
 @device_app.command("remove")
