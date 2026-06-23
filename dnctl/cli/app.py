@@ -30,6 +30,7 @@ from dnctl.cli.tools.edit import (
     rollback_config,
 )
 from dnctl.cli.tools.gitcommit import get_gitcommit
+from dnctl.cli.tools.interfaces import interfaces as interfaces_tool
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
 from dnctl.cli.tools.ping import run_ping_ipv4
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
@@ -111,6 +112,18 @@ def system(
     """Topology + version snapshot (call first for system/restart tasks)."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     O.finish(O.call(show_system, c), c)
+
+
+@app.command()
+def interfaces(
+    interface: Annotated[Optional[str], typer.Argument(help="Single interface to filter to (e.g. ge400-7/0/8.6). Omit for all.")] = None,
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Aggregated per-interface view: state + description + LLDP + IGP in one call."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    O.finish(O.call(interfaces_tool, c, interface=interface), c)
 
 
 @app.command()
