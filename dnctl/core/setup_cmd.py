@@ -8,10 +8,11 @@ the config file is just the persistent layer.
 
 Usage::
 
-    dnctl setup                 # interactive wizard
-    dnctl setup --password ...  # non-interactive: set only what's passed
-    dnctl setup --show          # print resolved sources (secrets redacted)
-    dnctl setup --path          # print the config-file path
+    dnctl setup                    # interactive wizard
+    dnctl setup --password ...     # non-interactive: set only what's passed
+    dnctl setup --show             # print resolved sources (secrets redacted)
+    dnctl setup --check-local-sftp # verify the local backup/restore SFTP endpoint
+    dnctl setup --path             # print the config-file path
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ SETTINGS: List[_Setting] = [
     ("DNCTL_LOCAL_SFTP_USER", "local", "user", None, False, "Local SFTP user (blank = current OS user)"),
     ("DNCTL_LOCAL_SFTP_PASSWORD", "local", "password", None, True, "Local SFTP password for config backups (blank to skip)"),
     ("DNCTL_LOCAL_SFTP_VRF", "local", "vrf", "mgmt0", False, "Local SFTP VRF"),
+    ("DNCTL_LOCAL_SFTP_PORT", "local", "port", "22", False, "Local SFTP/SSH port the device connects to"),
 ]
 
 _SECTION_ORDER = ["auth", "dnftp", "local"]
@@ -116,8 +118,81 @@ def _show(as_json: bool) -> None:
         typer.echo(f"  {r['setting']:<{width}}  {r['source']:<24}  {val}")
 
 
+def _check_local_sftp(as_json: bool) -> None:
+    """Self-check the local SFTP endpoint the device dials back into.
+
+    Restore (and backup) drive the device to SFTP to *this* host, so the
+    two preconditions the tool can verify locally are: (1) ``[local].password``
+    is set (the device needs it at the prompt) and (2) an sshd/SFTP server
+    is actually listening at the resolved ``host:port``. Reports both, plus
+    the device-side reachability check the agent still has to run, and exits
+    non-zero if either local precondition fails so callers can gate on it.
+    """
+    from dnctl.core import local_sftp
+
+    s = local_sftp.resolve_local_sftp()
+    reachable, detail = local_sftp.probe_endpoint(s.host, s.port)
+
+    checks = [
+        {
+            "check": "password_configured",
+            "ok": s.password_set,
+            "detail": (
+                "[local].password is set"
+                if s.password_set
+                else "[local].password is unset — the device can't authenticate "
+                "to our sshd. Run `dnctl setup` and set the local SFTP password."
+            ),
+        },
+        {
+            "check": "endpoint_listening",
+            "ok": reachable,
+            "detail": detail
+            + (
+                ""
+                if reachable
+                else " — start/enable sshd on this host (or fix "
+                "[local].host/port) so the device can download the config."
+            ),
+        },
+    ]
+    ok = all(c["ok"] for c in checks)
+    device_hint = (
+        f"From the lab device, confirm it can route to us in the backup VRF: "
+        f"run_ping_ipv4 dest={s.host} vrf={s.vrf} (this check runs on the "
+        f"agent host and can't see the device's routing table)."
+    )
+
+    if as_json:
+        typer.echo(json.dumps(
+            {
+                "status": "ok" if ok else "error",
+                "endpoint": {
+                    "host": s.host,
+                    "host_source": s.host_source,
+                    "user": s.user,
+                    "port": s.port,
+                    "vrf": s.vrf,
+                    "password_set": s.password_set,
+                },
+                "checks": checks,
+                "device_reachability_hint": device_hint,
+            },
+            indent=2,
+        ))
+    else:
+        typer.echo(f"local SFTP endpoint: {s.user}@{s.host}:{s.port} (vrf {s.vrf})")
+        for c in checks:
+            mark = "ok " if c["ok"] else "FAIL"
+            typer.echo(f"  [{mark}] {c['check']}: {c['detail']}")
+        typer.echo(f"  note: {device_hint}")
+    if not ok:
+        raise typer.Exit(code=1)
+
+
 def setup(
     show: bool = typer.Option(False, "--show", help="Print resolved config sources (secrets redacted)."),
+    check_local_sftp: bool = typer.Option(False, "--check-local-sftp", help="Verify the local SFTP endpoint used for backup/restore is configured and listening."),
     path: bool = typer.Option(False, "--path", help="Print the config-file path and exit."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output (with --show)."),
     user: Optional[str] = typer.Option(None, "--user", help="SSH / API user."),
@@ -131,6 +206,7 @@ def setup(
     local_sftp_user: Optional[str] = typer.Option(None, "--local-sftp-user", help="Local SFTP user (blank = current OS user)."),
     local_sftp_password: Optional[str] = typer.Option(None, "--local-sftp-password", help="Local SFTP password for config backups."),
     local_sftp_vrf: Optional[str] = typer.Option(None, "--local-sftp-vrf", help="Local SFTP VRF."),
+    local_sftp_port: Optional[str] = typer.Option(None, "--local-sftp-port", help="Local SFTP/SSH port the device connects to."),
 ) -> None:
     """Write credentials / keys / dnftp / local config, or inspect what's resolved."""
     if path:
@@ -138,6 +214,9 @@ def setup(
         return
     if show:
         _show(as_json)
+        return
+    if check_local_sftp:
+        _check_local_sftp(as_json)
         return
 
     flag_map = {
@@ -152,6 +231,7 @@ def setup(
         ("local", "user"): local_sftp_user,
         ("local", "password"): local_sftp_password,
         ("local", "vrf"): local_sftp_vrf,
+        ("local", "port"): local_sftp_port,
     }
     provided = {k: v for k, v in flag_map.items() if v is not None}
 

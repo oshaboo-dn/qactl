@@ -195,7 +195,9 @@ BACKUP_NEXT_ACTION = (
     "authenticates to our sshd with it at the SFTP prompt; run "
     "`dnctl setup` to write the config, (3) this host's sshd accepts the "
     "DNCTL_LOCAL_SFTP_USER account, and (4) the local backup root is "
-    "writable. (dnftp is only used for the large tech-support tarballs.)"
+    "writable. Run `dnctl setup --check-local-sftp` to verify (2)+(3) "
+    "before retrying. (dnftp is only used for the large tech-support "
+    "tarballs.)"
 )
 RESTORE_NEXT_ACTION = (
     "Backups live on THIS host (the machine running dnctl), not dnftp — "
@@ -204,8 +206,9 @@ RESTORE_NEXT_ACTION = (
     "file lives in a sub-bucket pass the same bucket=... arg you used at "
     "backup time, (3) the device can reach this host in the backup VRF "
     "(run_ping_ipv4 dest=<DNCTL_LOCAL_SFTP_HOST> vrf=mgmt0) and "
-    "DNCTL_LOCAL_SFTP_PASSWORD is set, and (4) commit did not conflict "
-    "with a concurrent session."
+    "DNCTL_LOCAL_SFTP_PASSWORD is set (run `dnctl setup --check-local-sftp` "
+    "to verify the endpoint is configured and listening), and (4) commit "
+    "did not conflict with a concurrent session."
 )
 CREATE_TS_NEXT_ACTION = (
     "Verify (1) the device can reach dnftp in vrf mgmt0 "

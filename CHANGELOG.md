@@ -4,6 +4,22 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-06-23
+
+### Added
+- `dnctl setup --check-local-sftp`: a self-check for the local SFTP
+  endpoint that `cli backup`/`restore` drive the device to dial back
+  into. It resolves `[local]` (host/user/vrf/port) fresh from env/config,
+  confirms `[local].password` is set, and TCP-probes that an sshd/SFTP
+  server is actually listening at the resolved `host:port` — exiting
+  non-zero (and emitting `--json`) when either local precondition fails,
+  plus a reminder to verify device→host reachability in the backup VRF.
+  Backup/restore preflight `next_action` text now points at it so an
+  unconfigured local endpoint surfaces a clear, actionable error instead
+  of silently pushing workflows toward dnftp (#34).
+- `[local].port` / `DNCTL_LOCAL_SFTP_PORT` / `--local-sftp-port` so the
+  endpoint port (default `22`) is configurable.
+
 ## [0.9.0] - 2026-06-23
 
 ### Added
