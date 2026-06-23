@@ -537,6 +537,15 @@ def techsupport_show(
 def tar_load_start(
     jenkins_url: Annotated[str, typer.Argument(help="Jenkins artifact URL of the tar image.")],
     no_pre_check: Annotated[bool, typer.Option("--no-pre-check")] = False,
+    component: Annotated[Optional[List[str]], typer.Option(
+        "--component", "-c",
+        help=(
+            "Component(s) to load: baseos | dnos | gi. Repeatable. "
+            "Omit to load all available (base_os optional, dnos+gi "
+            "required). When given, only the listed components are "
+            "loaded (in baseos->dnos->gi order) and each is required."
+        ),
+    )] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -549,10 +558,13 @@ def tar_load_start(
     # completion in-line and return the terminal envelope (issue #17).
     # confirm=True: the --yes gate above already confirmed; the tool's
     # own confirm gate would otherwise short-circuit to a dry-run.
+    # components: None (no -c given) keeps the load-all default; a
+    # non-empty list restricts + hard-requires the listed components.
     O.finish(
         O.call(
             request_system_tar_load, c,
             jenkins_url=jenkins_url, pre_check=not no_pre_check,
+            components=component or None,
             confirm=True, block=True,
         ),
         c,

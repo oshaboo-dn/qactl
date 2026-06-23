@@ -17,12 +17,17 @@ No device traffic: ``run_sequence`` is monkeypatched.
 """
 
 import inspect
+import json
 import types
 
 import pytest
+from typer.testing import CliRunner
 
+from dnctl.__main__ import app
 from dnctl.cli.core import job_store
 from dnctl.cli.tools import tarload
+
+runner = CliRunner()
 
 
 # --------------------------------------------------------------------------
@@ -232,3 +237,101 @@ def test_stop_predicate_treats_already_registered_as_non_stop():
     # The benign line must not trip the sequence's abort predicate either.
     assert tarload._ALREADY_REGISTERED_RE.search(_ALREADY)
     assert not tarload._ALREADY_REGISTERED_RE.search("error downloading package. error: disk full")
+
+
+# --------------------------------------------------------------------------
+# CLI `-c/--component` plumbing (#30): the option must forward through to
+# request_system_tar_load(components=...). The library already implements
+# selection; the gap was pure CLI exposure.
+# --------------------------------------------------------------------------
+
+def _capture_tar_load(monkeypatch):
+    """Replace the app's request_system_tar_load with a capturing stub.
+
+    Returns the dict the stub fills in with the kwargs it was called
+    with. The explicit params (not just **kw) matter: O.call filters
+    kwargs against the target's signature, so the stub must name the
+    params it wants to observe.
+    """
+    captured: dict = {}
+
+    def _stub(jenkins_url=None, pre_check=True, components=None,
+              confirm=False, block=False, device=None, host=None,
+              user=None, password=None, **kw):
+        captured.update(
+            jenkins_url=jenkins_url, pre_check=pre_check,
+            components=components, confirm=confirm, block=block,
+            device=device,
+        )
+        return {"status": "ok", "state": "done", "job_id": "dev-907-aaa",
+                "device": device}
+
+    from dnctl.cli import app as cli_app
+    monkeypatch.setattr(cli_app, "request_system_tar_load", _stub)
+    return captured
+
+
+def test_component_option_forwards_single(monkeypatch):
+    captured = _capture_tar_load(monkeypatch)
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "-c", "dnos", "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured["components"] == ["dnos"]
+    assert captured["confirm"] is True and captured["block"] is True
+
+
+def test_component_option_forwards_multiple_in_order(monkeypatch):
+    captured = _capture_tar_load(monkeypatch)
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "-c", "baseos", "-c", "dnos", "-c", "gi", "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured["components"] == ["baseos", "dnos", "gi"]
+
+
+def test_no_component_loads_all(monkeypatch):
+    captured = _capture_tar_load(monkeypatch)
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    # No -c given → components omitted → library's load-all default.
+    assert captured["components"] is None
+
+
+def test_invalid_component_clean_error_no_device(monkeypatch):
+    # End-to-end through the real tool: an unknown -c must be rejected by
+    # validation before any device is touched.
+    monkeypatch.setattr(
+        tarload, "run_once",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not touch the device on a bad component")),
+    )
+    monkeypatch.setattr(
+        tarload, "_fetch_jenkins_artifact",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not fetch Jenkins on a bad component")),
+    )
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "-c", "bogus", "--yes", "--json"],
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert any("bogus" in e for e in payload["errors"])
+
+
+def test_component_help_lists_values():
+    r = runner.invoke(app, ["cli", "tar-load", "start", "--help"])
+    assert r.exit_code == 0
+    assert "--component" in r.stdout
+    assert "-c" in r.stdout
