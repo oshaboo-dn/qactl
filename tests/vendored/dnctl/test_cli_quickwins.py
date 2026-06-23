@@ -141,6 +141,8 @@ def test_device_add_cli_takes_sn_not_name():
     params = list(inspect.signature(cli_app.device_add).parameters)
     assert params[0] == "sn"
     assert "name" not in params
+    # GI-mode escape hatch: an explicit --alias override (issue #32).
+    assert "alias" in params
 
 
 def test_manage_device_add_still_rejects_name():

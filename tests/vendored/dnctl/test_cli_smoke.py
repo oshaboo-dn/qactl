@@ -244,3 +244,104 @@ def test_device_alias_rejects_shadowing_device(tmp_path, monkeypatch):
     r = runner.invoke(app, ["cli", "device", "alias", "sa", "cl", "--yes", "--json"])
     assert r.exit_code == 1
     assert json.loads(r.stdout)["status"] == "error"
+
+
+# --------------------------------------------------------------------------
+# device add: GI-mode chassis (no System Name) — issue #32
+# --------------------------------------------------------------------------
+
+def _gi_probe(**overrides):
+    """A DeviceProbe as returned for a box with no System Name (GI mode)."""
+    from dnctl.core.cli_probe import DeviceProbe
+
+    base = dict(
+        system_name=None, system_id=None, expected_role=None,
+        mgmt0=None, ncc_serials=[], mode="gi",
+    )
+    base.update(overrides)
+    return DeviceProbe(**base)
+
+
+def _stub_add_probe(monkeypatch, probe):
+    """Patch the SSH probe + best-effort post-add init out of the add path."""
+    from dnctl.cli.tools import devices as devtool
+
+    monkeypatch.setattr(devtool, "probe_device", lambda *a, **k: probe)
+    monkeypatch.setattr(devtool, "_post_add_init", lambda device: (None, []))
+
+
+def test_device_add_gi_mode_sn_fallback(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(json.dumps({"devices": {}}))
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    _stub_add_probe(monkeypatch, _gi_probe(ncc_serials=["CZ22500CW4"]))
+
+    r = runner.invoke(
+        app, ["cli", "device", "add", "WDY1A17P0001A-P3", "--yes", "--json"]
+    )
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["added"] is True
+    assert payload["derived_name"] == "WDY1A17P0001A-P3"
+    assert payload["derived_name_source"] == "sn-fallback"
+    assert any("no 'System Name:'" in w for w in payload["warnings"])
+    # The probed host plus the discovered NCC serial are both enrolled.
+    assert "WDY1A17P0001A-P3" in payload["hosts"]
+    assert "CZ22500CW4" in payload["hosts"]
+
+
+def test_device_add_explicit_alias_override(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(json.dumps({"devices": {}}))
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    _stub_add_probe(monkeypatch, _gi_probe())
+
+    r = runner.invoke(
+        app,
+        ["cli", "device", "add", "WDY1A17P0001A-P3",
+         "--alias", "lab-spine-1", "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["added"] is True
+    assert payload["derived_name"] == "lab-spine-1"
+    assert payload["derived_name_source"] == "explicit"
+    assert payload["device"] == "lab-spine-1"
+
+
+def test_device_add_unknown_mode_no_alias_is_error(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(json.dumps({"devices": {}}))
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    # Neither a System Name nor a recognisable GI-mode schema.
+    _stub_add_probe(monkeypatch, _gi_probe(mode="unknown"))
+
+    r = runner.invoke(
+        app, ["cli", "device", "add", "1.2.3.4", "--yes", "--json"]
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert any("--alias" in e for e in payload["errors"])
+
+
+def test_device_add_operational_unchanged(tmp_path, monkeypatch):
+    devmap = tmp_path / "devices.json"
+    devmap.write_text(json.dumps({"devices": {}}))
+    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    _stub_add_probe(
+        monkeypatch,
+        _gi_probe(
+            system_name="cl-chassis", system_id="uuid-1",
+            expected_role="CL", mgmt0="10.0.0.9",
+            ncc_serials=["CZ1", "CZ2"], mode="operational",
+        ),
+    )
+
+    r = runner.invoke(
+        app, ["cli", "device", "add", "CZ1", "--yes", "--json"]
+    )
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["derived_name"] == "cl-chassis"
+    assert payload["derived_name_source"] == "system-name"

@@ -268,21 +268,30 @@ def parse_gi_inventory(show_system_output: str) -> List[dict]:
 class DeviceProbe:
     """Parsed result of a fresh DNOS probe.
 
-    ``system_name`` is required (populated when the device answered the
-    ``show system`` line); ``system_id`` / ``expected_role`` / ``mgmt0``
-    are best-effort and ``None`` when the device didn't expose them or
-    we couldn't parse them. ``ncc_serials`` is the list of NCC slot
-    serials from the ``show system`` hardware table (both NCCs on a CL
-    chassis, one on an SA, ``[]`` when none were parseable) — it lets a
-    single ``manage_device(add)`` enroll a dual-NCC chassis's standby
-    NCC alongside the one that was SSHed.
+    ``system_name`` is the chassis's configured name (populated when the
+    device answered the ``show system`` line). It is ``None`` for a box
+    that has no System Name to expose — e.g. one sitting in GI mode
+    (golden-image installer, DNOS not yet deployed); callers that allow
+    that (``probe_via(allow_missing_name=True)``) must supply their own
+    alias. ``system_id`` / ``expected_role`` / ``mgmt0`` are best-effort
+    and ``None`` when the device didn't expose them or we couldn't parse
+    them. ``ncc_serials`` is the list of NCC slot serials from the
+    ``show system`` hardware table (both NCCs on a CL chassis, one on an
+    SA, ``[]`` when none were parseable) — it lets a single
+    ``manage_device(add)`` enroll a dual-NCC chassis's standby NCC
+    alongside the one that was SSHed; it is populated from the GI-mode
+    inventory table too. ``mode`` is the
+    :func:`detect_system_mode` classification
+    (``"operational"`` / ``"gi"`` / ``"unknown"``) so the caller can tell
+    a genuine GI-mode chassis from unparseable / non-DNOS output.
     """
 
-    system_name: str
+    system_name: Optional[str] = None
     system_id: Optional[str] = None
     expected_role: Optional[str] = None
     mgmt0: Optional[str] = None
     ncc_serials: List[str] = field(default_factory=list)
+    mode: str = "operational"
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +299,11 @@ class DeviceProbe:
 # ---------------------------------------------------------------------------
 
 
-def probe_via(run_show: Callable[[str], str]) -> DeviceProbe:
+def probe_via(
+    run_show: Callable[[str], str],
+    *,
+    allow_missing_name: bool = False,
+) -> DeviceProbe:
     """Run the canonical DNOS probe via ``run_show`` and parse the result.
 
     ``run_show(cmd)`` MUST return the device's textual response to
@@ -299,13 +312,16 @@ def probe_via(run_show: Callable[[str], str]) -> DeviceProbe:
     ``TransportRegistry``; we do not own SSH here.
 
     Raises ``RuntimeError`` when ``show system`` doesn't yield a
-    parseable ``System Name``. The mgmt0 step is best-effort: on
+    parseable ``System Name`` — unless ``allow_missing_name`` is set, in
+    which case ``system_name`` comes back ``None`` and the caller must
+    supply its own alias (the GI-mode registration path does this and
+    falls back to the probed SN). The mgmt0 step is best-effort: on
     error or empty output, ``mgmt0`` is ``None`` and the call still
     succeeds.
     """
     sys_out = run_show("show system")
     name = parse_system_name(sys_out)
-    if not name:
+    if not name and not allow_missing_name:
         raise RuntimeError(
             "could not parse 'System Name:' from `show system` output; "
             "device may not be a DNOS chassis or the response is unexpected."
@@ -323,6 +339,7 @@ def probe_via(run_show: Callable[[str], str]) -> DeviceProbe:
         expected_role=parse_expected_role(sys_out),
         mgmt0=parse_mgmt0_ipv4(mgmt0_out) if mgmt0_out else None,
         ncc_serials=parse_ncc_serials(sys_out),
+        mode=detect_system_mode(sys_out),
     )
 
 
