@@ -13,4 +13,4 @@ Credentials resolve at runtime from the environment; none are stored in
 the repo.
 """
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"

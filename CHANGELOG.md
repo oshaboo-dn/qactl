@@ -4,6 +4,20 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-23
+
+### Added
+- `request_system_tar_load` is now exposed over MCP (dropped from
+  `CLI_ONLY`). It grew a `confirm` gate mirroring the CLI `--yes`:
+  `confirm=false` (default) returns a `status:"dry_run"` envelope without
+  fetching Jenkins artifacts or touching the device; `confirm=true` kicks
+  off the (fire-and-forget) load and returns the `state:"loading"` +
+  `job_id` envelope immediately, so the whole resolve → start → poll
+  cycle (`jenkins_artifacts` → `request_system_tar_load` →
+  `get_tar_load_job`) is reachable over MCP (#28). The CLI front passes
+  `confirm=true` after its own `--yes` gate, so CLI behaviour is
+  unchanged. `scale_deploy` stays CLI-only.
+
 ## [0.8.1] - 2026-06-21
 
 ### Fixed

@@ -87,6 +87,51 @@ def test_block_param_exists_on_both_kickoffs():
     ).parameters["block"].default is False
 
 
+def test_confirm_defaults_to_false():
+    # The destructive-op gate must default to a dry-run (#28).
+    assert inspect.signature(
+        tarload.request_system_tar_load
+    ).parameters["confirm"].default is False
+
+
+# --------------------------------------------------------------------------
+# confirm gate (#28): confirm=False is a dry-run that touches nothing
+# --------------------------------------------------------------------------
+
+_VALID_URL = "https://jenkins.dev.drivenets.net/job/foo/dev_v26_2/907/"
+
+
+def test_confirm_false_is_dry_run_no_network(monkeypatch):
+    # If the gate leaks past, it would probe the device / fetch Jenkins.
+    def _boom(*a, **k):
+        raise AssertionError("dry-run must not touch the network/device")
+
+    monkeypatch.setattr(tarload, "run_once", _boom)
+    monkeypatch.setattr(tarload, "run_sequence", _boom)
+    monkeypatch.setattr(tarload, "_fetch_jenkins_artifact", _boom)
+
+    env = tarload.request_system_tar_load(jenkins_url=_VALID_URL, device="dev")
+
+    assert env["status"] == "dry_run"
+    assert env["jenkins_url"] == _VALID_URL.rstrip("/")
+    assert env["components_requested"] == "all"
+    assert env["pre_check_requested"] is True
+    assert any("confirm=true" in w for w in env["warnings"])
+    # nothing was registered as an active job
+    assert tarload._TARLOAD_REGISTRY.active_for_device("dev") is None
+
+
+def test_confirm_false_dry_run_still_validates_inputs(monkeypatch):
+    monkeypatch.setattr(tarload, "run_once",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
+    # bad URL must still error out, not return a dry-run
+    env = tarload.request_system_tar_load(jenkins_url="http://evil/x/1", device="dev")
+    assert env["status"] == "error"
+    # missing device/host must still error out
+    env2 = tarload.request_system_tar_load(jenkins_url=_VALID_URL)
+    assert env2["status"] == "error"
+
+
 # --------------------------------------------------------------------------
 # job_store
 # --------------------------------------------------------------------------

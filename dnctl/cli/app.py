@@ -547,10 +547,13 @@ def tar_load_start(
         raise typer.Exit(confirm.REFUSAL_EXIT)
     # block=True: the CLI process is the worker. Run the load to
     # completion in-line and return the terminal envelope (issue #17).
+    # confirm=True: the --yes gate above already confirmed; the tool's
+    # own confirm gate would otherwise short-circuit to a dry-run.
     O.finish(
         O.call(
             request_system_tar_load, c,
-            jenkins_url=jenkins_url, pre_check=not no_pre_check, block=True,
+            jenkins_url=jenkins_url, pre_check=not no_pre_check,
+            confirm=True, block=True,
         ),
         c,
     )
