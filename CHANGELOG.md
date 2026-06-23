@@ -4,6 +4,17 @@ All notable changes to `qactl` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `cli techsupport list` (MCP: `list_techsupports`): enumerate
+  tech-support bundles on `dnftp` (`dn@dnftp:/ftpdisk/dn/oshaboo/ts/`),
+  optionally filtered by `-d <device>`. Reports each bundle's name, size,
+  timestamp and path, surfaces non-canonical files under `orphans`, and
+  `--json` like every other command. Answers "which tech-support bundles
+  do I have for device X?" without an ad-hoc SSH `ls` — the device only
+  keeps the single latest bundle, so `dnftp` is the real catalog (#38).
+
 ## [0.9.1] - 2026-06-23
 
 ### Added
