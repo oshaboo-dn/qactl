@@ -53,6 +53,12 @@ class SurfaceMapTests(unittest.TestCase):
         ):
             self.assertIn(name, cli_tools, name)
 
+    def test_cli_tar_load_is_on_mcp(self):
+        # request_system_tar_load grew a confirm gate + fire-and-forget
+        # kickoff (#28), so it's now MCP-shaped and exposed.
+        self.assertIn("request_system_tar_load", list_group_tools("cli"))
+        self.assertNotIn("request_system_tar_load", CLI_ONLY["cli"])
+
     def test_cli_backup_and_restore_on_mcp(self):
         # Backups are non-destructive; restore is gated behind confirm=true
         # (confirm=false is a dry-run) — both are MCP-shaped.
@@ -61,10 +67,10 @@ class SurfaceMapTests(unittest.TestCase):
         self.assertIn("restore_device", cli_tools)
 
     def test_cli_only_keeps_ungated_destructive_tools(self):
-        # The long, destructive, not-yet-confirm-gated ops stay CLI-only.
+        # scale_deploy is still long, destructive, and not yet confirm-gated,
+        # so it stays CLI-only.
         cli_tools = list_group_tools("cli")
-        for name in ("request_system_tar_load", "scale_deploy"):
-            self.assertNotIn(name, cli_tools, name)
+        self.assertNotIn("scale_deploy", cli_tools)
 
     def test_nc_all_backup_tools_on_mcp(self):
         # Nothing in the nc group is CLI-only any more: list/read are pure

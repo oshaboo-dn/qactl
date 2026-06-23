@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from dnctl.cli.core import job_store, slack_notify
-from dnctl.cli.core.envelope import error_response
+from dnctl.cli.core.envelope import error_response, make_response
 from dnctl.cli.core.errors import REQUEST_TAR_LOAD_NEXT_ACTION, detect_error
 from dnctl.cli.core.jobs import BaseJob, JobRegistry
 from dnctl.cli.core.logging import log_invocation, log_request
@@ -385,6 +385,7 @@ def _fetch_jenkins_artifact(
 
 def request_system_tar_load(
     jenkins_url: str,
+    confirm: bool = False,
     pre_check: bool = True,
     components: Optional[List[str]] = None,
     device: Optional[str] = None,
@@ -400,6 +401,12 @@ def request_system_tar_load(
 ) -> Dict[str, Any]:
     """Stage upgrade tarballs on a device from a cheetah Jenkins build;
     returns IMMEDIATELY (unless ``block=True``).
+
+    DESTRUCTIVE — guarded by ``confirm``. This writes multi-GB images to
+    the device, so it mirrors the CLI ``--yes`` gate: ``confirm=False``
+    (the default) is a DRY-RUN that fetches nothing and touches no
+    device — it just echoes the planned operation and a warning. Pass
+    ``confirm=True`` to actually kick off the load.
 
     ASYNC / NON-BLOCKING. Kickoff is synchronous (Jenkins-artifact
     fetches + ``show system`` device-mode probe, ~3-5 s); the slow
@@ -557,6 +564,11 @@ def request_system_tar_load(
             ``https://jenkins.dev.drivenets.net/...``. Must end in the
             build number (e.g. ``.../dev_v26_2/907`` or with trailing
             slash).
+        confirm: Safety gate for this destructive op (the ``--yes``
+            equivalent). ``False`` (default) returns a ``status:"dry_run"``
+            envelope describing what would run, without fetching Jenkins
+            artifacts or contacting the device. Set ``True`` to actually
+            start the load.
         pre_check: Run ``request system target-stack pre-check`` after
             all loads and wait for it to finish. Default ``True``. Set
             ``False`` to skip the kickoff + polling entirely (still
@@ -641,7 +653,8 @@ def request_system_tar_load(
     tool = "request_system_tar_load"
     request = {
         "device": device, "host": host, "user": user,
-        "jenkins_url": jenkins_url, "pre_check": pre_check,
+        "jenkins_url": jenkins_url, "confirm": confirm,
+        "pre_check": pre_check,
         "components": components,
         "step_timeout": step_timeout, "fetch_timeout": fetch_timeout,
         "pre_check_poll_interval_s": pre_check_poll_interval_s,
@@ -737,6 +750,36 @@ def request_system_tar_load(
     else:
         fetch_required = {c: True for c in requested_components}
         components_label = list(requested_components)
+
+    # Destructive-op gate (the ``--yes`` equivalent). confirm=False is a
+    # dry-run: we've validated the inputs, but we don't touch Jenkins or
+    # the device — just report the plan and how to execute it. Placed
+    # before any network I/O so a dry-run is cheap and side-effect-free.
+    if not confirm:
+        dry = make_response(
+            status="dry_run",
+            device=device,
+            host=host or "",
+            command=(
+                f"request system target-stack load <images from {base}>"
+                + (" ; request system target-stack pre-check"
+                   if pre_check else "")
+            ),
+            warnings=[
+                "Dry-run: confirm=False — nothing was fetched from Jenkins "
+                "and the device was not touched. Re-invoke with "
+                "confirm=true to start the (DESTRUCTIVE) tar-load.",
+            ],
+            next_actions=[
+                "Re-invoke request_system_tar_load(..., confirm=true) to "
+                "kick off the load.",
+            ],
+            jenkins_url=base,
+            components_requested=components_label,
+            pre_check_requested=pre_check,
+        )
+        log_request(tool, request, dry)
+        return dry
 
     resolved_urls: Dict[str, Optional[str]] = {
         "base_os": None, "dnos": None, "gi": None,

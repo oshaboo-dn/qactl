@@ -69,13 +69,14 @@ the big tech-support tarballs. A tool stays **CLI-only** only when it is *intera
 or *destructive without a confirm gate*:
 
 - `setup` (one-time device registry / credentials — interactive)
-- `cli`: `request_system_tar_load`, `scale_deploy` (long image-staging /
-  deploy ops that mutate the box and don't yet take a `confirm` argument)
+- `cli`: `scale_deploy` (long deploy op that mutates the box and doesn't
+  yet take a `confirm` argument)
 
 Run those as `qactl cli ... --yes` / `qactl setup`. Everything else —
 including `backup_device` / `restore_device` / `netconf_backup` /
 `netconf_restore`, the backup read side, the tech-support / tar-load job
-lookups, and `request_system_pre_check` — is on MCP.
+lookups, `request_system_tar_load` (fire-and-forget kickoff, gated by
+`confirm=true`), and `request_system_pre_check` — is on MCP.
 
 > Migrating from the old HTTP MCP servers (ports 8200–8207 under systemd):
 > replace each `http://127.0.0.1:820N/mcp` URL entry with a stdio

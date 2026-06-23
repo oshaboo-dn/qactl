@@ -59,11 +59,10 @@ _DNCTL_PKG: Dict[str, str] = {
 # by tool function name.
 CLI_ONLY: Dict[str, Set[str]] = {
     "cli": {
-        # long-running image staging (multi-GB loads, then install
-        # territory): destructive and NOT yet confirm-gated, so kept off
-        # MCP until it grows a confirm=true gate.
-        "request_system_tar_load",
         # scale config deploy (heavy, destructive, not yet confirm-gated).
+        # request_system_tar_load USED to live here too, but it grew a
+        # confirm=true gate (fire-and-forget kickoff returns immediately)
+        # so it's now MCP-shaped and exposed.
         "scale_deploy",
     },
 }
