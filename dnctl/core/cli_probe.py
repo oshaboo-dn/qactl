@@ -204,6 +204,169 @@ def detect_system_mode(show_system_output: str) -> str:
     return "unknown"
 
 
+# ``show lldp neighbors`` location discovery (issue #40)
+# -----------------------------------------------------
+# A device's physical rack / DNAAS leaf is encoded in the names of its
+# LLDP neighbors:
+#   - the mgmt0 neighbor is the mgmt switch, e.g. ``IL-SW-B13`` => rack B13
+#   - each data/fabric port neighbors a DNAAS leaf, e.g.
+#     ``DNAAS-LEAF-B13 ge100-0/0/16`` => homed on leaf B13
+# Both signals encode the same rack token (a letter-then-digits suffix
+# like ``B13``). We parse the pipe-delimited ``show lldp neighbors`` table
+# (same table style as ``show system``) by locating columns from the
+# header, so the parser tolerates columns being added / reordered across
+# DNOS versions, then classify each row as the mgmt switch or a fabric
+# leaf by its local interface name.
+
+# A rack token is a short alpha prefix followed by 1-3 digits (``B13``,
+# ``A7``, ``AB12``); we never invent one from a token that doesn't match.
+_RACK_TOKEN_RE = re.compile(r"^[A-Za-z]{1,3}\d{1,3}$")
+
+
+def rack_from_name(name: Optional[str]) -> Optional[str]:
+    """Extract the rack token (e.g. ``B13``) from a switch / leaf name.
+
+    Both ``IL-SW-B13`` (mgmt switch) and ``DNAAS-LEAF-B13`` (fabric leaf)
+    carry the rack as a trailing ``-``/``_``-separated component shaped
+    like a short alpha prefix + digits. We scan components from the end
+    and return the first that matches, upper-cased. Returns ``None`` when
+    no component looks like a rack token.
+    """
+    if not name or not isinstance(name, str):
+        return None
+    for token in reversed(re.split(r"[-_]", name.strip())):
+        if _RACK_TOKEN_RE.fullmatch(token):
+            return token.upper()
+    return None
+
+
+def _find_header_idx(
+    headers: List[str], includes: tuple, excludes: tuple = ()
+) -> Optional[int]:
+    """First header index containing any ``includes`` substring and no ``excludes``."""
+    for idx, head in enumerate(headers):
+        if any(inc in head for inc in includes) and not any(
+            exc in head for exc in excludes
+        ):
+            return idx
+    return None
+
+
+def parse_lldp_neighbors(show_lldp_neighbors_output: str) -> List[dict]:
+    """Parse ``show lldp neighbors`` into ``{local_interface, neighbor, remote_port}`` rows.
+
+    DNOS prints a pipe-delimited table whose header carries a local
+    interface column, a neighbor system-name column, and a neighbor port
+    column. Column positions are located from the header (by keyword)
+    rather than fixed offset, so added / reordered columns across DNOS
+    versions don't break the parser. Rows whose local interface or
+    neighbor name is empty are skipped; returns ``[]`` when no recognised
+    table is present.
+    """
+    iface_idx: Optional[int] = None
+    name_idx: Optional[int] = None
+    port_idx: Optional[int] = None
+    rows: List[dict] = []
+    for line in show_lldp_neighbors_output.splitlines():
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        lowered = [c.lower() for c in cells]
+        if iface_idx is None or name_idx is None:
+            i = _find_header_idx(
+                lowered,
+                ("local interface", "local port", "interface", "local intf"),
+                excludes=("neighbor", "remote", "system"),
+            )
+            n = _find_header_idx(
+                lowered,
+                ("system name", "neighbor", "device id", "chassis name",
+                 "remote system"),
+                excludes=("port",),
+            )
+            if i is not None and n is not None:
+                iface_idx, name_idx = i, n
+                port_idx = _find_header_idx(
+                    lowered,
+                    ("port id", "neighbor port", "remote port", "port"),
+                    excludes=("local",),
+                )
+            continue
+        # Skip the markdown-style separator row (``+----+----+...``).
+        if all(set(c) <= {"-", "+", ":", ""} for c in cells):
+            continue
+        if iface_idx >= len(cells) or name_idx >= len(cells):
+            continue
+        local_iface = cells[iface_idx]
+        neighbor = cells[name_idx]
+        if not local_iface or not neighbor:
+            continue
+        remote_port = (
+            cells[port_idx]
+            if port_idx is not None and port_idx < len(cells)
+            else ""
+        )
+        rows.append(
+            {
+                "local_interface": local_iface,
+                "neighbor": neighbor,
+                "remote_port": remote_port,
+            }
+        )
+    return rows
+
+
+def derive_location(show_lldp_neighbors_output: str) -> "LldpLocation":
+    """Classify ``show lldp neighbors`` rows into rack / mgmt switch / fabric leaves.
+
+    The mgmt0 neighbor (local interface containing ``mgmt``) is the mgmt
+    switch; every other neighbor is a fabric leaf link recorded as
+    ``{leaf, local_port, remote_port}``. The rack token is taken from the
+    mgmt switch name first (the more reliable signal), falling back to the
+    fabric leaf names. Disagreements (multiple leaf racks, or mgmt vs leaf
+    mismatch) are surfaced as warnings rather than silently resolved.
+    """
+    rows = parse_lldp_neighbors(show_lldp_neighbors_output)
+    mgmt_switch: Optional[str] = None
+    fabric_leaf: List[dict] = []
+    warnings: List[str] = []
+    for row in rows:
+        if "mgmt" in row["local_interface"].lower():
+            if mgmt_switch is None:
+                mgmt_switch = row["neighbor"]
+        else:
+            fabric_leaf.append(
+                {
+                    "leaf": row["neighbor"],
+                    "local_port": row["local_interface"],
+                    "remote_port": row["remote_port"],
+                }
+            )
+
+    mgmt_rack = rack_from_name(mgmt_switch)
+    leaf_racks = sorted(
+        {r for r in (rack_from_name(e["leaf"]) for e in fabric_leaf) if r}
+    )
+    leaf_rack = leaf_racks[0] if leaf_racks else None
+    if len(leaf_racks) > 1:
+        warnings.append(
+            f"fabric leaves resolve to multiple racks {leaf_racks}; "
+            f"using {leaf_rack}"
+        )
+    if mgmt_rack and leaf_rack and mgmt_rack != leaf_rack:
+        warnings.append(
+            f"mgmt switch rack {mgmt_rack!r} disagrees with fabric leaf "
+            f"rack {leaf_rack!r}; using mgmt switch rack"
+        )
+
+    return LldpLocation(
+        rack=mgmt_rack or leaf_rack,
+        mgmt_switch=mgmt_switch,
+        fabric_leaf=fabric_leaf,
+        warnings=warnings,
+    )
+
+
 def parse_gi_inventory(show_system_output: str) -> List[dict]:
     """Parse the per-node GI-mode inventory rows from a ``show system`` capture.
 
@@ -265,6 +428,25 @@ def parse_gi_inventory(show_system_output: str) -> List[dict]:
 
 
 @dataclass
+class LldpLocation:
+    """Physical location of a device, derived from ``show lldp neighbors``.
+
+    ``rack`` is the rack token (e.g. ``B13``) decoded from the mgmt switch
+    or fabric leaf names; ``mgmt_switch`` is the mgmt0 LLDP neighbor's name
+    (e.g. ``IL-SW-B13``); ``fabric_leaf`` is one ``{leaf, local_port,
+    remote_port}`` dict per data-port neighbor (the DNAAS leaf this device
+    is homed on, plus the cabling). ``warnings`` carries any ambiguity
+    encountered while deriving the rack (multiple racks, mgmt-vs-leaf
+    mismatch). Any field is ``None`` / empty when LLDP didn't surface it.
+    """
+
+    rack: Optional[str] = None
+    mgmt_switch: Optional[str] = None
+    fabric_leaf: List[dict] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+
+@dataclass
 class DeviceProbe:
     """Parsed result of a fresh DNOS probe.
 
@@ -284,6 +466,10 @@ class DeviceProbe:
     :func:`detect_system_mode` classification
     (``"operational"`` / ``"gi"`` / ``"unknown"``) so the caller can tell
     a genuine GI-mode chassis from unparseable / non-DNOS output.
+    ``location`` is the :class:`LldpLocation` derived from
+    ``show lldp neighbors`` (rack / mgmt switch / fabric leaves); it is
+    ``None`` unless the probe was run with ``discover_location=True`` and
+    LLDP returned usable output.
     """
 
     system_name: Optional[str] = None
@@ -292,6 +478,7 @@ class DeviceProbe:
     mgmt0: Optional[str] = None
     ncc_serials: List[str] = field(default_factory=list)
     mode: str = "operational"
+    location: Optional[LldpLocation] = None
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +490,7 @@ def probe_via(
     run_show: Callable[[str], str],
     *,
     allow_missing_name: bool = False,
+    discover_location: bool = False,
 ) -> DeviceProbe:
     """Run the canonical DNOS probe via ``run_show`` and parse the result.
 
@@ -318,6 +506,12 @@ def probe_via(
     falls back to the probed SN). The mgmt0 step is best-effort: on
     error or empty output, ``mgmt0`` is ``None`` and the call still
     succeeds.
+
+    ``discover_location`` (default ``False``) adds a third best-effort
+    ``show lldp neighbors`` step whose output is classified into
+    ``DeviceProbe.location`` (rack / mgmt switch / fabric leaves). On
+    error or empty output ``location`` stays ``None`` — the caller's
+    registration is never aborted by LLDP discovery failing.
     """
     sys_out = run_show("show system")
     name = parse_system_name(sys_out)
@@ -333,6 +527,16 @@ def probe_via(
     except Exception:  # noqa: BLE001 - mgmt0 is best-effort
         mgmt0_out = ""
 
+    location: Optional[LldpLocation] = None
+    if discover_location:
+        lldp_out = ""
+        try:
+            lldp_out = run_show("show lldp neighbors")
+        except Exception:  # noqa: BLE001 - location is best-effort
+            lldp_out = ""
+        if lldp_out:
+            location = derive_location(lldp_out)
+
     return DeviceProbe(
         system_name=name,
         system_id=parse_system_id(sys_out),
@@ -340,11 +544,13 @@ def probe_via(
         mgmt0=parse_mgmt0_ipv4(mgmt0_out) if mgmt0_out else None,
         ncc_serials=parse_ncc_serials(sys_out),
         mode=detect_system_mode(sys_out),
+        location=location,
     )
 
 
 __all__ = [
     "DeviceProbe",
+    "LldpLocation",
     "parse_system_name",
     "parse_system_id",
     "parse_expected_role",
@@ -352,5 +558,8 @@ __all__ = [
     "parse_ncc_serials",
     "detect_system_mode",
     "parse_gi_inventory",
+    "parse_lldp_neighbors",
+    "rack_from_name",
+    "derive_location",
     "probe_via",
 ]

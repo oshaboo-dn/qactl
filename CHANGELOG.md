@@ -15,6 +15,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   do I have for device X?" without an ad-hoc SSH `ls` — the device only
   keeps the single latest bundle, so `dnftp` is the real catalog (#38).
 
+## [0.10.0] - 2026-06-23
+
+### Added
+- `cli device add` now captures **where a device physically lives** —
+  its rack, mgmt switch, and DNAAS fabric leaf — by reading
+  `show lldp neighbors` during the registration probe and decoding the
+  rack token (e.g. `B13`) from the mgmt-switch (`IL-SW-B13`) and
+  fabric-leaf (`DNAAS-LEAF-B13`) neighbor names. The discovered
+  `rack` / `mgmt_switch` / `fabric_leaf` (leaf + port per data link) are
+  persisted on the registry entry and surfaced by `cli device list`
+  (`rack` / `mgmt_switch` / `leaf`). `--rack <name>` overrides the
+  auto-discovered rack; `--no-discover` skips the LLDP probe. Discovery
+  is best-effort — a device that doesn't surface usable LLDP still
+  registers, with a warning (#40).
+
 ## [0.9.1] - 2026-06-23
 
 ### Added

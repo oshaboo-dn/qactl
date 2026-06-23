@@ -905,6 +905,7 @@ def probe_device(
     password: str = "",
     timeout: float = DEFAULT_CMD_TIMEOUT,
     allow_missing_name: bool = False,
+    discover_location: bool = False,
 ) -> "DeviceProbe":
     """SSH to ``host`` (via the cli-mcp transport pool) and run the canonical probe.
 
@@ -917,11 +918,16 @@ def probe_device(
     Raises :class:`ConnectError` when SSH itself fails (TCP / auth)
     via the underlying ``run_once``; raises ``RuntimeError`` when
     ``show system`` runs but the output doesn't yield a parseable
-    ``System Name:`` line — unless ``allow_missing_name`` is set, in
+    ``System Name:`` line — unless     ``allow_missing_name`` is set, in
     which case ``system_name`` comes back ``None`` (the GI-mode
     registration path uses this). Other parsed fields fall back to
     ``None`` silently — the caller decides whether a missing role /
     mgmt0 is fatal for its flow.
+
+    ``discover_location`` runs an extra best-effort
+    ``show lldp neighbors`` on the same warm transport and populates
+    ``DeviceProbe.location`` (rack / mgmt switch / fabric leaves); it
+    never fails the probe.
     """
     if not host:
         raise ValueError("host must be a non-empty string")
@@ -936,7 +942,11 @@ def probe_device(
         )
         return inv.output
 
-    return _probe_via(_run_show, allow_missing_name=allow_missing_name)
+    return _probe_via(
+        _run_show,
+        allow_missing_name=allow_missing_name,
+        discover_location=discover_location,
+    )
 
 
 def resolve_system_name(

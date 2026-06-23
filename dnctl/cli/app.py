@@ -620,6 +620,8 @@ def device_list(as_json: O.Json = False):
 def device_add(
     sn: Annotated[str, typer.Argument(help="Serial / SSH host to probe. The alias is taken from the chassis System Name unless --alias is given.")],
     alias: Annotated[Optional[str], typer.Option("--alias", help="Explicit registry alias. Use for a GI-mode chassis (no System Name); otherwise the alias is the chassis System Name.")] = None,
+    rack: Annotated[Optional[str], typer.Option("--rack", help="Manual rack override (e.g. B13). Default: auto-discover via LLDP.")] = None,
+    no_discover: Annotated[bool, typer.Option("--no-discover", help="Skip LLDP location auto-discovery (rack/mgmt-switch/fabric-leaf).")] = False,
     user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):
@@ -629,11 +631,21 @@ def device_add(
     A box with no System Name (e.g. in GI mode) can still be registered:
     pass --alias <name> to set the key explicitly, or let add fall back
     to the probed SN for a recognisable GI-mode chassis.
+
+    Physical location (rack / mgmt switch / fabric leaf) is auto-discovered
+    from `show lldp neighbors` and stored on the entry; pass --rack to
+    override the rack or --no-discover to skip the LLDP probe entirely.
     """
     c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
     if not confirm.ensure(f"device add {sn}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    O.finish(O.call(manage_device, c, operation="add", sn=sn, alias=alias), c)
+    O.finish(
+        O.call(
+            manage_device, c, operation="add", sn=sn, alias=alias,
+            rack=rack, discover=not no_discover,
+        ),
+        c,
+    )
 
 
 @device_app.command("remove")
