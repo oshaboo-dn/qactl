@@ -38,9 +38,10 @@ from __future__ import annotations
 
 import getpass
 import socket
+from dataclasses import dataclass
 from typing import Optional
 
-from dnctl.core.config import resolve
+from dnctl.core.config import resolve, resolved_source
 
 
 def _default_host() -> str:
@@ -66,6 +67,87 @@ LOCAL_SFTP_PASSWORD: Optional[str] = resolve(
 LOCAL_SFTP_VRF: str = resolve(
     "DNCTL_LOCAL_SFTP_VRF", "local", "vrf", "mgmt0",
 )  # type: ignore[assignment]
+LOCAL_SFTP_PORT: str = resolve(
+    "DNCTL_LOCAL_SFTP_PORT", "local", "port", "22",
+)  # type: ignore[assignment]
+
+
+# Default timeout (seconds) for the TCP reachability probe in
+# :func:`probe_endpoint`. Short on purpose: a self-check should fail fast
+# when the local sshd isn't listening rather than hang the CLI.
+_PROBE_TIMEOUT = 3.0
+
+
+@dataclass(frozen=True)
+class LocalSftpSettings:
+    """The resolved ``[local]`` SFTP target the device dials back into.
+
+    Resolved *fresh* from env / config at call time (not the import-time
+    module constants) so a self-check reflects whatever ``dnctl setup``
+    just wrote. ``password`` is ``None`` when unconfigured — the one value
+    with no safe built-in default.
+    """
+
+    host: str
+    host_source: str
+    user: str
+    vrf: str
+    port: int
+    password: Optional[str]
+
+    @property
+    def password_set(self) -> bool:
+        return bool(self.password)
+
+
+def resolve_local_sftp() -> LocalSftpSettings:
+    """Resolve the ``[local]`` SFTP settings fresh from env / config.
+
+    Mirrors the import-time constants but re-reads on every call so the
+    ``--check-local-sftp`` self-check sees the current config (the module
+    constants are frozen at first import).
+    """
+    host = resolve("DNCTL_LOCAL_SFTP_HOST", "local", "host", _default_host())
+    user = resolve("DNCTL_LOCAL_SFTP_USER", "local", "user", getpass.getuser())
+    vrf = resolve("DNCTL_LOCAL_SFTP_VRF", "local", "vrf", "mgmt0")
+    port_str = resolve("DNCTL_LOCAL_SFTP_PORT", "local", "port", "22")
+    password = resolve("DNCTL_LOCAL_SFTP_PASSWORD", "local", "password", None)
+    try:
+        port = int(port_str or "22")
+    except (TypeError, ValueError):
+        port = 22
+    return LocalSftpSettings(
+        host=host or _default_host(),
+        host_source=resolved_source(
+            "DNCTL_LOCAL_SFTP_HOST", "local", "host", _default_host(),
+        ),
+        user=user or getpass.getuser(),
+        vrf=vrf or "mgmt0",
+        port=port,
+        password=password,
+    )
+
+
+def probe_endpoint(
+    host: str, port: int = 22, timeout: float = _PROBE_TIMEOUT,
+) -> tuple[bool, str]:
+    """Best-effort TCP probe of ``host:port`` from *this* host.
+
+    Confirms an sshd/SFTP server is accepting connections at the resolved
+    local endpoint — the precondition for the device's ``request file
+    download ... protocol sftp`` to ever connect. This runs from the agent
+    host (where the server is meant to live), so it validates "is the
+    server up" but NOT "can the lab device route to me in the VRF"; the
+    latter still needs a device-side ``ping`` (see the next_action text).
+
+    Returns ``(reachable, detail)`` — never raises, so callers can fold the
+    detail straight into a report.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True, f"connected to {host}:{port}"
+    except OSError as exc:
+        return False, f"cannot connect to {host}:{port}: {exc}"
 
 
 class LocalSftpNotConfigured(RuntimeError):
@@ -86,7 +168,8 @@ def require_password() -> str:
             f"{LOCAL_SFTP_USER}@{LOCAL_SFTP_HOST}. The device logs into this "
             "host to push/pull config backups — set DNCTL_LOCAL_SFTP_PASSWORD "
             "(or [local].password in the config) to this account's password; "
-            "run `dnctl setup` to write the config."
+            "run `dnctl setup` to write the config, then "
+            "`dnctl setup --check-local-sftp` to verify the endpoint."
         )
     return LOCAL_SFTP_PASSWORD
 
@@ -96,6 +179,10 @@ __all__ = [
     "LOCAL_SFTP_USER",
     "LOCAL_SFTP_PASSWORD",
     "LOCAL_SFTP_VRF",
+    "LOCAL_SFTP_PORT",
+    "LocalSftpSettings",
     "LocalSftpNotConfigured",
+    "resolve_local_sftp",
+    "probe_endpoint",
     "require_password",
 ]
