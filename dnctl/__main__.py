@@ -14,6 +14,9 @@ require ``--yes``. See ``dnctl <group> --help`` for the full surface.
 
 from __future__ import annotations
 
+import os
+import sys
+
 import typer
 
 from dnctl import __version__
@@ -58,7 +61,25 @@ def _root(
     """dnctl — collapse the four DNOS MCP servers into one CLI."""
 
 
+def _warn_if_standalone() -> None:
+    """Nudge direct callers toward the umbrella ``qactl`` CLI.
+
+    When ``qactl`` delegates here it rewrites ``sys.argv[0]`` to ``qactl``,
+    so a leftover standalone ``dnctl`` on PATH is the only thing that still
+    presents as ``dnctl``. Warn on stderr only — stdout stays lossless so
+    ``--json`` piping is unaffected.
+    """
+    invoked = os.path.basename(sys.argv[0] or "").removesuffix(".exe")
+    if invoked == "dnctl":
+        print(
+            "dnctl: the standalone `dnctl` command is deprecated; "
+            "use `qactl <cli|nc|gnmi|rc|setup> ...` instead.",
+            file=sys.stderr,
+        )
+
+
 def main() -> None:
+    _warn_if_standalone()
     app()
 
 
