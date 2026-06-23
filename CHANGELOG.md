@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `cli raw` (MCP: `run_raw`): an escape hatch that sends arbitrary CLI
+  line(s) verbatim, in order, on ONE ephemeral channel and returns the
+  full per-step transcript (`stdout` for humans, `steps` for machines) —
+  for odd nested / multi-step flows the structured `show` / `show-config`
+  / `config` / `shell` tools don't model. Destructive (can send
+  config/commit) so it's gated by `--yes`; aborts on the first errored
+  line unless `--continue-on-error`. Surfaces the prompt-detection budget
+  as per-call flags `--prompt-timeout` / `--banner-wait` (explicit flag >
+  `DNCTL_CLI_PROMPT_TIMEOUT` / `DNCTL_CLI_BANNER_WAIT` env > built-in
+  default), threaded additively through `run_sequence` → `_init_channel`
+  for slow/odd boxes like DNAAS-LEAF-B13 (#48).
+
 ### Fixed
 - `cli config` / `cli config --check` no longer report `Commit succeeded`
   when the device silently drops statements mid-batch. DNOS commits
@@ -20,6 +33,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of buried under a passing commit (#47).
 
 ### Added
+- `cli raw` (MCP: `run_raw`): escape hatch that sends raw CLI line(s)
+  verbatim, in order, on ONE channel and returns the full per-step
+  transcript (`stdout` human transcript + structured `steps`). For flows
+  the structured `show` / `show-config` / `config` / `shell` tools don't
+  model. Gated by `--yes` (can send config/commit). `--continue-on-error`
+  runs every line instead of aborting on the first error. The prompt
+  detection budget is now tunable per call with `--prompt-timeout` /
+  `--banner-wait` (override the `DNCTL_CLI_PROMPT_TIMEOUT` /
+  `DNCTL_CLI_BANNER_WAIT` env knobs), threaded through `run_sequence` ->
+  `_init_channel`. `options.call` now forwards every non-None kwarg to a
+  tool that declares `**kwargs` (previously dropped) (#48).
 - `cli techsupport list` (MCP: `list_techsupports`): enumerate
   tech-support bundles on `dnftp` (`dn@dnftp:/ftpdisk/dn/oshaboo/ts/`),
   optionally filtered by `-d <device>`. Reports each bundle's name, size,

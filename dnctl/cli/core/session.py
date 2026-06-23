@@ -466,7 +466,11 @@ def _open_transport(
     )
 
 
-def _init_channel(channel: paramiko.Channel) -> str:
+def _init_channel(
+    channel: paramiko.Channel,
+    prompt_timeout: Optional[float] = None,
+    banner_wait: Optional[float] = None,
+) -> str:
     """Drain banner, detect prompt, disable pagination. Returns the prompt.
 
     Prompt detection on a fresh channel is best-effort and timing-sensitive:
@@ -475,13 +479,25 @@ def _init_channel(channel: paramiko.Channel) -> str:
     odd prompt-print timing — e.g. DNAAS-LEAF-B13) can miss it. Rather than
     declaring failure after a single nudge, we re-drain and nudge (send a
     bare newline to coax a fresh prompt) in a bounded loop until either a
-    prompt appears or the overall budget (``DNCTL_CLI_PROMPT_TIMEOUT``,
-    default :data:`DEFAULT_PROMPT_TIMEOUT`) is spent. Fast boxes stay fast —
+    prompt appears or the overall budget is spent. Fast boxes stay fast —
     ``drain(stop_on_prompt=True)`` bails in ~100-300 ms once the prompt lands
     — while slow boxes get the extra time they need before we give up.
+
+    The detection budget resolves as: explicit ``prompt_timeout`` /
+    ``banner_wait`` arg (when positive) > the ``DNCTL_CLI_PROMPT_TIMEOUT`` /
+    ``DNCTL_CLI_BANNER_WAIT`` env knobs > the built-in
+    :data:`DEFAULT_PROMPT_TIMEOUT` / :data:`DEFAULT_BANNER_WAIT`. A
+    non-positive or missing arg falls through to the env/default so a bad
+    knob can never make detection give up faster than the baseline.
     """
-    banner_wait = _env_float("DNCTL_CLI_BANNER_WAIT", DEFAULT_BANNER_WAIT)
-    total_timeout = _env_float("DNCTL_CLI_PROMPT_TIMEOUT", DEFAULT_PROMPT_TIMEOUT)
+    banner_wait = (
+        banner_wait if (banner_wait and banner_wait > 0)
+        else _env_float("DNCTL_CLI_BANNER_WAIT", DEFAULT_BANNER_WAIT)
+    )
+    total_timeout = (
+        prompt_timeout if (prompt_timeout and prompt_timeout > 0)
+        else _env_float("DNCTL_CLI_PROMPT_TIMEOUT", DEFAULT_PROMPT_TIMEOUT)
+    )
 
     deadline = time.time() + total_timeout
     banner = drain(channel, max_wait=banner_wait, stop_on_prompt=True)
@@ -729,6 +745,8 @@ def run_sequence(
     timeout: float = DEFAULT_CMD_TIMEOUT,
     stop_predicate: Optional[Callable[["StepCapture"], bool]] = None,
     auto_confirm: bool = False,
+    prompt_timeout: Optional[float] = None,
+    banner_wait: Optional[float] = None,
 ) -> Invocation:
     """Open a fresh channel, run ``commands`` in order, return the last result.
 
@@ -758,6 +776,11 @@ def run_sequence(
     ``request system target-stack load`` (and similar) wedges the
     channel forever. On deployed DNOS, prefix the sequence with
     ``set cli-no-confirm`` instead and keep ``auto_confirm=False``.
+
+    ``prompt_timeout`` / ``banner_wait`` (optional) widen the fresh-channel
+    prompt-detection budget for this call — handed straight to
+    :func:`_init_channel`. Use on a box whose prompt is slow/odd enough to
+    defeat the default budget; ``None`` keeps the env/default behaviour.
     """
     if not commands:
         raise ValueError("commands must be non-empty")
@@ -771,7 +794,9 @@ def run_sequence(
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
             channel.settimeout(0.5)
-            prompt = _init_channel(channel)
+            prompt = _init_channel(
+                channel, prompt_timeout=prompt_timeout, banner_wait=banner_wait,
+            )
 
             steps: List[StepCapture] = []
             last_output = ""

@@ -33,6 +33,7 @@ from dnctl.cli.tools.gitcommit import get_gitcommit
 from dnctl.cli.tools.interfaces import interfaces as interfaces_tool
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
 from dnctl.cli.tools.ping import run_ping_ipv4
+from dnctl.cli.tools.raw import run_raw
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
 from dnctl.cli.tools.restart import (
     kill_9_ncc_process,
@@ -333,6 +334,33 @@ def ncm_cli(
     if not confirm.ensure(f"run start shell ncm {ncm} on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm, answer=answer), c)
+
+
+@app.command("raw")
+def raw(
+    lines: Annotated[List[str], typer.Argument(help="Raw CLI line(s) sent verbatim, in order, on ONE channel. Each argument is one line (configure-mode lines need a preceding 'configure' line in the same call).")],
+    continue_on_error: Annotated[bool, typer.Option("--continue-on-error", help="Run every line even after one errors (default: abort on first error).")] = False,
+    prompt_timeout: Annotated[Optional[float], typer.Option("--prompt-timeout", help="Seconds to coax a CLI prompt out of a fresh channel (slow/odd boxes, e.g. DNAAS-LEAF-B13). Overrides DNCTL_CLI_PROMPT_TIMEOUT.")] = None,
+    banner_wait: Annotated[Optional[float], typer.Option("--banner-wait", help="Per-drain settle window while detecting the prompt. Overrides DNCTL_CLI_BANNER_WAIT.")] = None,
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Send raw CLI line(s) on one channel + return the full transcript (escape hatch; DESTRUCTIVE — needs --yes).
+
+    For flows the structured show / show-config / config / shell tools don't
+    cover. Lines run verbatim in order on one ephemeral channel; --json
+    carries a per-line `steps` transcript. Tune prompt detection per-call
+    with --prompt-timeout / --banner-wait.
+    """
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    if not confirm.ensure(f"raw cli on {c.device or c.host}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(run_raw, c, lines=lines, stop_on_error=not continue_on_error,
+               prompt_timeout=prompt_timeout, banner_wait=banner_wait),
+        c,
+    )
 
 
 @app.command("clear")

@@ -111,6 +111,17 @@ RUN_SHELL_NEXT_ACTION = (
     "(show_system). Commands are chained with '&&' (stop on first failure) "
     "unless continue_on_error chains them with ';' instead."
 )
+RUN_RAW_NEXT_ACTION = (
+    "run_raw sends raw CLI line(s) verbatim, in order, on ONE channel and "
+    "returns the full per-step transcript — an escape hatch for flows the "
+    "structured show/config tools don't cover. Check (1) each line is a "
+    "valid DNOS CLI line for the mode it runs in (configure-mode lines must "
+    "be preceded by 'configure' in an earlier line of the same call); "
+    "(2) the sequence aborts on the first errored line unless "
+    "continue_on_error is set; (3) for a slow/odd prompt, widen the "
+    "detection budget with --prompt-timeout / --banner-wait. Prefer the "
+    "purpose-built show / show-config / config / shell tools when they fit."
+)
 RUN_NCM_CLI_NEXT_ACTION = (
     "run_ncm_cli drives the NCM management switch's own (ICOS-style) nested "
     "CLI inside 'run start shell ncm <id>' — not Linux, not DNOS. Check "
