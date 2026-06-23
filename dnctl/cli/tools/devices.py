@@ -5,7 +5,9 @@ registry: ``manage_device(add)`` SSHes the chassis once, derives the
 alias from the device's configured ``System Name`` (no override —
 the registry alias and the chassis name are kept in lockstep on
 purpose), captures ``System-Id`` / ``System Type`` (→ ``expected_role``)
-plus the mgmt0 IP, writes a fully-populated entry to the canonical
+plus the mgmt0 IP, auto-discovers the device's physical location
+(``rack`` / ``mgmt_switch`` / ``fabric_leaf``) from
+``show lldp neighbors``, writes a fully-populated entry to the canonical
 ``<repo>/devices/devices_mgmt0.json`` map, and takes the initial
 backup. Every other MCP (netconf-mcp, restconf-mcp, …) consumes that
 map read-only via ``dnctl.core.devices`` — none of them have an
@@ -137,18 +139,87 @@ def list_devices() -> Dict[str, Any]:
 
     Use this before any show/show_config call when the caller is unsure
     which ``device=`` alias is available.
+
+    Each entry also surfaces the device's physical location captured at
+    add-time: ``rack`` (e.g. ``"B13"``), ``mgmt_switch`` (the mgmt0 LLDP
+    neighbor), and ``leaf`` (the sorted unique DNAAS fabric-leaf names it
+    homes on). These are ``None`` / ``[]`` for devices registered before
+    location capture or added with ``--no-discover`` and no ``--rack``.
     """
-    devices = [
-        {
-            "device": alias,
-            "hosts": list(hosts),
-            "aliases": _dn_devices.get_aliases(alias),
-        }
-        for alias, hosts in sorted(DEVICE_HOSTS.items())
-    ]
+    devices = []
+    for alias, hosts in sorted(DEVICE_HOSTS.items()):
+        entry = _dn_devices.get_device_entry(alias) or {}
+        fabric_leaf = entry.get("fabric_leaf") or []
+        leaves = sorted(
+            {
+                e.get("leaf")
+                for e in fabric_leaf
+                if isinstance(e, dict) and e.get("leaf")
+            }
+        )
+        devices.append(
+            {
+                "device": alias,
+                "hosts": list(hosts),
+                "aliases": _dn_devices.get_aliases(alias),
+                "rack": entry.get("rack"),
+                "mgmt_switch": entry.get("mgmt_switch"),
+                "leaf": leaves,
+            }
+        )
     response = make_response(devices=devices)
     log_request("list_devices", {}, response)
     return response
+
+
+def _location_fields(
+    probe: DeviceProbe,
+    rack_override: Optional[str],
+    discover: bool,
+    warnings: List[str],
+) -> Dict[str, Any]:
+    """Resolve the rack / mgmt-switch / fabric-leaf fields to persist.
+
+    Combines the manual ``rack_override`` (when given) with whatever LLDP
+    auto-discovery surfaced on the probe. The override always wins for the
+    ``rack`` field; the discovered ``mgmt_switch`` / ``fabric_leaf`` are
+    recorded regardless so the registry entry carries the full physical
+    context. Any discovery ambiguity (or a failure to discover at all) is
+    appended to ``warnings``. Returns only the fields that have a value,
+    so we never clobber an existing entry with ``None``.
+    """
+    rack_override = (
+        rack_override.strip()
+        if isinstance(rack_override, str) and rack_override.strip()
+        else None
+    )
+    location = probe.location
+    fields: Dict[str, Any] = {}
+    if location is not None:
+        if location.mgmt_switch:
+            fields["mgmt_switch"] = location.mgmt_switch
+        if location.fabric_leaf:
+            fields["fabric_leaf"] = location.fabric_leaf
+        for note in location.warnings:
+            warnings.append(f"location discovery: {note}")
+
+    discovered_rack = location.rack if location is not None else None
+    rack = rack_override or discovered_rack
+    if rack:
+        fields["rack"] = rack
+
+    if rack_override and discovered_rack and rack_override != discovered_rack:
+        warnings.append(
+            f"--rack override {rack_override!r} differs from the "
+            f"LLDP-discovered rack {discovered_rack!r}; using the override."
+        )
+    if discover and not rack:
+        warnings.append(
+            "could not auto-discover the rack from `show lldp neighbors` "
+            "(no mgmt-switch / fabric-leaf neighbor with a recognisable "
+            "rack token); pass --rack <name> to set it explicitly."
+        )
+    return fields
 
 
 def _add_device(
@@ -159,6 +230,8 @@ def _add_device(
     request: Dict[str, Any],
     fail: Any,
     alias_override: Optional[str] = None,
+    rack: Optional[str] = None,
+    discover: bool = True,
 ) -> Dict[str, Any]:
     """Implementation of ``manage_device(operation="add")``.
 
@@ -202,6 +275,7 @@ def _add_device(
             transport_registry, host=sn,
             user=user, password=password, timeout=float(timeout),
             allow_missing_name=True,
+            discover_location=discover,
         )
     except ConnectError as exc:
         return fail(
@@ -286,6 +360,7 @@ def _add_device(
             auto_enrolled.append(peer)
     added = sn_added or bool(auto_enrolled)
 
+    warnings: List[str] = []
     fields: Dict[str, Any] = {"expected_sns": hosts_after}
     if probe.expected_role and (
         not isinstance(existing_entry, dict)
@@ -296,6 +371,7 @@ def _add_device(
         fields["mgmt0"] = probe.mgmt0
     if probe.system_id:
         fields["system_id"] = probe.system_id
+    fields.update(_location_fields(probe, rack, discover, warnings))
 
     try:
         _dn_devices.update_device(alias, **fields)
@@ -307,7 +383,6 @@ def _add_device(
         )
     reload_device_hosts()
 
-    warnings: List[str] = []
     if derived_name_source == "sn-fallback":
         warnings.append(
             f"chassis exposes no 'System Name:' (mode={probe.mode!r}); "
@@ -361,6 +436,7 @@ def _add_device(
         initial_backup_path=initial_backup_path,
         derived_name=alias,
         derived_name_source=derived_name_source,
+        rack=fields.get("rack"),
         entry=final_entry,
     )
     log_request("manage_device", request, response)
@@ -508,6 +584,8 @@ def manage_device(
     alias: Optional[str] = None,
     new_name: Optional[str] = None,
     keep_old_alias: bool = True,
+    rack: Optional[str] = None,
+    discover: bool = True,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = 20,
@@ -577,6 +655,14 @@ def manage_device(
                                          used by netconf-mcp /
                                          restconf-mcp / gnmi-mcp as the
                                          transport target.
+                   5. ``show lldp neighbors`` → physical location:
+                                         ``rack`` (decoded from the mgmt
+                                         switch / fabric leaf names),
+                                         ``mgmt_switch``, and ``fabric_leaf``
+                                         (leaf + port per data link). Best
+                                         effort and skipped when
+                                         ``discover=False``; ``rack=<name>``
+                                         overrides the auto-discovered rack.
 
                    When the derived alias already exists with a
                    DIFFERENT ``System-Id`` on the existing entry, the
@@ -669,6 +755,14 @@ def manage_device(
             otherwise.
         keep_old_alias: For ``rename`` only — keep the old ``name`` as
             a secondary alias so it still resolves (default ``True``).
+        rack: For ``add`` only — manual rack override (e.g. ``"B13"``).
+            When set it wins over LLDP auto-discovery for the stored
+            ``rack`` field; the discovered ``mgmt_switch`` / ``fabric_leaf``
+            are still recorded. Ignored for the other operations.
+        discover: For ``add`` only — auto-discover the device's physical
+            location (rack / mgmt switch / fabric leaves) by reading
+            ``show lldp neighbors`` during the registration probe
+            (default ``True``). Set ``False`` to skip the LLDP step.
         user: SSH username used for the registration / refresh probe
             and the post-add backup. Default: ``dnroot``.
         password: SSH password. Default: ``dnroot``.
@@ -677,7 +771,8 @@ def manage_device(
     request = {
         "operation": operation, "name": name, "sn": sn,
         "alias": alias, "new_name": new_name,
-        "keep_old_alias": keep_old_alias, "user": user,
+        "keep_old_alias": keep_old_alias, "rack": rack,
+        "discover": discover, "user": user,
     }
 
     def _fail(msg: str, **extra: Any) -> Dict[str, Any]:
@@ -706,7 +801,7 @@ def manage_device(
         return _add_device(
             sn=sn or "", user=user, password=password,
             timeout=timeout, request=request, fail=_fail,
-            alias_override=alias,
+            alias_override=alias, rack=rack, discover=discover,
         )
 
     if operation == "alias":
