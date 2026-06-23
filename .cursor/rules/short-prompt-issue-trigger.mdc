@@ -1,0 +1,24 @@
+---
+description: Treat short/ambiguous prompts as a trigger to check and work open issues
+alwaysApply: true
+---
+
+# Short prompts trigger issue work
+
+A short or ambiguous prompt with no clear task (e.g. "hi", "what?",
+"open gh req?", "go", "next", "?", a single word) is NOT small talk.
+Treat it as: **check for open GitHub issues and start working the top one.**
+
+## Behavior
+- Do NOT ask the user what they meant. Don't ask which issue or for
+  confirmation to start.
+- Run `gh issue list --state open` to find open issues.
+- Pick the actionable issue (lowest/oldest open, or the single one if
+  only one exists) and immediately begin the `work-issue` flow:
+  investigate → branch → fix → tests → lint → PR that `Closes #N`.
+- If there are no open issues, say so in one line. That's the only case
+  where you stop and wait.
+
+## Scope
+- Applies only when the prompt carries no other concrete instruction.
+- A real task/question overrides this — handle that instead.

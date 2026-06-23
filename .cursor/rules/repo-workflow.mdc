@@ -1,5 +1,5 @@
 ---
-description: qactl contribution workflow — issues, branches, commits, PRs, releases, secrets
+description: qactl contribution workflow — issues, commits on main, releases, secrets
 alwaysApply: true
 ---
 
@@ -29,38 +29,20 @@ alwaysApply: true
 ## Issues (gh)
 - Bugs/change requests arrive as `gh` issues. Triage on read: confirm
   the repro (command + exit code) before fixing.
-- One issue → one branch → one PR. Label `bug` / `enhancement` /
-  `needs-info`. Close via the merge (`Closes #N`), not manually.
+- Work straight on `main`: fix, commit, push. Reference the issue in the
+  commit (`Closes #N`) so it closes on push. Label `bug` /
+  `enhancement` / `needs-info`.
 
-## Concurrency (worktrees)
-- Multiple agents may run against this repo at once. NEVER share one
-  checkout — a `git checkout`/`switch` in one agent yanks the working
-  tree out from under another mid-edit (lost/garbled work).
-- Each agent/task gets its own `git worktree`. Create one off `main`
-  before editing: `git worktree add ../qactl-<n> -b <branch> origin/main`
-  (or `git worktree add ../qactl-<n> <existing-branch>`). Work, commit,
-  push, and open the PR from there.
-- `main` stays checked out in the primary clone; don't `checkout` other
-  branches there. Rebase your worktree onto the latest `main`
-  (`git fetch origin && git rebase origin/main`) before the PR so a
-  parallel merge doesn't make your PR revert someone else's work.
-- Clean up when merged: `git worktree remove ../qactl-<n>` +
-  `git branch -D <branch>`. `gh pr merge --delete-branch`'s local step
-  fails while the branch is in a worktree — remove the worktree first,
-  or just delete the remote branch and prune.
-
-## Branches / commits
-- Direct commits to `main` are allowed; `main` stays releasable.
-  Per-issue branches (`fix/<n>-slug` / `feat/<n>-slug`) are still fine
-  when you want review or CI first, but are no longer required.
+## Commits
+- Work directly on `main` — no worktrees, no per-issue branches, no PRs.
+  Keep `main` releasable: commit only green, focused work.
 - Small, focused, imperative subjects ≤72 chars referencing the issue:
   `fix: gate jira comment delete on --yes (#4)`.
 
-## Push / PR / releases
-- Push directly to `main`, or open a PR when you want CI/review first.
-  No force-push to `main`.
-- Keep `main` linear (squash-merge PRs). Tag `vX.Y.Z` after notable
-  changes and bump the version the CLI reports.
+## Push / releases
+- Commit and push directly to `main`. No force-push to `main`.
+- Tag `vX.Y.Z` after notable changes and bump the version the CLI
+  reports.
 
 ## Don't
 - No edits outside this repo. No secrets anywhere. No `--no-verify`.

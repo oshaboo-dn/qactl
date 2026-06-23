@@ -69,6 +69,7 @@ def drive_configure_commit(
     capture_all: bool = False,
     scrub_secret: Optional[str] = None,
     connect_next_action: str = _DEFAULT_CONNECT_NEXT_ACTION,
+    commit_conflict_answer: Optional[str] = "abort",
 ) -> Optional[Invocation]:
     """Run ``steps`` on one ephemeral channel and fold the result into
     ``response``.
@@ -83,6 +84,15 @@ def drive_configure_commit(
     caller still decides whether to call ``log_request`` (so a tool can
     parse commit output first and add ``commit`` / warnings before the
     request gets logged).
+
+    ``commit_conflict_answer`` (default ``"abort"``) is forwarded to
+    :func:`run_sequence_pw` so a live ``commit`` interrupted by DNOS'
+    rebase prompt (another session committed first) is answered instead of
+    hanging until timeout. ``abort`` declines the merge — nothing is
+    applied and :func:`parse_commit_output` reports ``commit_conflict`` so
+    the caller can advise a re-run. The dry-run (``commit check``) path
+    already appends ``no-warning`` and never reaches the prompt, so the
+    answer is harmless there.
     """
     try:
         inv = run_sequence_pw(
@@ -90,6 +100,7 @@ def drive_configure_commit(
             device=device, host=host, user=user, password=password,
             commands=list(steps), timeout=timeout,
             capture_all=capture_all,
+            commit_conflict_answer=commit_conflict_answer,
         )
     except ConnectError as exc:
         response.update(

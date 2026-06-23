@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `cli config` / `cli config --check` no longer report `Commit succeeded`
+  when the device silently drops statements mid-batch. DNOS commits
+  whatever parsed and still prints success even when a statement was
+  rejected — typically a top-level `interfaces ...` / `network-services
+  ...` create parsed inside a stale context left by a preceding `no ...`
+  delete (`ERROR: Unknown word: 'interfaces'.`). Those per-statement
+  errors live in the rejected statement's own step output, invisible to
+  the commit parser, so a partial apply masqueraded as success. Both
+  paths now scan each statement step and fail (non-zero), naming every
+  rejected statement, so a partial running config is surfaced loudly
+  instead of buried under a passing commit (#47).
+
 ### Added
 - `cli techsupport list` (MCP: `list_techsupports`): enumerate
   tech-support bundles on `dnftp` (`dn@dnftp:/ftpdisk/dn/oshaboo/ts/`),

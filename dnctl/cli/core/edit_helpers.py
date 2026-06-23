@@ -28,11 +28,12 @@ Used by ``dnctl.cli.tools/edit.py`` (``edit_config``) and
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 from dnctl.cli.core.configure_commit import build_configure_commit_steps
+from dnctl.cli.core.errors import detect_error
 from dnctl.cli.core.registry import transport_registry
-from dnctl.cli.core.session import run_sequence
+from dnctl.cli.core.session import StepCapture, run_sequence
 
 
 _EDIT_CONFIG_LOG_MAX = 200
@@ -123,6 +124,39 @@ def build_edit_config_commands(
         trailing_commands=trailing,
     )
     return steps, commit_line, joined
+
+
+# Scaffolding commands wrapped around the user's statements by
+# build_configure_commit_steps; never a config statement to validate.
+_SCAFFOLD_COMMANDS = {"configure", "rollback 0", "set cli-no-confirm"}
+
+
+def detect_rejected_statements(
+    steps: Sequence[StepCapture],
+) -> List[Tuple[str, List[str]]]:
+    """Find per-statement parser rejections in a configure-commit transcript.
+
+    DNOS commits whatever parsed and reports ``Commit succeeded`` even when
+    individual statements were rejected — typically a top-level ``interfaces
+    ...`` / ``network-services ...`` line parsed inside a stale context left
+    by a preceding ``no ...`` delete, yielding ``ERROR: Unknown word:
+    'interfaces'.``. Those errors live in the rejected statement's OWN step
+    output, which ``parse_commit_output`` never sees (it only reads the
+    commit step). Scan each statement step so a partial apply fails loudly
+    instead of masquerading as success.
+
+    Returns a list of ``(statement, error_lines)`` for every statement step
+    whose output tripped :func:`detect_error`. Empty list ⇒ no rejections.
+    """
+    rejected: List[Tuple[str, List[str]]] = []
+    for step in steps:
+        cmd = (step.command or "").strip()
+        if not cmd or cmd in _SCAFFOLD_COMMANDS or cmd.startswith("commit"):
+            continue
+        is_err, lines = detect_error(step.output)
+        if is_err:
+            rejected.append((cmd, lines))
+    return rejected
 
 
 def abort_shared_candidate(

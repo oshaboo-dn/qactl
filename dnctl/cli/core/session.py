@@ -39,6 +39,7 @@ from .shell import (
     detect_prompt,
     drain,
     send_command,
+    send_command_with_commit_conflict,
     send_command_with_confirm,
     send_command_with_password,
     send_config_help,
@@ -841,6 +842,7 @@ def run_sequence_pw(
     commands: List[Tuple[str, Optional[str]]],
     timeout: float = DEFAULT_CMD_TIMEOUT,
     capture_all: bool = False,
+    commit_conflict_answer: Optional[str] = None,
 ) -> Invocation:
     """Same as :func:`run_sequence` but each command can carry a sub-prompt password.
 
@@ -852,8 +854,15 @@ def run_sequence_pw(
     it with the supplied secret before waiting for the DNOS prompt.
 
     Plain commands (second element ``None``) go through the normal
-    :func:`send_command` path. The whole list runs on one ephemeral channel;
-    any session-scoped state dies with the channel.
+    :func:`send_command` path — unless ``commit_conflict_answer`` is set, in
+    which case they go through :func:`send_command_with_commit_conflict`,
+    which answers DNOS' live-``commit`` rebase prompt ("another session
+    committed, commit/merge-only/abort?") with that answer (typically
+    ``abort``) so the channel can't hang on it. Safe for any
+    ``configure → commit`` sequence: the prompt only fires on a live commit,
+    so non-commit steps behave exactly like :func:`send_command`. The whole
+    list runs on one ephemeral channel; any session-scoped state dies with
+    the channel.
 
     ``capture_all=True`` concatenates every command's cleaned stdout (in
     execution order, separated by ``\\n``) into ``Invocation.output``
@@ -883,9 +892,15 @@ def run_sequence_pw(
             last_hit = True
             for cmd, sub_pw in commands:
                 if sub_pw is None:
-                    output, head, tail, hit = send_command(
-                        channel, cmd, prompt, overall_timeout=timeout,
-                    )
+                    if commit_conflict_answer is not None:
+                        output, head, tail, hit = send_command_with_commit_conflict(
+                            channel, cmd, prompt, overall_timeout=timeout,
+                            answer=commit_conflict_answer,
+                        )
+                    else:
+                        output, head, tail, hit = send_command(
+                            channel, cmd, prompt, overall_timeout=timeout,
+                        )
                 else:
                     output, head, tail, hit = send_command_with_password(
                         channel, cmd, sub_pw, prompt,

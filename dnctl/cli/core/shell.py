@@ -77,6 +77,25 @@ _CONFIRM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Interactive "rebase" prompt DNOS raises on a live ``commit`` when another
+# session committed since this candidate's transaction started, e.g.::
+#
+#   Warning: User 'dnroot' committed at 03-Jul-2025 06:48:02 UTC, your
+#   configuration is out of sync.
+#   What would you like to do (commit, merge-only, abort) [abort]?
+#
+# The device then waits for input right after the ``?`` (no trailing newline),
+# so an apply that doesn't answer it hangs until the per-step timeout. We match
+# the question line anchored at end-of-buffer; the option set / ``[default]``
+# spelling can drift across builds, so keep the choices/whitespace lenient.
+_COMMIT_CONFLICT_RE = re.compile(
+    r"what\s+would\s+you\s+like\s+to\s+do\s*"
+    r"\(\s*commit\s*,\s*merge-only\s*,\s*abort\s*\)"   # (commit, merge-only, abort)
+    r"(?:\s*\[\s*\w+\s*\])?"                            # optional [abort] default
+    r"\s*\?[ \t]*\Z",                                  # trailing '?' + EOL
+    re.IGNORECASE,
+)
+
 # Interactive confirm prompt emitted by the NCM (ICOS/StrataX) nested CLI.
 # Unlike DNOS' ``(yes/no)?`` (see :data:`_CONFIRM_RE`), the NCM phrases its
 # confirm as a ``[y/n]`` / ``[yes/no]`` choice followed by a ``:`` (it waits
@@ -915,6 +934,97 @@ def send_command_with_confirm(
             tail = strip_ansi(text)[-256:]
             if (
                 _CONFIRM_RE.search(tail)
+                and len(text) > answered_at_len
+            ):
+                channel.send(answer + "\n")
+                answered_at_len = len(text)
+                last_rx = time.time()
+                continue
+            if ends_with_prompt(text, prompt):
+                hit_prompt = True
+                break
+        else:
+            now = time.time()
+            if now - start > overall_timeout:
+                break
+            if now - last_rx > idle_timeout and buf:
+                if ends_with_prompt(text, prompt):
+                    hit_prompt = True
+                    break
+            time.sleep(0.05)
+
+    cleaned = strip_ansi(text)
+    lines = cleaned.splitlines()
+
+    cmd_stripped = command.strip()
+    head_prompt_line = ""
+    if cmd_stripped:
+        while lines and cmd_stripped in lines[0]:
+            head_prompt_line = lines[0].rstrip()
+            lines = lines[1:]
+
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    tail_prompt = ""
+    if lines and _TAIL_PROMPT_RE.match(lines[-1].rstrip()):
+        tail_prompt = lines.pop().rstrip()
+
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+
+    lines = collapse_progress(lines)
+    output = "\n".join(lines)
+    if output and not output.endswith("\n"):
+        output += "\n"
+    return output, head_prompt_line, tail_prompt, hit_prompt
+
+
+def send_command_with_commit_conflict(
+    channel: paramiko.Channel,
+    command: str,
+    prompt: str,
+    overall_timeout: float = 60.0,
+    idle_timeout: float = 1.0,
+    answer: str = "abort",
+) -> Tuple[str, str, str, bool]:
+    """Send a DNOS command that may raise the live-``commit`` rebase prompt.
+
+    When another session committed since this candidate's transaction
+    started, DNOS interrupts a live ``commit`` with::
+
+        What would you like to do (commit, merge-only, abort) [abort]?
+
+    and waits for input (see :data:`_COMMIT_CONFLICT_RE`). Without an
+    answer the channel hangs until the per-step timeout. We answer with
+    ``answer`` — defaulting to ``abort``, the prompt's own default, so we
+    never silently merge our candidate on top of someone else's change.
+    The warning + question text is left in the returned output so the
+    caller can classify the outcome as a commit-conflict.
+
+    Returns the same ``(clean_output, head_prompt_line, tail_prompt,
+    hit_prompt)`` tuple shape as :func:`send_command`. Mirrors
+    :func:`send_command_with_confirm` except for the trigger regex and
+    the supplied response.
+    """
+    channel.send(command + "\n")
+
+    buf: list[str] = []
+    text = ""
+    start = time.time()
+    last_rx = start
+    answered_at_len = 0  # text length last time we answered, to avoid loops
+    hit_prompt = False
+
+    while True:
+        if channel.recv_ready():
+            chunk = channel.recv(65535).decode("utf-8", errors="replace")
+            buf.append(chunk)
+            text = "".join(buf)
+            last_rx = time.time()
+
+            tail = strip_ansi(text)[-256:]
+            if (
+                _COMMIT_CONFLICT_RE.search(tail)
                 and len(text) > answered_at_len
             ):
                 channel.send(answer + "\n")

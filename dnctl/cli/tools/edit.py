@@ -29,11 +29,13 @@ from dnctl.cli.core.configure_commit import build_configure_commit_steps, drive_
 from dnctl.cli.core.edit_helpers import (
     abort_shared_candidate,
     build_edit_config_commands,
+    detect_rejected_statements,
     validate_edit_log,
     validate_edit_statements,
 )
 from dnctl.cli.core.envelope import error_response, make_response
 from dnctl.cli.core.errors import (
+    COMMIT_CONFLICT_NEXT_ACTION,
     EDIT_CONFIG_NEXT_ACTION,
     FACTORY_DEFAULT_NEXT_ACTION,
     detect_error,
@@ -49,6 +51,24 @@ from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
 # cleanup path), so this tool accepts 1..49 — a real prior-commit revert.
 _ROLLBACK_ID_MIN = 1
 _ROLLBACK_ID_MAX = 49
+
+
+def _commit_conflict_error(commit: Any) -> str:
+    """One-line explanation of a stale-candidate ``commit_conflict``.
+
+    Names the conflicting committer / time when DNOS reported them so the
+    operator can see who raced the commit.
+    """
+    who = ""
+    if commit.user:
+        who = f" by {commit.user}"
+        if commit.timestamp:
+            who += f" at {commit.timestamp}"
+    return (
+        f"Commit conflict: another session committed{who} while this "
+        "candidate was open, so it is out-of-sync. The rebase prompt was "
+        "answered 'abort' — nothing was applied."
+    )
 
 
 def _finalize_apply_commit(
@@ -94,6 +114,12 @@ def _finalize_apply_commit(
         return response
 
     response["status"] = "error"
+    if commit.status == "commit_conflict":
+        response["errors"].append(_commit_conflict_error(commit))
+        response["errors"].extend(commit.error_lines or [])
+        response["next_actions"].append(COMMIT_CONFLICT_NEXT_ACTION)
+        log_request(tool_name, request, response)
+        return response
     if commit.status == "no_change":
         response["errors"].append(
             "Commit reported no changes — the operation may not have "
@@ -149,6 +175,14 @@ def edit_config(
         3. ``commit and-exit`` + ``log "<log>"`` if ``log`` was given —
            this atomically commits and leaves configure mode, so the
            channel is on firm ground at teardown.
+
+    If another session committed while this candidate was open, DNOS
+    interrupts the live commit with a rebase prompt ("...out of sync. What
+    would you like to do (commit, merge-only, abort)?"). We answer
+    ``abort`` rather than silently merging onto someone else's change, so
+    nothing is applied and the call returns ``commit.status ==
+    "commit_conflict"`` (``status: error``) telling you to re-run — a fresh
+    transaction rebases onto the new running config.
 
     DNOS's candidate configuration is **shared across sessions**. On a
     ``commit and-exit`` failure the channel closes with the candidate
@@ -265,6 +299,29 @@ def edit_config(
         }
 
         if commit.status == "ok":
+            # DNOS commits whatever parsed and still reports success even
+            # when individual statements were rejected (e.g. a top-level
+            # create parsed inside a stale context left by a preceding
+            # `no ...` delete). Those per-statement errors are invisible to
+            # parse_commit_output, so scan each statement step: any rejection
+            # means the running config is partial — fail loudly.
+            rejected = detect_rejected_statements(result.steps)
+            if rejected:
+                response["status"] = "error"
+                response["errors"].append(
+                    f"commit reported success but {len(rejected)} of "
+                    f"{len(statements)} statement(s) were rejected by the "
+                    "device and silently dropped; the running config is "
+                    "partial. Re-run each rejected statement on its own (a "
+                    "preceding `no ...` delete can leave a stale parse "
+                    "context that poisons the statements after it)."
+                )
+                for stmt, lines in rejected:
+                    response["errors"].append(f"rejected statement: {stmt}")
+                    response["errors"].extend(lines[-2:])
+                response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+                log_request("edit_config", request, response)
+                return response
             if is_err:
                 response["warnings"].append(
                     "commit reported success but error-looking lines were "
@@ -275,7 +332,12 @@ def edit_config(
             return response
 
         response["status"] = "error"
-        if commit.status == "no_change":
+        next_action = EDIT_CONFIG_NEXT_ACTION
+        if commit.status == "commit_conflict":
+            response["errors"].append(_commit_conflict_error(commit))
+            response["errors"].extend(commit.error_lines or [])
+            next_action = COMMIT_CONFLICT_NEXT_ACTION
+        elif commit.status == "no_change":
             response["errors"].append(
                 "Commit reported no changes — statements may already match "
                 "the running config, or the configure steps before commit "
@@ -292,9 +354,9 @@ def edit_config(
             )
         else:
             response["errors"].extend(commit.error_lines or [])
-        if is_err:
+        if is_err and commit.status != "commit_conflict":
             response["errors"].extend(err_lines[-3:])
-        response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+        response["next_actions"].append(next_action)
 
         if abort_on_failure:
             abort_err = abort_shared_candidate(
@@ -416,6 +478,27 @@ def edit_config_check(
         }
 
         if commit.status == "check_ok":
+            # Same trap as edit_config: `commit check` validates the parts
+            # that parsed and reports success even when statements were
+            # rejected mid-sequence. Surface the specific rejected
+            # statements as a hard error so the dry-run actually warns the
+            # operator the batch won't apply cleanly.
+            rejected = detect_rejected_statements(result.steps)
+            if rejected:
+                response["status"] = "error"
+                response["errors"].append(
+                    f"commit check passed but {len(rejected)} of "
+                    f"{len(statements)} statement(s) were rejected by the "
+                    "device parser and would be silently dropped on apply. "
+                    "Split the batch so a `no ...` delete can't leave a "
+                    "stale parse context for the statements after it."
+                )
+                for stmt, lines in rejected:
+                    response["errors"].append(f"rejected statement: {stmt}")
+                    response["errors"].extend(lines[-2:])
+                response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+                log_request("edit_config_check", request, response)
+                return response
             if is_err:
                 response["warnings"].append(
                     "commit check reported success but error-looking "

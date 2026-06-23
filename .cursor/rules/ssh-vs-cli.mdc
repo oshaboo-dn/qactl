@@ -1,0 +1,31 @@
+---
+description: Why qactl wraps devices in a CLI instead of handing the agent raw SSH
+alwaysApply: true
+---
+
+# SSH vs CLI — the operating principle
+
+## Runtime: the agent gets the CLI, never a raw shell
+Raw SSH gives an agent flexibility but loses the three things that make
+qactl agent-safe:
+- structured `--json` output (agents reason over structure, not scraped
+  terminal text that drifts between OS versions),
+- `--yes` safety gates (no gate, no dry-run, no refuse-off-a-TTY), and
+- meaningful exit codes (the semantic result, not `ssh`'s exit code).
+
+The CLI is the agent-safe contract; SSH/gNMI is just a transport
+underneath it (`nc` / `gnmi` / `rc`). It's not "CLI vs SSH" — it's a
+thin, typed, gated wrapper over SSH as a backend.
+
+## Escape hatch for the long tail
+Don't hand-write a command for every device knob. Provide a gated
+`raw`/`exec` passthrough — still `--json`, still `--yes` — so you get
+SSH's reach without losing the envelope and the gates.
+
+## Dev workflow: humans explore over SSH
+Devs SHOULD use raw SSH to explore, learn, and discover the device.
+SSH is the spec source: poke the box, read its CLI/help, diff output
+across OS versions, find the stable fields — then distill that into a
+typed, gated subcommand. The manual session is the research; the CLI is
+the hardened artifact you ship. Give humans the shell; give the agent
+the contract.

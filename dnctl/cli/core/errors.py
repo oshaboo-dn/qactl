@@ -225,6 +225,15 @@ FACTORY_DEFAULT_NEXT_ACTION = (
     "Consider taking a backup_device snapshot first if you need a "
     "rollback target."
 )
+COMMIT_CONFLICT_NEXT_ACTION = (
+    "Another session committed while this candidate was open, so DNOS "
+    "flagged it out-of-sync and we answered the rebase prompt with 'abort' "
+    "— nothing was applied. Re-run the same call: a fresh transaction "
+    "rebases onto the new running config. If it keeps colliding, a "
+    "concurrent operator (or automation loop) is committing repeatedly; "
+    "serialise with them or retry once the device is quiet. To preview "
+    "against the updated running first, run edit_config_check."
+)
 EDIT_CONFIG_NEXT_ACTION = (
     "Verify each statement with cmd_search(scope='configure') / cmd_help / "
     "cli_config_crawler first; call edit_config_check(statements=...) to "
