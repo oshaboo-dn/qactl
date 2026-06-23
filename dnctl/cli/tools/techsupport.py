@@ -38,7 +38,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from dnctl.cli.core import job_store, slack_notify, ts_store
-from dnctl.cli.core.dnftp import DNFTP_PASSWORD, DNFTP_VRF, build_upload_command
+from dnctl.cli.core.dnftp import (
+    DNFTP_PASSWORD,
+    DNFTP_VRF,
+    DnftpNotConfigured,
+    build_upload_command,
+)
 from dnctl.cli.core.envelope import error_response, make_response
 from dnctl.cli.core.errors import CREATE_TS_NEXT_ACTION, detect_error
 from dnctl.cli.core.jobs import BaseJob, JobRegistry
@@ -992,7 +997,98 @@ def get_techsupport_job(
     return envelope
 
 
+def list_techsupports(
+    device: Optional[str] = None,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """List tech-support bundles stored on ``dnftp``, newest first.
+
+    Tech-support tarballs accumulate on the external ``dnftp`` SFTP host
+    (``dn@dnftp:/ftpdisk/dn/oshaboo/ts/``) — that's where
+    ``create_techsupport`` uploads them. The device itself only keeps the
+    single most-recent bundle in its ``/techsupport`` partition (and rolls
+    old data out under disk pressure), so ``dnftp`` is the only place
+    bundles actually pile up over time. This tool answers "which
+    tech-support bundles do I have for device X?" by opening an SFTP
+    session to ``dnftp`` and enumerating the store — it does NOT touch any
+    lab device.
+
+    Each entry carries the parsed ``device`` / ``timestamp_utc`` /
+    ``name`` plus the file's ``size_bytes`` and absolute ``path`` on
+    ``dnftp``. Files whose names don't match the canonical
+    ``<device>__<YYYYMMDD-HHMMSS>__<name>.tar`` shape are surfaced under
+    ``orphans`` so you know to investigate.
+
+    Args:
+        device: When set, only list bundles for that device alias
+            (the filename prefix). When ``None``, list every bundle in
+            the store.
+        limit: Maximum number of entries to return (newest first).
+            Default 100.
+    """
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        return error_response(
+            "limit must be a positive integer.", device=device,
+        )
+    if device is not None:
+        device_err = ts_store.validate_device(device)
+        if device_err:
+            return error_response(device_err, device=device)
+
+    try:
+        tsfiles = ts_store.list_ts(device=device, limit=limit)
+        orphans = ts_store.list_orphans()
+    except DnftpNotConfigured as exc:
+        return error_response(
+            str(exc), device=device,
+            next_action="Run `dnctl setup` to configure dnftp credentials.",
+        )
+    except Exception as exc:  # noqa: BLE001 - surface SFTP/connect failures cleanly
+        return error_response(
+            f"Failed to list tech-support bundles on "
+            f"{ts_store.TS_HOST}:{ts_store.TS_DIR}: {exc}",
+            device=device,
+            next_action=(
+                f"Verify the MCP host can SFTP into {ts_store.TS_HOST} as "
+                f"{ts_store.TS_USER}."
+            ),
+        )
+
+    entries = [
+        {
+            "filename": t.filename,
+            "device": t.device,
+            "timestamp_utc": t.timestamp_utc,
+            "name": t.name,
+            "size_bytes": t.size_bytes,
+            "path": t.path,
+        }
+        for t in tsfiles
+    ]
+    warnings: List[str] = []
+    if orphans:
+        warnings.append(
+            f"{len(orphans)} file(s) under {ts_store.TS_HOST}:{ts_store.TS_DIR} "
+            f"don't match the canonical tech-support naming shape (see "
+            f"'orphans' field)."
+        )
+    response = make_response(
+        device=device, host=ts_store.TS_HOST, command="list_techsupports",
+        warnings=warnings,
+        techsupports=entries, orphans=orphans,
+        ts_dir=ts_store.TS_DIR,
+        count=len(entries),
+    )
+    log_request(
+        "list_techsupports",
+        {"device": device, "limit": limit},
+        response,
+    )
+    return response
+
+
 def register(mcp) -> None:
     """Wire this module's tools onto a FastMCP instance."""
     mcp.tool()(create_techsupport)
     mcp.tool()(get_techsupport_job)
+    mcp.tool()(list_techsupports)

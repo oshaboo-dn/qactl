@@ -46,7 +46,11 @@ from dnctl.cli.tools.tarload import (
     request_system_pre_check,
     request_system_tar_load,
 )
-from dnctl.cli.tools.techsupport import create_techsupport, get_techsupport_job
+from dnctl.cli.tools.techsupport import (
+    create_techsupport,
+    get_techsupport_job,
+    list_techsupports,
+)
 from dnctl.cli.tools.templates import (
     render_config,
     scale_deploy,
@@ -528,6 +532,17 @@ def techsupport_show(
     """Poll a tech-support job."""
     c = O.build_ctx(device=device, as_json=as_json)
     O.finish(O.call(get_techsupport_job, c, job_id=job_id), c)
+
+
+@ts_app.command("list")
+def techsupport_list(
+    device: O.Device = None,
+    limit: Annotated[int, typer.Option("--limit", help="Max bundles to return (newest first).")] = 100,
+    as_json: O.Json = False,
+):
+    """List tech-support bundles stored on dnftp (optionally filtered by -d)."""
+    c = O.build_ctx(device=device, as_json=as_json)
+    O.finish(O.call(list_techsupports, c, limit=limit), c)
 
 
 # --- tar-load --------------------------------------------------------------

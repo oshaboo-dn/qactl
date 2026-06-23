@@ -47,7 +47,7 @@ class SurfaceMapTests(unittest.TestCase):
         # read-only / job-poll tools are cheap + bounded — all MCP-shaped.
         cli_tools = list_group_tools("cli")
         for name in (
-            "create_techsupport", "get_techsupport_job",
+            "create_techsupport", "get_techsupport_job", "list_techsupports",
             "list_backups", "read_backup",
             "request_system_pre_check", "get_tar_load_job",
         ):

@@ -19,7 +19,8 @@ from typer.testing import CliRunner
 
 from dnctl.__main__ import app
 from dnctl.cli import app as cli_app
-from dnctl.cli.core import job_store
+from dnctl.cli.core import job_store, ts_store
+from dnctl.cli.core.dnftp import DnftpNotConfigured
 from dnctl.cli.tools import devices, techsupport
 
 runner = CliRunner()
@@ -177,3 +178,90 @@ def test_clear_invalid_command_errors_before_device():
     assert r.exit_code == 1
     payload = json.loads(r.stdout)
     assert payload["status"] == "error"
+
+
+# --------------------------------------------------------------------------
+# techsupport list: enumerate bundles on dnftp (issue #38)
+# --------------------------------------------------------------------------
+
+def _tsfile(filename, size=2_000_000):
+    parsed = ts_store.parse_filename(filename)
+    return ts_store.TSFile(
+        filename=parsed.filename, device=parsed.device,
+        timestamp_utc=parsed.timestamp_utc, name=parsed.name,
+        size_bytes=size, path=parsed.path,
+    )
+
+
+def test_list_techsupports_registered_on_cli():
+    names = {c.name for c in cli_app.ts_app.registered_commands}
+    assert "list" in names
+
+
+def test_list_techsupports_happy_path(monkeypatch):
+    files = [
+        _tsfile("sa__20260623-100123__diag.tar"),
+        _tsfile("sa__20260622-090000__nightly.tar"),
+    ]
+    monkeypatch.setattr(ts_store, "list_ts", lambda device=None, limit=100: files)
+    monkeypatch.setattr(ts_store, "list_orphans", lambda: [])
+    r = techsupport.list_techsupports(device="sa")
+    assert r["status"] == "ok"
+    assert r["count"] == 2
+    assert r["techsupports"][0]["filename"] == "sa__20260623-100123__diag.tar"
+    assert r["techsupports"][0]["name"] == "diag"
+    assert r["techsupports"][0]["size_bytes"] == 2_000_000
+    assert r["ts_dir"] == ts_store.TS_DIR
+
+
+def test_list_techsupports_surfaces_orphans(monkeypatch):
+    monkeypatch.setattr(ts_store, "list_ts", lambda device=None, limit=100: [])
+    monkeypatch.setattr(ts_store, "list_orphans", lambda: ["junk.tar"])
+    r = techsupport.list_techsupports()
+    assert r["status"] == "ok"
+    assert r["orphans"] == ["junk.tar"]
+    assert any("don't match" in w for w in r["warnings"])
+
+
+def test_list_techsupports_rejects_bad_limit():
+    r = techsupport.list_techsupports(limit=0)
+    assert r["status"] == "error"
+    assert any("limit" in e for e in r["errors"])
+
+
+def test_list_techsupports_rejects_bad_device():
+    r = techsupport.list_techsupports(device="bad__name")
+    assert r["status"] == "error"
+
+
+def test_list_techsupports_handles_unconfigured_dnftp(monkeypatch):
+    def _boom(*a, **k):
+        raise DnftpNotConfigured("no creds")
+    monkeypatch.setattr(ts_store, "list_ts", _boom)
+    r = techsupport.list_techsupports()
+    assert r["status"] == "error"
+    assert any("no creds" in e for e in r["errors"])
+    assert any("dnctl setup" in n for n in r["next_actions"])
+
+
+def test_list_techsupports_handles_sftp_failure(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("connection refused")
+    monkeypatch.setattr(ts_store, "list_ts", _boom)
+    r = techsupport.list_techsupports()
+    assert r["status"] == "error"
+    assert any("Failed to list" in e for e in r["errors"])
+
+
+def test_cli_techsupport_list_json(monkeypatch):
+    monkeypatch.setattr(
+        ts_store, "list_ts",
+        lambda device=None, limit=100: [_tsfile("sa__20260623-100123__diag.tar")],
+    )
+    monkeypatch.setattr(ts_store, "list_orphans", lambda: [])
+    r = runner.invoke(app, ["cli", "techsupport", "list", "-d", "sa", "--json"])
+    assert r.exit_code == 0
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "ok"
+    assert payload["count"] == 1
+    assert payload["techsupports"][0]["device"] == "sa"
