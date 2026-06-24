@@ -134,6 +134,25 @@ def test_probe_via_operational_still_parses_name_and_mode():
     assert probe.expected_role == "CL"
 
 
+def test_probe_via_prompt_forces_gi_mode():
+    # A GI prompt is authoritative even if the body parses operationally.
+    probe = probe_via(
+        _run_show({"show system": OPERATIONAL_OUTPUT}),
+        allow_missing_name=True,
+        get_prompt=lambda: "GI(24-Jun-2026-06:57:13)#",
+    )
+    assert probe.mode == "gi"
+
+
+def test_probe_via_operational_prompt_keeps_schema_verdict():
+    probe = probe_via(
+        _run_show({"show system": OPERATIONAL_OUTPUT}),
+        allow_missing_name=True,
+        get_prompt=lambda: "dn40-cl-301a-ncc1#",
+    )
+    assert probe.mode == "operational"
+
+
 # --------------------------------------------------------------------------
 # Prompt-based GI detection (real capture from WDY1CAV500029, a single-NCP
 # S9700 white-box sitting in GI). The prompt is the authoritative signal;

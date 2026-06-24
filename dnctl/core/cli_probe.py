@@ -562,6 +562,7 @@ def probe_via(
     *,
     allow_missing_name: bool = False,
     discover_location: bool = False,
+    get_prompt: Optional[Callable[[], Optional[str]]] = None,
 ) -> DeviceProbe:
     """Run the canonical DNOS probe via ``run_show`` and parse the result.
 
@@ -583,8 +584,16 @@ def probe_via(
     ``DeviceProbe.location`` (rack / mgmt switch / fabric leaves). On
     error or empty output ``location`` stays ``None`` — the caller's
     registration is never aborted by LLDP discovery failing.
+
+    ``get_prompt`` (optional) returns the channel prompt captured for the
+    ``show system`` step; it's read immediately after that step and fed to
+    :func:`detect_system_mode` so GI mode is classified off the
+    authoritative ``GI`` prompt rather than the ``show system`` schema.
+    ``None`` (or a callable returning ``None``) keeps the schema-only
+    behaviour.
     """
     sys_out = run_show("show system")
+    prompt = get_prompt() if get_prompt is not None else None
     name = parse_system_name(sys_out)
     if not name and not allow_missing_name:
         raise RuntimeError(
@@ -614,7 +623,7 @@ def probe_via(
         expected_role=parse_expected_role(sys_out),
         mgmt0=parse_mgmt0_ipv4(mgmt0_out) if mgmt0_out else None,
         ncc_serials=parse_ncc_serials(sys_out),
-        mode=detect_system_mode(sys_out),
+        mode=detect_system_mode(sys_out, prompt=prompt),
         location=location,
     )
 

@@ -1019,18 +1019,25 @@ def probe_device(
     eff_user = user or DEFAULT_USER
     eff_pw = password or DEFAULT_PASSWORD
 
+    # Capture each step's channel prompt so probe_via can classify mode off
+    # the authoritative GI prompt (``GI#``) rather than the show-system
+    # schema. probe_via reads this right after the show-system step.
+    captured: Dict[str, Optional[str]] = {"prompt": None}
+
     def _run_show(cmd: str) -> str:
         inv = run_once(
             registry=registry,
             device=None, host=host, user=eff_user, password=eff_pw,
             command=cmd, timeout=timeout,
         )
+        captured["prompt"] = inv.tail_prompt or inv.head_prompt_line or captured["prompt"]
         return inv.output
 
     return _probe_via(
         _run_show,
         allow_missing_name=allow_missing_name,
         discover_location=discover_location,
+        get_prompt=lambda: captured["prompt"],
     )
 
 
