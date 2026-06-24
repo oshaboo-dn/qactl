@@ -79,6 +79,66 @@ _DNOS_VERSION_RE = re.compile(
 )
 _GI_VERSION_COL_RE = re.compile(r"\bGI\s+version\b", re.IGNORECASE)
 
+# The most reliable GI-mode signal is the *prompt itself*, captured on the
+# fresh channel before any command runs: the golden-image installer renders
+# its hostname as the literal token ``GI`` (e.g. ``GI#`` /
+# ``GI(24-Jun-2026-06:57:13)#``), and greets the session with a
+# ``GI CLI Loading...`` banner. Operational DNOS prompts with the real
+# chassis name instead (``dn40-cl-301a-ncc1#``). This beats the
+# ``show system`` schema heuristics (``Active NCC:`` / ``GI version``):
+# those drift across builds, and on a single-NCP white-box the installer
+# even prints ``Active NCC: <NCP-serial>`` against an ``NCP`` inventory
+# row, so ``Active NCC:`` is doubly unreliable. We therefore key mode off
+# the prompt first and treat the schema as a fallback.
+GI_PROMPT_HOSTNAME = "GI"
+# Hostname token at the head of a prompt line: ``HOST`` or ``HOST(...)``
+# immediately before ``#`` — tolerant of a trailing echoed command
+# (``GI(ts)# show system``) and of an already-normalised ``GI#``.
+_PROMPT_HOST_RE = re.compile(r"^\s*(?P<host>[\w.\-]+?)(?:\([^)]*\))?#", re.MULTILINE)
+# Connect-time banner the GI shell prints before its first prompt.
+_GI_BANNER_RE = re.compile(r"GI\s+CLI\s+Loading", re.IGNORECASE)
+
+
+def prompt_hostname(prompt: Optional[str]) -> Optional[str]:
+    """Return the hostname token from a DNOS/GI prompt line, or ``None``.
+
+    Accepts the raw trailing prompt (``GI(24-Jun-2026-06:57:13)#``), an
+    echoed head line (``GI(ts)# show system``), or an already-normalised
+    ``GI#`` — all yield ``GI``. Returns ``None`` when ``prompt`` is empty
+    or doesn't look like a prompt.
+    """
+    if not prompt or not isinstance(prompt, str):
+        return None
+    match = _PROMPT_HOST_RE.search(prompt)
+    return match.group("host") if match else None
+
+
+def mode_from_prompt(prompt: Optional[str]) -> Optional[str]:
+    """Classify mode from the channel prompt, or ``None`` if inconclusive.
+
+    The only signal we trust today is the GI installer's reserved ``GI``
+    hostname. Returns ``"gi"`` for that and ``None`` for everything else
+    (operational chassis prompts, empty/unrecognised input) — the caller
+    then falls back to :func:`detect_system_mode`'s schema heuristics.
+    Recovery mode is expected to expose its own reserved prompt too; this
+    is where that discriminator will slot in once we've captured one.
+    """
+    if prompt_hostname(prompt) == GI_PROMPT_HOSTNAME:
+        return "gi"
+    return None
+
+
+def mode_from_banner(banner: Optional[str]) -> Optional[str]:
+    """Classify mode from the connect-time banner, or ``None``.
+
+    Secondary to :func:`mode_from_prompt`: the GI shell prints
+    ``GI CLI Loading...`` before its first prompt. Useful when a caller
+    has the raw banner but not yet a clean prompt.
+    """
+    if banner and _GI_BANNER_RE.search(banner):
+        return "gi"
+    return None
+
 
 def parse_system_name(show_system_output: str) -> Optional[str]:
     """Return the ``System Name`` token from a ``show system`` capture.
@@ -177,13 +237,21 @@ def parse_ncc_serials(show_system_output: str) -> List[str]:
     return serials
 
 
-def detect_system_mode(show_system_output: str) -> str:
-    """Classify a ``show system`` capture as ``"operational"`` / ``"gi"`` / ``"unknown"``.
+def detect_system_mode(
+    show_system_output: str, prompt: Optional[str] = None
+) -> str:
+    """Classify a session as ``"operational"`` / ``"gi"`` / ``"unknown"``.
 
-    Both the operational and GI-mode (golden-image installer environment)
-    schemas open with ``System status: running``, so that line is useless
-    as a discriminator — a box sitting in GI mode is *not* running
-    operational DNOS. We instead key off the structural differences:
+    **The prompt is the primary signal.** When ``prompt`` is supplied and
+    classifies (today: the GI installer's reserved ``GI`` hostname — see
+    :func:`mode_from_prompt`), that verdict wins outright — it's captured
+    on the fresh channel before any command runs and doesn't drift across
+    builds the way the ``show system`` schema does.
+
+    Otherwise we fall back to the ``show system`` body. Both the
+    operational and GI-mode schemas open with ``System status: running``,
+    so that line is useless as a discriminator — a box in GI mode is *not*
+    running operational DNOS. We key off the structural differences:
 
     - **operational**: carries ``System Type: ...`` and/or
       ``Version: DNOS [...]``.
@@ -196,6 +264,9 @@ def detect_system_mode(show_system_output: str) -> str:
     ``Active NCC:`` alongside a real ``Version: DNOS [...]`` is still
     reported as operational.
     """
+    from_prompt = mode_from_prompt(prompt)
+    if from_prompt:
+        return from_prompt
     text = show_system_output or ""
     if _SYSTEM_TYPE_RE.search(text) or _DNOS_VERSION_RE.search(text):
         return "operational"
@@ -557,6 +628,10 @@ __all__ = [
     "parse_mgmt0_ipv4",
     "parse_ncc_serials",
     "detect_system_mode",
+    "mode_from_prompt",
+    "mode_from_banner",
+    "prompt_hostname",
+    "GI_PROMPT_HOSTNAME",
     "parse_gi_inventory",
     "parse_lldp_neighbors",
     "rack_from_name",

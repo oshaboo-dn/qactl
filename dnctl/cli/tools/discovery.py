@@ -477,6 +477,7 @@ def show_system(
     response = _run_on_device(
         "show_system", device, host, user, password,
         "show system", timeout, SHOW_NEXT_ACTION,
+        with_prompt=True,
     )
     if response.get("status") in {"ok", "warning"}:
         _annotate_system_mode(response)
@@ -490,9 +491,13 @@ def _annotate_system_mode(response: Dict[str, Any]) -> None:
     mode loudly via ``mode`` + a warning + a next action, so neither a
     human nor an agent mistakes the bare ``System status: running`` for
     "operational DNOS is up".
+
+    Classification prefers the captured channel ``prompt`` (the GI
+    installer's reserved ``GI`` hostname is the authoritative signal),
+    falling back to the ``show system`` schema when no prompt is present.
     """
     stdout = response.get("stdout") or ""
-    mode = detect_system_mode(stdout)
+    mode = detect_system_mode(stdout, prompt=response.get("prompt"))
     response["mode"] = mode
     if mode == "gi":
         inventory = parse_gi_inventory(stdout)

@@ -33,6 +33,7 @@ def _run_on_device(
     next_action_on_error: str,
     mode: str = "command",
     shell_entry: str = "run start shell",
+    with_prompt: bool = False,
 ) -> Dict[str, Any]:
     request = {"device": device, "host": host, "user": user, "command": command}
     response = make_response(device=device, host=host, command=command)
@@ -65,6 +66,12 @@ def _run_on_device(
     response["host"] = result.host
     response["device"] = result.device or device
     response["stdout"] = result.output
+    # Surface the captured channel prompt so prompt-based classifiers
+    # (e.g. GI-mode detection) can key off it. The trailing prompt is the
+    # cleanest; the echoed head line (``GI(ts)# show system``) is the
+    # fallback when a command produced no trailing prompt.
+    if with_prompt:
+        response["prompt"] = result.tail_prompt or result.head_prompt_line or ""
     log_invocation(
         result.device or device,
         result.host,
