@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dnctl.cli.core.envelope import make_response
 from dnctl.cli.core.errors import SHOW_NEXT_ACTION, detect_error
 from dnctl.cli.core.logging import log_invocation, log_request
+from dnctl.cli.vendors import CAP_INTERFACES, requires
 from dnctl.cli.core.registry import transport_registry
 from dnctl.cli.core.session import (
     ConnectError,
@@ -420,6 +421,7 @@ def _render_text(view: "OrderedDict[str, Dict[str, Any]]") -> str:
 # ---------------------------------------------------------------------------
 
 
+@requires(CAP_INTERFACES)
 def interfaces(
     interface: Optional[str] = None,
     device: Optional[str] = None,

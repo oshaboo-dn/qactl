@@ -21,8 +21,10 @@ from dnctl.cli.core.errors import RUN_NCM_CLI_NEXT_ACTION, RUN_SHELL_NEXT_ACTION
 from dnctl.cli.core.runner import _run_ncm_on_device
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.shell_exec import _build_shell_entry, run_linux_on_device
+from dnctl.cli.vendors import CAP_SHELL, requires
 
 
+@requires(CAP_SHELL)
 def run_shell(
     commands: Union[str, List[str]],
     device: Optional[str] = None,
@@ -99,6 +101,7 @@ def run_shell(
     )
 
 
+@requires(CAP_SHELL)
 def run_ncm_cli(
     commands: Union[str, List[str]],
     ncm: str,

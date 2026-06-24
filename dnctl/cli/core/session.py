@@ -470,6 +470,7 @@ def _init_channel(
     channel: paramiko.Channel,
     prompt_timeout: Optional[float] = None,
     banner_wait: Optional[float] = None,
+    dialect: Optional[object] = None,
 ) -> str:
     """Drain banner, detect prompt, disable pagination. Returns the prompt.
 
@@ -500,24 +501,33 @@ def _init_channel(
     )
 
     deadline = time.time() + total_timeout
-    banner = drain(channel, max_wait=banner_wait, stop_on_prompt=True)
-    prompt = detect_prompt(banner)
+    banner = drain(channel, max_wait=banner_wait, stop_on_prompt=True, dialect=dialect)
+    prompt = detect_prompt(banner, dialect=dialect)
     # Bounded nudge/backoff loop: keep poking the channel for a prompt until
     # the budget is exhausted. The first iteration runs even if the deadline
     # has already passed (a zero/tiny banner_wait shouldn't skip every nudge).
     while not prompt and time.time() < deadline:
         channel.send("\n")
-        banner += drain(channel, max_wait=banner_wait, stop_on_prompt=True)
-        prompt = detect_prompt(banner)
+        banner += drain(channel, max_wait=banner_wait, stop_on_prompt=True, dialect=dialect)
+        prompt = detect_prompt(banner, dialect=dialect)
     if not prompt:
         raise RuntimeError("Could not detect CLI prompt on fresh channel")
 
-    init_cmd = "set cli-terminal-length 0"
-    _, _, _, hit = send_command(
-        channel, init_cmd, prompt, overall_timeout=DEFAULT_INIT_TIMEOUT,
+    # Disable output pagination. DNOS uses a single
+    # ``set cli-terminal-length 0``; other vendors supply their own
+    # command(s) via the dialect (Cisco ``terminal length 0``, Junos
+    # ``set cli screen-length 0``). Falls back to the DNOS command when no
+    # dialect is given so legacy callers are unchanged.
+    page_off = (
+        dialect.page_off if dialect is not None else ("set cli-terminal-length 0",)
     )
-    if not hit:
-        raise RuntimeError(f"Timed out waiting for prompt after '{init_cmd}'")
+    for init_cmd in page_off:
+        _, _, _, hit = send_command(
+            channel, init_cmd, prompt,
+            overall_timeout=DEFAULT_INIT_TIMEOUT, dialect=dialect,
+        )
+        if not hit:
+            raise RuntimeError(f"Timed out waiting for prompt after '{init_cmd}'")
     return prompt
 
 
@@ -602,6 +612,12 @@ def run_once(
     """
     if mode not in ("command", "help", "config_help", "shell_exec"):
         raise ValueError(f"invalid mode: {mode!r}")
+    # Resolve the vendor dialect for this device (DNOS for unknown /
+    # host-only). DNOS's dialect reproduces the legacy defaults, so the
+    # DNOS path is unchanged. Lazy import keeps the module import graph
+    # acyclic (vendor plugins import dnctl.cli.core.shell).
+    from dnctl.cli.vendors.registry import dialect_for_device
+    dialect = dialect_for_device(device, host)
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):
         transport = registry.get(
@@ -612,7 +628,7 @@ def run_once(
         try:
             channel = transport.client.invoke_shell(width=500, height=1000)
             channel.settimeout(0.5)
-            prompt = _init_channel(channel)
+            prompt = _init_channel(channel, dialect=dialect)
             if mode == "help":
                 output, head, tail, hit = send_help(
                     channel, command, prompt, overall_timeout=timeout,
@@ -630,6 +646,7 @@ def run_once(
             else:
                 output, head, tail, hit = send_command(
                     channel, command, prompt, overall_timeout=timeout,
+                    dialect=dialect,
                 )
             transport.last_used = time.time()
             return Invocation(

@@ -14,6 +14,7 @@ from dnctl.cli.core.errors import RUN_PING_NEXT_ACTION
 from dnctl.cli.core.runner import _run_on_device
 from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.validation import _int_in, _num_in, _validate_token
+from dnctl.cli.vendors import CAP_PING, requires
 
 
 # ``N% packet loss`` summary line emitted by the device's ping. 100% loss
@@ -38,6 +39,7 @@ def _ping_total_loss(output: str) -> bool:
         return False
 
 
+@requires(CAP_PING)
 def run_ping_ipv4(
     dest: str,
     device: Optional[str] = None,

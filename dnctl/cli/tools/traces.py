@@ -34,6 +34,7 @@ from dnctl.cli.core.session import (
     run_once,
 )
 from dnctl.cli.core.shell_exec import _build_shell_entry, run_linux_on_device
+from dnctl.cli.vendors import CAP_LOGS, requires
 
 
 _TRACES_DEFAULT_DIR = "/core/traces/routing_engine"
@@ -515,6 +516,7 @@ def _build_trace_read_multi(
     return " | ".join(parts), None
 
 
+@requires(CAP_LOGS)
 def list_traces(
     target: Optional[Literal["bgp", "isis", "zebra", "fibmgr", "wb_agent"]] = None,
     component: Optional[str] = None,
@@ -630,6 +632,7 @@ def list_traces(
     )
 
 
+@requires(CAP_LOGS)
 def get_trace(
     target: Optional[Literal["bgp", "isis", "zebra", "fibmgr", "wb_agent"]] = None,
     name: Optional[str] = None,

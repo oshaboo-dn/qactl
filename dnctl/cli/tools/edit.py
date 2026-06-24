@@ -44,6 +44,7 @@ from dnctl.cli.core.locks import device_lock
 from dnctl.cli.core.logging import log_request
 from dnctl.cli.core.registry import transport_registry
 from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
+from dnctl.cli.vendors import CAP_CONFIGURE, CAP_FACTORY_DEFAULT, requires
 
 
 # Junos-style rollback IDs are 0..49; DNOS follows the same convention.
@@ -139,6 +140,7 @@ def _finalize_apply_commit(
     return response
 
 
+@requires(CAP_CONFIGURE)
 def edit_config(
     statements: List[str],
     device: Optional[str] = None,
@@ -376,6 +378,7 @@ def edit_config(
         return response
 
 
+@requires(CAP_CONFIGURE)
 def edit_config_check(
     statements: List[str],
     device: Optional[str] = None,
@@ -533,6 +536,7 @@ def edit_config_check(
         return response
 
 
+@requires(CAP_FACTORY_DEFAULT)
 def load_override_factory_default(
     device: Optional[str] = None,
     host: Optional[str] = None,
@@ -585,6 +589,7 @@ def load_override_factory_default(
         )
 
 
+@requires(CAP_CONFIGURE)
 def rollback_config(
     rollback_id: int = 1,
     device: Optional[str] = None,

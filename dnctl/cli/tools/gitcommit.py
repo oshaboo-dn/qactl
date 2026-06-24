@@ -13,11 +13,13 @@ from typing import Any, Dict, Optional
 from dnctl.cli.core.errors import GET_GITCOMMIT_NEXT_ACTION
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.shell_exec import run_linux_on_device
+from dnctl.cli.vendors import CAP_LOGS, requires
 
 
 _GITCOMMIT_RE = re.compile(r"^([0-9a-fA-F]{7,40})(?:-PR-(\d+))?$")
 
 
+@requires(CAP_LOGS)
 def get_gitcommit(
     device: Optional[str] = None,
     host: Optional[str] = None,

@@ -32,6 +32,13 @@ from dnctl.cli.core.errors import (
 )
 from dnctl.cli.core.runner import _run_on_device
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
+from dnctl.cli.vendors import (
+    CAP_DISCOVERY,
+    CAP_SHOW,
+    CAP_SHOW_CONFIG,
+    CAP_SYSTEM,
+    requires,
+)
 from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory
 from dnctl.cli.core.validation import _quote_list, _validate_quoted, _validate_show_command
 
@@ -46,12 +53,10 @@ from dnctl.cli.core.validation import _quote_list, _validate_quoted, _validate_s
 _MCP_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 
 _CMD_HELP_MCP_TOOL_HINT = (
-    "This name looks like an MCP tool, not an on-device DNOS command — "
-    "and ``cmd_help`` only knows the on-device CLI. MCP tool descriptions "
-    "live in the tool's JSON descriptor (each tool's ``description`` field "
-    "is the docstring on its Python implementation in cli-mcp). Read it "
-    "directly, or call any tool with intentionally bad arguments to see "
-    "the schema echoed back. ``cmd_help`` / ``cmd_search`` are for "
+    "This name has underscores like a tool name, not an on-device DNOS "
+    "command — and `qactl cli help` only knows the on-device CLI. For "
+    "qactl's own subcommands run `qactl cli --help` (or `qactl cli "
+    "<command> --help`). `qactl cli help` / `qactl cli search` are for "
     "discovering DNOS CLI grammar (show / show config / request / run / "
     "configure / clear / set / unset / cmd)."
 )
@@ -70,6 +75,7 @@ _CMD_SEARCH_NEXT_ACTIONS = {
 }
 
 
+@requires(CAP_DISCOVERY)
 def cmd_search(
     scope: Literal[
         "show",
@@ -156,6 +162,7 @@ def cmd_search(
     )
 
 
+@requires(CAP_DISCOVERY)
 def cmd_help(
     command: str,
     device: Optional[str] = None,
@@ -227,8 +234,9 @@ def cmd_help(
                 "If you meant a DNOS CLI command, retype it with spaces "
                 "(e.g. 'show bgp summary', not 'show_bgp_summary') and "
                 "discover the correct grammar via "
-                "cmd_search(scope='show'|'show_config'|'configure'|'clear'|"
-                "'request'|'run'|'set'|'unset', words=[...]).",
+                "`qactl cli search <scope> <keywords>` (scope: show | "
+                "show_config | configure | clear | request | run | set | "
+                "unset).",
             ],
         )
 
@@ -239,6 +247,7 @@ def cmd_help(
     )
 
 
+@requires(CAP_SHOW)
 def show(
     command: str,
     device: Optional[str] = None,
@@ -308,6 +317,7 @@ def _parent_show_config_command(full: str) -> Optional[str]:
     return " ".join(parts[:-1])
 
 
+@requires(CAP_SHOW_CONFIG)
 def show_config(
     command: str,
     device: Optional[str] = None,
@@ -418,6 +428,7 @@ def show_config(
     return parent_response
 
 
+@requires(CAP_SYSTEM)
 def show_system(
     device: Optional[str] = None,
     host: Optional[str] = None,
@@ -511,6 +522,7 @@ def _annotate_system_mode(response: Dict[str, Any]) -> None:
         )
 
 
+@requires(CAP_DISCOVERY)
 def cli_crawler(
     path: str = "",
     device: Optional[str] = None,
@@ -568,6 +580,7 @@ def cli_crawler(
     )
 
 
+@requires(CAP_DISCOVERY)
 def cli_config_crawler(
     path: str = "",
     device: Optional[str] = None,

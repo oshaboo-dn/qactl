@@ -31,6 +31,7 @@ from dnctl.cli.core.errors import (
 from dnctl.cli.core.log_filters import normalize_accounting_ts, validate_grep_pattern
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.shell_exec import run_linux_on_device
+from dnctl.cli.vendors import CAP_LOGS, requires
 
 
 _ACCOUNTING_MAX_BYTES = 500_000
@@ -257,6 +258,7 @@ def _run_log_tool(
     return response
 
 
+@requires(CAP_LOGS)
 def get_accounting(
     tail_lines: Optional[int] = _ACCOUNTING_TAIL_DEFAULT,
     since: Optional[str] = None,
@@ -352,6 +354,7 @@ task_id=1162  service=ssh  cmd=show system
     )
 
 
+@requires(CAP_LOGS)
 def get_netconf_accounting(
     tail_lines: Optional[int] = _ACCOUNTING_TAIL_DEFAULT,
     since: Optional[str] = None,
@@ -414,6 +417,7 @@ def get_netconf_accounting(
     )
 
 
+@requires(CAP_LOGS)
 def get_system_events(
     tail_lines: Optional[int] = _ACCOUNTING_TAIL_DEFAULT,
     since: Optional[str] = None,

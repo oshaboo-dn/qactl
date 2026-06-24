@@ -82,7 +82,11 @@ def _run_on_device(
         log_request(tool, request, response)
         return response
 
-    is_err, err_lines = detect_error(result.output)
+    # Detect device-rejected-the-command using the device's vendor
+    # patterns (DNOS for unknown / host-only — identical to the legacy
+    # ``detect_error``).
+    from dnctl.cli.vendors.registry import plugin_for_device
+    is_err, err_lines = plugin_for_device(device, host).detect_error(result.output)
     if is_err:
         response["status"] = "error"
         response["errors"].extend(err_lines[-5:])

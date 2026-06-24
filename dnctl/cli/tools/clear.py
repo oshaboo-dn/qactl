@@ -28,8 +28,10 @@ from dnctl.cli.core.errors import CLEAR_NEXT_ACTION
 from dnctl.cli.core.runner import _run_on_device
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
 from dnctl.cli.core.validation import _validate_clear_command
+from dnctl.cli.vendors import CAP_CLEAR, requires
 
 
+@requires(CAP_CLEAR)
 def clear(
     command: str,
     device: Optional[str] = None,

@@ -20,8 +20,10 @@ from dnctl.cli.core.envelope import error_response
 from dnctl.cli.core.errors import RUN_RAW_NEXT_ACTION
 from dnctl.cli.core.runner import _run_raw_on_device
 from dnctl.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
+from dnctl.cli.vendors import CAP_RAW, requires
 
 
+@requires(CAP_RAW)
 def run_raw(
     lines: Union[str, List[str]],
     device: Optional[str] = None,

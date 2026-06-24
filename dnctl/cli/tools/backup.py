@@ -64,6 +64,7 @@ from dnctl.cli.core.session import (
     ConnectError,
     run_sequence_pw,
 )
+from dnctl.cli.vendors import CAP_BACKUP, requires
 
 
 # Minimum plausible size for a saved DNOS config. Real configs are multi-KB;
@@ -82,6 +83,7 @@ _BACKUP_DEFAULT_TIMEOUT = 120
 _RESTORE_DEFAULT_TIMEOUT = 20 * 60
 
 
+@requires(CAP_BACKUP)
 def backup_device(
     device: Optional[str] = None,
     description: Optional[str] = None,
@@ -407,6 +409,7 @@ def list_backups(
     return response
 
 
+@requires(CAP_BACKUP)
 def restore_device(
     device: str,
     filename: str,

@@ -43,6 +43,7 @@ from dnctl.cli.core.locks import device_lock
 from dnctl.cli.core.logging import log_request
 from dnctl.cli.core.registry import transport_registry
 from dnctl.cli.core.session import DEFAULT_PASSWORD, DEFAULT_USER
+from dnctl.cli.vendors import CAP_CONFIGURE, requires
 
 
 # Above this statement count, the joined "configure ; ... ; commit" string
@@ -241,12 +242,12 @@ def render_config(
     if target:
         next_action = (
             "Inspect the rendered file, then push it: "
-            f"dnctl cli scale-deploy {target} -d <device> --yes"
+            f"qactl cli scale-deploy {target} -d <device> --yes"
         )
     else:
         next_action = (
             "No file written (pass --out to save). Pipe instead: "
-            "dnctl cli render ... | dnctl cli scale-deploy - -d <device> --yes"
+            "qactl cli render ... | qactl cli scale-deploy - -d <device> --yes"
         )
 
     scale_meta: Dict[str, Any] = {
@@ -458,6 +459,7 @@ def _deploy_rendered_statements(
         return response
 
 
+@requires(CAP_CONFIGURE)
 def scale_deploy(
     rendered_file: Optional[str] = None,
     rendered_text: Optional[str] = None,

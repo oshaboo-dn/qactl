@@ -64,6 +64,7 @@ from dnctl.cli.core.session import (
     run_once,
     run_sequence,
 )
+from dnctl.cli.vendors import CAP_TARLOAD, requires
 
 
 # Only Jenkins URLs from the dev jenkins host are accepted. Keeps the tool
@@ -383,6 +384,7 @@ def _fetch_jenkins_artifact(
     return candidate, None
 
 
+@requires(CAP_TARLOAD)
 def request_system_tar_load(
     jenkins_url: str,
     confirm: bool = False,
@@ -1425,6 +1427,7 @@ def get_tar_load_job(
     return envelope
 
 
+@requires(CAP_TARLOAD)
 def request_system_pre_check(
     device: Optional[str] = None,
     host: Optional[str] = None,

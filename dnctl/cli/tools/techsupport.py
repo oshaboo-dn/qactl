@@ -58,6 +58,7 @@ from dnctl.cli.core.session import (
     run_sequence_pw,
 )
 from dnctl.cli.core.validation import _int_in
+from dnctl.cli.vendors import CAP_TECHSUPPORT, requires
 
 
 # Minimum plausible size for a DNOS tech-support tar. Real tech-supports are
@@ -582,6 +583,7 @@ def _ts_poll_and_upload_worker(
         }, _ts_job_envelope(job))
 
 
+@requires(CAP_TECHSUPPORT)
 def create_techsupport(
     name: str,
     device: Optional[str] = None,
@@ -1041,7 +1043,7 @@ def list_techsupports(
     except DnftpNotConfigured as exc:
         return error_response(
             str(exc), device=device,
-            next_action="Run `dnctl setup` to configure dnftp credentials.",
+            next_action="Run `qactl setup` to configure dnftp credentials.",
         )
     except Exception as exc:  # noqa: BLE001 - surface SFTP/connect failures cleanly
         return error_response(

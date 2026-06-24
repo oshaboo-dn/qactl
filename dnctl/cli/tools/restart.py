@@ -42,6 +42,7 @@ from dnctl.cli.core.session import (
     run_sequence,
 )
 from dnctl.cli.core.shell_exec import run_linux_on_device
+from dnctl.cli.vendors import CAP_RESTART, requires
 
 
 _NCM_ID_RE = re.compile(r"^[ab][01]$")
@@ -198,6 +199,7 @@ def _restart_execute(
     return response
 
 
+@requires(CAP_RESTART)
 def kill_9_ncc_process(
     process: Literal["bgpd", "zebra", "fibmgrd"],
     device: Optional[str] = None,
@@ -252,6 +254,7 @@ def kill_9_ncc_process(
     )
 
 
+@requires(CAP_RESTART)
 def request_system_restart(
     mode: Literal["cold", "warm", "recovery"] = "cold",
     confirm: bool = False,
@@ -317,6 +320,7 @@ def request_system_restart(
     )
 
 
+@requires(CAP_RESTART)
 def request_system_restart_nce(
     node_role: Literal["ncc", "ncp", "ncm", "ncf"],
     node_id: str,
@@ -397,6 +401,7 @@ def request_system_restart_nce(
     )
 
 
+@requires(CAP_RESTART)
 def request_system_container_restart(
     node_role: Literal["ncc", "ncp", "ncm", "ncf"],
     node_id: str,
@@ -453,6 +458,7 @@ def request_system_container_restart(
     )
 
 
+@requires(CAP_RESTART)
 def request_system_process_restart(
     node_role: Literal["ncc", "ncp", "ncf"],
     node_id: str,
@@ -533,6 +539,7 @@ def request_system_process_restart(
     )
 
 
+@requires(CAP_RESTART)
 def request_system_ncc_switchover(
     confirm: bool = False,
     device: Optional[str] = None,

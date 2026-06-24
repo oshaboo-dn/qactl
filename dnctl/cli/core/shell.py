@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import paramiko
+
+if TYPE_CHECKING:  # avoid an import cycle (vendor plugins import this module)
+    from dnctl.cli.vendors.base import Dialect
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -166,54 +169,67 @@ def strip_ansi(text: str) -> str:
     return cleaned
 
 
-def detect_prompt(text: str) -> Optional[str]:
+def detect_prompt(text: str, dialect: Optional["Dialect"] = None) -> Optional[str]:
     """Return the last prompt-looking token at the very end of ``text``.
 
     For DNOS we normalise the parenthesised timestamp/context out, so the
     prompt we store is the stable ``HOSTNAME#`` form. That way matching on
-    subsequent output (where timestamp differs) still works.
+    subsequent output (where timestamp differs) still works. ``dialect``
+    (when given) supplies a vendor's own prompt regex / normalisation;
+    omitted, the DNOS defaults apply unchanged.
     """
+    prompt_re = dialect.prompt_re if dialect is not None else _PROMPT_RE
+    strip_paren = dialect.strip_paren_context if dialect is not None else True
     clean = strip_ansi(text)
     tail = clean[-4096:]
     m = None
-    for m in _PROMPT_RE.finditer(tail):
+    for m in prompt_re.finditer(tail):
         pass
     if not m:
         return None
     raw = m.group("prompt")
-    return _normalise_prompt(raw)
+    return _normalise_prompt(raw, strip_paren=strip_paren)
 
 
-def _normalise_prompt(raw: str) -> str:
-    """Drop a trailing ``(...)`` block from a ``HOST(...)#`` prompt."""
-    if raw.endswith(")#"):
-        open_idx = raw.rfind("(")
-        if open_idx > 0:
-            return raw[:open_idx] + "#"
+def _normalise_prompt(raw: str, strip_paren: bool = True) -> str:
+    """Drop a trailing ``(...)`` block from a ``HOST(...)#`` / ``HOST(...)>`` prompt."""
+    if not strip_paren:
+        return raw
+    for suffix in (")#", ")>"):
+        if raw.endswith(suffix):
+            open_idx = raw.rfind("(")
+            if open_idx > 0:
+                return raw[:open_idx] + suffix[-1]
     return raw
 
 
-def ends_with_prompt(text: str, prompt: str) -> bool:
+def ends_with_prompt(
+    text: str, prompt: str, dialect: Optional["Dialect"] = None
+) -> bool:
     """True if ``text`` ends in a prompt whose hostname matches ``prompt``."""
+    tail_re = dialect.tail_re if dialect is not None else _TAIL_PROMPT_RE
+    strip_paren = dialect.strip_paren_context if dialect is not None else True
     clean = strip_ansi(text).rstrip()
     if not clean:
         return False
     last = clean.rsplit("\n", 1)[-1]
-    if not _TAIL_PROMPT_RE.match(last):
+    if not tail_re.match(last):
         return False
-    return _normalise_prompt(last.rstrip()) == prompt
+    return _normalise_prompt(last.rstrip(), strip_paren=strip_paren) == prompt
 
 
 def drain(
     channel: paramiko.Channel,
     max_wait: float = 2.0,
     stop_on_prompt: bool = False,
+    dialect: Optional["Dialect"] = None,
 ) -> str:
     """Read whatever the channel offers until it goes idle.
 
     If ``stop_on_prompt`` is set, return as soon as the accumulated buffer
-    ends in a DNOS-shaped prompt — lets the banner drain bail out in
-    ~100-300 ms on a responsive device instead of waiting the full window.
+    ends in a prompt for ``dialect`` (DNOS-shaped when omitted) — lets the
+    banner drain bail out in ~100-300 ms on a responsive device instead of
+    waiting the full window.
     """
     chunks = []
     deadline = time.time() + max_wait
@@ -221,7 +237,7 @@ def drain(
         if channel.recv_ready():
             chunks.append(channel.recv(65535).decode("utf-8", errors="replace"))
             deadline = time.time() + 0.5
-            if stop_on_prompt and detect_prompt("".join(chunks)):
+            if stop_on_prompt and detect_prompt("".join(chunks), dialect=dialect):
                 return "".join(chunks)
             continue
         time.sleep(0.05)
@@ -233,6 +249,7 @@ def read_until_prompt(
     prompt: str,
     overall_timeout: float = 30.0,
     idle_timeout: float = 1.0,
+    dialect: Optional["Dialect"] = None,
 ) -> Tuple[str, bool]:
     """Read from channel until ``prompt`` appears at end of output, or timeout.
 
@@ -248,14 +265,14 @@ def read_until_prompt(
             buf.append(chunk)
             text = "".join(buf)
             last_rx = time.time()
-            if ends_with_prompt(text, prompt):
+            if ends_with_prompt(text, prompt, dialect=dialect):
                 return text, True
         else:
             now = time.time()
             if now - start > overall_timeout:
                 return text, False
             if now - last_rx > idle_timeout and buf:
-                if ends_with_prompt(text, prompt):
+                if ends_with_prompt(text, prompt, dialect=dialect):
                     return text, True
             time.sleep(0.05)
 
@@ -1075,6 +1092,7 @@ def send_command(
     command: str,
     prompt: str,
     overall_timeout: float = 30.0,
+    dialect: Optional["Dialect"] = None,
 ) -> Tuple[str, str, str, bool]:
     """Write ``command`` then collect output until prompt. Strips echo + prompt.
 
@@ -1087,10 +1105,15 @@ def send_command(
                                one. Intended for the transcript log only.
     - ``tail_prompt``        — trailing ``HOST(timestamp)#`` line. Empty on
                                timeout.
+
+    ``dialect`` (when given) supplies the vendor's prompt regexes so the
+    trailing-prompt trim and prompt detection match the device; omitted,
+    the DNOS defaults apply unchanged.
     """
+    tail_re = dialect.tail_re if dialect is not None else _TAIL_PROMPT_RE
     channel.send(command + "\n")
     raw, hit_prompt = read_until_prompt(
-        channel, prompt, overall_timeout=overall_timeout,
+        channel, prompt, overall_timeout=overall_timeout, dialect=dialect,
     )
     cleaned = strip_ansi(raw)
     lines = cleaned.splitlines()
@@ -1114,7 +1137,7 @@ def send_command(
     while lines and lines[-1].strip() == "":
         lines.pop()
     tail_prompt = ""
-    if lines and _TAIL_PROMPT_RE.match(lines[-1].rstrip()):
+    if lines and tail_re.match(lines[-1].rstrip()):
         tail_prompt = lines.pop().rstrip()
 
     # 3. Drop leftover blank lines introduced by the prompt removal.
