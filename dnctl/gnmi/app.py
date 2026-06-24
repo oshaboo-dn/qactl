@@ -23,6 +23,7 @@ from dnctl.gnmi.tools.rw import (
     gnmi_get_many,
     gnmi_set,
 )
+from dnctl.gnmi.tools.subscribe import gnmi_subscribe
 
 app = typer.Typer(no_args_is_help=True, help="gNMI get / set / enumerate against DNOS devices.")
 
@@ -162,6 +163,47 @@ def enumerate_keys(
     """Discover which list keys exist at a parent path."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     O.finish(O.call(gnmi_enumerate_keys, c, list_path=list_path, tls_mode=tls_mode), c)
+
+
+@app.command()
+def subscribe(
+    paths: Annotated[List[str], typer.Argument(help="One or more gNMI xpaths to subscribe (keyed lists need [k=v]).")],
+    mode: Annotated[str, typer.Option("--mode", help="on_change | sample | target_defined.")] = "on_change",
+    on_change: Annotated[bool, typer.Option("--on-change", help="Shorthand for --mode on_change.")] = False,
+    sample_interval: Annotated[float, typer.Option("--sample-interval", help="Seconds between samples (sample mode).")] = 10.0,
+    duration: Annotated[float, typer.Option("--duration", help="Capture window in seconds (call returns after this).")] = 30.0,
+    max_updates: Annotated[int, typer.Option("--max-updates", help="Stop after N events (0 = no cap, time-bounded only).")] = 0,
+    heartbeat: Annotated[float, typer.Option("--heartbeat", help="ON_CHANGE heartbeat seconds (0 = off).")] = 0.0,
+    tls_mode: TlsMode = "insecure",
+    encoding: Encoding = "json",
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Bounded gNMI Subscribe (STREAM) — push-native event capture.
+
+    Opens an on-change subscription and collects telemetry until
+    --duration elapses or --max-updates is hit, then emits one envelope.
+    This is the device primitive behind "tell me when BGP goes down"; a
+    workspace-level collector loops it to feed an event spool / Slack.
+
+    Examples::
+
+        gnmi subscribe bgp/.../neighbor[neighbor-address=10.0.0.1]/state -d cl
+        gnmi subscribe interfaces/interface/state/oper-status --duration 60 --json
+        gnmi subscribe components/.../temperature --mode sample --sample-interval 5
+    """
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    eff_mode = "on_change" if on_change else mode
+    O.finish(
+        O.call(
+            gnmi_subscribe, c, paths=paths, mode=eff_mode,
+            sample_interval_s=sample_interval, duration_s=duration,
+            max_updates=max_updates, heartbeat_s=heartbeat,
+            tls_mode=tls_mode, encoding=encoding,
+        ),
+        c,
+    )
 
 
 @app.command()
