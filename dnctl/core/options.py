@@ -85,7 +85,16 @@ def call(fn: Callable[..., Any], c: Ctx, **extra: Any) -> Any:
     }
     merged = {**conn, **extra}
     params = inspect.signature(fn).parameters
-    kwargs = {k: v for k, v in merged.items() if k in params and v is not None}
+    # A tool that declares **kwargs accepts anything, so forward every
+    # non-None key; otherwise keep only the kwargs it names. (Dropping None
+    # everywhere lets each tool's own defaults win.)
+    accepts_var_kw = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    kwargs = {
+        k: v for k, v in merged.items()
+        if v is not None and (accepts_var_kw or k in params)
+    }
     return fn(**kwargs)
 
 

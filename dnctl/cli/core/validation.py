@@ -62,34 +62,35 @@ def _validate_show_command(
         scope_arg = "show_config" if want_config else "show"
         return raw, (
             f"command must be non-empty; pass the full '{hint} ...' "
-            f"command as emitted by cmd_search(scope='{scope_arg}', ...) "
-            f"or the relevant crawler."
+            f"command as discovered by `qactl cli search {scope_arg} "
+            f"<keywords>` or `qactl cli crawl`."
         )
     tokens = raw.split()
     lowered = [t.lower() for t in tokens]
     if lowered[0] != "show":
         return raw, (
             "command must start with 'show' — pass the full command as "
-            "emitted by the discovery tools (e.g. 'show bgp summary')."
+            "discovered by `qactl cli search show <keywords>` "
+            "(e.g. 'show bgp summary')."
         )
     is_show_config = len(lowered) >= 2 and lowered[1] == "config"
     if want_config and not is_show_config:
         return raw, (
-            "show_config requires a 'show config ...' command; for "
-            "operational 'show ...' commands use the 'show' tool instead."
+            "show-config requires a 'show config ...' command; for "
+            "operational 'show ...' commands use `qactl cli show` instead."
         )
     if not want_config and is_show_config:
         return raw, (
             "show does not accept 'show config ...' commands; route "
-            "configuration reads through the 'show_config' tool."
+            "configuration reads through `qactl cli show-config`."
         )
     # Bare `show config` is a legitimate DNOS command (dumps the full
     # running config); bare `show` is not — it needs a subcommand.
     if not want_config and len(tokens) < 2:
         return raw, (
             "command must include a subcommand after 'show' — pass the "
-            "full command as emitted by the discovery tools "
-            "(e.g. 'show bgp summary')."
+            "full command as discovered by `qactl cli search show "
+            "<keywords>` (e.g. 'show bgp summary')."
         )
     return " ".join(tokens), None
 
@@ -114,7 +115,7 @@ def _validate_clear_command(command: str) -> Tuple[str, Optional[str]]:
     if not raw:
         return raw, (
             "command must be non-empty; pass the full 'clear ...' command "
-            "as emitted by cli_crawler(path='clear ...') "
+            "as discovered by `qactl cli crawl 'clear ...'` "
             "(e.g. 'clear arp', 'clear bgp neighbor 1.2.3.4', "
             "'clear evpn mac-table')."
         )
@@ -122,13 +123,13 @@ def _validate_clear_command(command: str) -> Tuple[str, Optional[str]]:
     if tokens[0].lower() != "clear":
         return raw, (
             "command must start with 'clear' — pass the full command as "
-            "emitted by cli_crawler(path='clear ...') "
+            "discovered by `qactl cli crawl 'clear ...'` "
             "(e.g. 'clear arp', 'clear bgp neighbor 1.2.3.4')."
         )
     if len(tokens) < 2:
         return raw, (
             "command must include a subcommand after 'clear' — pass the "
-            "full command as emitted by cli_crawler(path='clear ...') "
+            "full command as discovered by `qactl cli crawl 'clear ...'` "
             "(e.g. 'clear arp', 'clear evpn mac-table')."
         )
     return " ".join(tokens), None
