@@ -21,6 +21,7 @@ shape.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from dnctl.core import devices as _dn_devices
@@ -44,6 +45,21 @@ from dnctl.cli.core.session import (
 _MANAGE_DEVICE_FIX = (
     "Fix the arguments and retry; use list_devices to see current aliases."
 )
+
+# The vendors the registry understands. ``dnos`` is the default and the
+# only one cli-mcp can SSH-probe (`show system` etc.); ``cisco`` /
+# ``juniper`` are registered manually — their CLIs speak a different
+# dialect, so we skip the DNOS probe and initial backup and just record
+# the operator-supplied vendor + SSH host on the entry.
+DEFAULT_VENDOR = "dnos"
+SUPPORTED_VENDORS = ("dnos", "cisco", "juniper")
+
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def _looks_like_ipv4(host: str) -> bool:
+    """True when ``host`` is a bare dotted-quad IPv4 literal."""
+    return bool(_IPV4_RE.match(host.strip())) if isinstance(host, str) else False
 
 # Description tag baked into the very first backup taken at registration
 # time. Stays inside the [A-Za-z0-9._-]{1,40} budget that
@@ -162,6 +178,7 @@ def list_devices() -> Dict[str, Any]:
                 "device": alias,
                 "hosts": list(hosts),
                 "aliases": _dn_devices.get_aliases(alias),
+                "vendor": entry.get("vendor") or DEFAULT_VENDOR,
                 "rack": entry.get("rack"),
                 "mgmt_switch": entry.get("mgmt_switch"),
                 "leaf": leaves,
@@ -361,7 +378,7 @@ def _add_device(
     added = sn_added or bool(auto_enrolled)
 
     warnings: List[str] = []
-    fields: Dict[str, Any] = {"expected_sns": hosts_after}
+    fields: Dict[str, Any] = {"expected_sns": hosts_after, "vendor": DEFAULT_VENDOR}
     if probe.expected_role and (
         not isinstance(existing_entry, dict)
         or not existing_entry.get("expected_role")
@@ -432,11 +449,95 @@ def _add_device(
         device=alias, host=sn,
         warnings=warnings,
         operation="add", hosts=hosts_after, added=added,
+        vendor=DEFAULT_VENDOR,
         auto_enrolled_ncc_sns=auto_enrolled,
         initial_backup_path=initial_backup_path,
         derived_name=alias,
         derived_name_source=derived_name_source,
         rack=fields.get("rack"),
+        entry=final_entry,
+    )
+    log_request("manage_device", request, response)
+    return response
+
+
+def _add_nondnos_device(
+    sn: str,
+    vendor: str,
+    request: Dict[str, Any],
+    fail: Any,
+    alias_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Register a non-DNOS device (``cisco`` / ``juniper``) by hand.
+
+    These vendors don't speak the DNOS ``show system`` dialect, so there's
+    nothing to SSH-probe for an alias / role / mgmt0 and no DNOS backup to
+    take. We simply record the operator-supplied ``vendor`` plus the SSH
+    host on the entry. The alias is the explicit ``--alias`` when given,
+    otherwise the ``sn`` itself (a hostname like ``jun204-rt01`` makes a
+    fine alias; a bare IP works too but a friendlier ``--alias`` is nicer).
+    ``mgmt0`` is set to ``sn`` when ``sn`` is an IPv4 literal so the
+    transport target is populated; otherwise it's left for a later edit.
+    """
+    if not sn:
+        return fail("sn is required for operation='add'.")
+
+    override = alias_override.strip() if isinstance(alias_override, str) else ""
+    if override:
+        alias = override
+        derived_name_source = "explicit"
+    else:
+        alias = sn
+        derived_name_source = "sn-fallback"
+
+    existing_entry = _dn_devices.get_device_entry(alias) or {}
+    existing_hosts: List[str] = []
+    if isinstance(existing_entry, dict):
+        raw = existing_entry.get("expected_sns")
+        if isinstance(raw, list):
+            existing_hosts = [s for s in raw if isinstance(s, str) and s]
+
+    sn_added = sn not in existing_hosts
+    hosts_after = list(existing_hosts)
+    if sn_added:
+        hosts_after.append(sn)
+
+    fields: Dict[str, Any] = {"vendor": vendor, "expected_sns": hosts_after}
+    if _looks_like_ipv4(sn) and not existing_entry.get("mgmt0"):
+        fields["mgmt0"] = sn.strip()
+
+    try:
+        _dn_devices.update_device(alias, **fields)
+    except Exception as exc:  # noqa: BLE001
+        return fail(
+            f"failed to write canonical map for alias '{alias}': "
+            f"{type(exc).__name__}: {exc}",
+            hosts=list(existing_hosts), added=False,
+        )
+    reload_device_hosts()
+
+    warnings: List[str] = []
+    if not override:
+        warnings.append(
+            f"registered {vendor} device under the SSH host '{sn}' as the "
+            f"alias; pass --alias <name> to register it under a friendlier "
+            f"name instead."
+        )
+    if not sn_added:
+        warnings.append(f"'{sn}' was already registered under device '{alias}'.")
+    warnings.append(
+        f"vendor={vendor!r}: cli-mcp's DNOS tools (show/configure/backup) "
+        f"do not target this device; it was recorded for inventory only."
+    )
+
+    final_entry = _dn_devices.get_device_entry(alias) or {}
+    response = make_response(
+        device=alias, host=sn,
+        warnings=warnings,
+        operation="add", hosts=hosts_after, added=sn_added,
+        vendor=vendor,
+        derived_name=alias,
+        derived_name_source=derived_name_source,
         entry=final_entry,
     )
     log_request("manage_device", request, response)
@@ -586,6 +687,7 @@ def manage_device(
     keep_old_alias: bool = True,
     rack: Optional[str] = None,
     discover: bool = True,
+    vendor: str = DEFAULT_VENDOR,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = 20,
@@ -763,6 +865,13 @@ def manage_device(
             location (rack / mgmt switch / fabric leaves) by reading
             ``show lldp neighbors`` during the registration probe
             (default ``True``). Set ``False`` to skip the LLDP step.
+        vendor: For ``add`` only — the device vendor, one of ``"dnos"``
+            (default), ``"cisco"``, ``"juniper"``. ``dnos`` runs the full
+            SSH probe (System Name → alias, role, mgmt0, LLDP location)
+            and initial backup. ``cisco`` / ``juniper`` skip all of that
+            (their CLIs aren't DNOS): no probe, no backup — the alias is
+            ``--alias`` or the ``sn``, and only the vendor + SSH host are
+            recorded. Ignored for the other operations.
         user: SSH username used for the registration / refresh probe
             and the post-add backup. Default: ``dnroot``.
         password: SSH password. Default: ``dnroot``.
@@ -772,7 +881,7 @@ def manage_device(
         "operation": operation, "name": name, "sn": sn,
         "alias": alias, "new_name": new_name,
         "keep_old_alias": keep_old_alias, "rack": rack,
-        "discover": discover, "user": user,
+        "discover": discover, "vendor": vendor, "user": user,
     }
 
     def _fail(msg: str, **extra: Any) -> Dict[str, Any]:
@@ -797,6 +906,17 @@ def manage_device(
                 "on the device (`set system name <new>` + commit) "
                 "and then call manage_device(operation='add', "
                 f"sn={sn!r})."
+            )
+        vendor_norm = (vendor or DEFAULT_VENDOR).strip().lower()
+        if vendor_norm not in SUPPORTED_VENDORS:
+            return _fail(
+                f"vendor={vendor!r} is not supported; choose one of "
+                f"{', '.join(SUPPORTED_VENDORS)} (default {DEFAULT_VENDOR})."
+            )
+        if vendor_norm != DEFAULT_VENDOR:
+            return _add_nondnos_device(
+                sn=sn or "", vendor=vendor_norm, request=request,
+                fail=_fail, alias_override=alias,
             )
         return _add_device(
             sn=sn or "", user=user, password=password,

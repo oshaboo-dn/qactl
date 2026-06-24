@@ -154,6 +154,73 @@ def test_manage_device_add_still_rejects_name():
 
 
 # --------------------------------------------------------------------------
+# manual vendor on add: cisco / juniper skip the DNOS probe
+# --------------------------------------------------------------------------
+
+def test_device_add_cli_has_vendor_option():
+    params = list(inspect.signature(cli_app.device_add).parameters)
+    assert "vendor" in params
+
+
+def test_manage_device_add_cisco_skips_probe(monkeypatch):
+    # A non-DNOS add must never SSH-probe: blow up if it tries.
+    def _boom(*a, **k):
+        raise AssertionError("probe_device must not run for non-DNOS vendors")
+
+    monkeypatch.setattr(devices, "probe_device", _boom)
+    r = devices.manage_device(operation="add", sn="100.64.14.197", vendor="cisco")
+    assert r["status"] == "ok"
+    assert r["vendor"] == "cisco"
+    assert r["device"] == "100.64.14.197"
+    assert r["hosts"] == ["100.64.14.197"]
+    # An IPv4 sn populates mgmt0 as the transport target.
+    assert r["entry"]["mgmt0"] == "100.64.14.197"
+    assert r["entry"]["vendor"] == "cisco"
+
+
+def test_manage_device_add_juniper_uses_alias(monkeypatch):
+    monkeypatch.setattr(
+        devices, "probe_device",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no probe")),
+    )
+    r = devices.manage_device(
+        operation="add", sn="jun204-rt01", alias="jun-rt01", vendor="juniper"
+    )
+    assert r["status"] == "ok"
+    assert r["vendor"] == "juniper"
+    assert r["device"] == "jun-rt01"
+    # A hostname (not an IP) leaves mgmt0 unset for a later edit.
+    assert "mgmt0" not in r["entry"]
+
+
+def test_manage_device_add_vendor_is_case_insensitive(monkeypatch):
+    monkeypatch.setattr(
+        devices, "probe_device",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no probe")),
+    )
+    r = devices.manage_device(operation="add", sn="10.0.0.9", vendor="Cisco")
+    assert r["status"] == "ok"
+    assert r["vendor"] == "cisco"
+
+
+def test_manage_device_add_rejects_unknown_vendor():
+    r = devices.manage_device(operation="add", sn="1.2.3.4", vendor="arista")
+    assert r["status"] == "error"
+    assert any("not supported" in e for e in r["errors"])
+
+
+def test_list_devices_reports_vendor(monkeypatch):
+    monkeypatch.setattr(
+        devices, "probe_device",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no probe")),
+    )
+    devices.manage_device(operation="add", sn="100.64.14.197", vendor="cisco")
+    listed = devices.list_devices()["devices"]
+    entry = next(d for d in listed if d["device"] == "100.64.14.197")
+    assert entry["vendor"] == "cisco"
+
+
+# --------------------------------------------------------------------------
 # clear: wired into the CLI + gated
 # --------------------------------------------------------------------------
 
@@ -241,7 +308,7 @@ def test_list_techsupports_handles_unconfigured_dnftp(monkeypatch):
     r = techsupport.list_techsupports()
     assert r["status"] == "error"
     assert any("no creds" in e for e in r["errors"])
-    assert any("dnctl setup" in n for n in r["next_actions"])
+    assert any("qactl setup" in n for n in r["next_actions"])
 
 
 def test_list_techsupports_handles_sftp_failure(monkeypatch):

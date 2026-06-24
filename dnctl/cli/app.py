@@ -663,6 +663,7 @@ def device_add(
     alias: Annotated[Optional[str], typer.Option("--alias", help="Explicit registry alias. Use for a GI-mode chassis (no System Name); otherwise the alias is the chassis System Name.")] = None,
     rack: Annotated[Optional[str], typer.Option("--rack", help="Manual rack override (e.g. B13). Default: auto-discover via LLDP.")] = None,
     no_discover: Annotated[bool, typer.Option("--no-discover", help="Skip LLDP location auto-discovery (rack/mgmt-switch/fabric-leaf).")] = False,
+    vendor: Annotated[str, typer.Option("--vendor", help="Device vendor: dnos (default), cisco, or juniper. Non-DNOS devices skip the DNOS probe + initial backup; alias is --alias or the sn.")] = "dnos",
     user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):
@@ -676,6 +677,10 @@ def device_add(
     Physical location (rack / mgmt switch / fabric leaf) is auto-discovered
     from `show lldp neighbors` and stored on the entry; pass --rack to
     override the rack or --no-discover to skip the LLDP probe entirely.
+
+    --vendor defaults to dnos. Pass --vendor cisco/juniper for a non-DNOS
+    box: the DNOS probe and initial backup are skipped and the device is
+    recorded for inventory only (alias is --alias or the sn).
     """
     c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
     if not confirm.ensure(f"device add {sn}", yes=c.yes, as_json=c.json):
@@ -683,7 +688,7 @@ def device_add(
     O.finish(
         O.call(
             manage_device, c, operation="add", sn=sn, alias=alias,
-            rack=rack, discover=not no_discover,
+            rack=rack, discover=not no_discover, vendor=vendor,
         ),
         c,
     )
