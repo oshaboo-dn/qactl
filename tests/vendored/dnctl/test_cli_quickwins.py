@@ -3,7 +3,8 @@
 - ``job_store`` path-traversal hardening + per-family namespaces.
 - tech-support one-shot CLI sync worker + disk persistence (issue #17,
   same class as tar-load).
-- ``device add`` CLI no longer passes a ``name`` the tool rejects.
+- ``device add`` CLI keys by the operator-chosen ``name`` (the chassis
+  System Name is metadata only).
 - the operational ``clear`` command is wired into the CLI.
 
 No device traffic: the device-touching paths are exercised only up to
@@ -138,19 +139,33 @@ def test_get_techsupport_job_true_miss_is_error():
 # device add: no more rejected name= positional
 # --------------------------------------------------------------------------
 
-def test_device_add_cli_takes_sn_not_name():
+def test_device_add_cli_takes_name_and_host():
     params = list(inspect.signature(cli_app.device_add).parameters)
-    assert params[0] == "sn"
-    assert "name" not in params
-    # GI-mode escape hatch: an explicit --alias override (issue #32).
+    # The positional is now the operator-chosen registry name; the SSH
+    # target is a separate --host, and --alias attaches nicknames.
+    assert params[0] == "name"
+    assert "host" in params
     assert "alias" in params
 
 
-def test_manage_device_add_still_rejects_name():
-    # The tool contract the CLI must respect: name is not accepted on add.
+def test_manage_device_add_keys_by_name_not_system_name(monkeypatch):
+    # name= is now the registry key; the chassis System Name is metadata.
+    from dnctl.core.cli_probe import DeviceProbe
+
+    monkeypatch.setattr(
+        devices, "probe_device",
+        lambda *a, **k: DeviceProbe(
+            system_name="chassis-xyz", system_id=None, expected_role="CL",
+            mgmt0="10.0.0.9", ncc_serials=[], mode="operational",
+        ),
+    )
+    monkeypatch.setattr(devices, "_post_add_init", lambda device: (None, []))
+
     r = devices.manage_device(operation="add", name="foo", sn="1.2.3.4")
-    assert r["status"] == "error"
-    assert any("not accepted for operation='add'" in e for e in r["errors"])
+    assert r["status"] == "ok"
+    assert r["device"] == "foo"
+    assert r["derived_name_source"] == "explicit"
+    assert r["entry"]["system_name"] == "chassis-xyz"
 
 
 # --------------------------------------------------------------------------

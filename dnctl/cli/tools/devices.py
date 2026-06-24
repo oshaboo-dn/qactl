@@ -246,35 +246,29 @@ def _add_device(
     timeout: int,
     request: Dict[str, Any],
     fail: Any,
-    alias_override: Optional[str] = None,
+    key_name: Optional[str] = None,
     rack: Optional[str] = None,
     discover: bool = True,
 ) -> Dict[str, Any]:
     """Implementation of ``manage_device(operation="add")``.
 
     Probes the chassis once via SSH (``show system`` +
-    ``show interfaces management``), derives the alias, checks for
-    System-Id collisions, persists the full entry (``expected_sns`` +
-    ``expected_role`` + ``mgmt0`` + ``system_id``) to the canonical map,
+    ``show interfaces management``), checks for System-Id collisions,
+    persists the full entry (``expected_sns`` + ``expected_role`` +
+    ``mgmt0`` + ``system_id`` + ``system_name``) to the canonical map,
     and runs the post-add backup. Split out from ``manage_device`` to
     keep the add path linear — every other operation is a one-liner.
 
-    Alias derivation keeps the registry alias and the chassis name in
-    lockstep when it can, with two escape hatches for a box that has no
-    ``System Name`` to expose (e.g. one sitting in GI mode — golden-image
-    installer, DNOS not yet deployed — which we still need in the
-    registry to drive the deploy):
-
-    1. ``alias_override`` — when set, it wins; the caller has named the
-       device explicitly (``derived_name_source="explicit"``).
-    2. ``System Name`` — the normal operational path
-       (``derived_name_source="system-name"``).
-    3. probed ``sn`` fallback — when no name and no override but the box
-       is a recognisable GI-mode chassis, register it under the SSH host
-       we probed (``derived_name_source="sn-fallback"``).
-
-    An unparseable / non-DNOS box with no name and no override is still
-    rejected — we don't invent an alias for output we don't understand.
+    The registry key is the **name the operator chose**, NOT the chassis
+    ``System Name``: the key is ``key_name`` when given, otherwise the
+    probed SSH host ``sn``. This deliberately decouples the registry from
+    the device's configured name so that renaming the box on the chassis
+    never orphans or duplicates its registry entry. The chassis
+    ``System Name`` is still captured (as the ``system_name`` field, and
+    surfaced in a warning when it differs from the key) but it is purely
+    informational. ``derived_name_source`` records which rule applied:
+    ``"explicit"`` (key differs from the SSH host) or ``"ssh-host"`` (key
+    defaulted to the probed ``sn``).
 
     Multi-NCC auto-discovery: the same ``show system`` capture already
     lists every NCC slot and its Serial Number, so on a dual-NCC (CL)
@@ -309,24 +303,9 @@ def _add_device(
             hosts=[], added=False, derived_name=None,
         )
 
-    override = alias_override.strip() if isinstance(alias_override, str) else ""
-    if override:
-        alias = override
-        derived_name_source = "explicit"
-    elif probe.system_name:
-        alias = probe.system_name
-        derived_name_source = "system-name"
-    elif probe.mode == "gi":
-        alias = sn
-        derived_name_source = "sn-fallback"
-    else:
-        return fail(
-            f"could not derive an alias for sn={sn!r}: `show system` "
-            f"yielded no 'System Name:' and the box isn't a recognisable "
-            f"GI-mode chassis (mode={probe.mode!r}). Pass --alias <name> "
-            f"to register it under an explicit alias.",
-            hosts=[], added=False, derived_name=None,
-        )
+    chosen = key_name.strip() if isinstance(key_name, str) and key_name.strip() else ""
+    alias = chosen or sn
+    derived_name_source = "explicit" if alias != sn else "ssh-host"
 
     existing_entry = _dn_devices.get_device_entry(alias) or {}
     existing_hosts: List[str] = []
@@ -388,6 +367,8 @@ def _add_device(
         fields["mgmt0"] = probe.mgmt0
     if probe.system_id:
         fields["system_id"] = probe.system_id
+    if probe.system_name:
+        fields["system_name"] = probe.system_name
     fields.update(_location_fields(probe, rack, discover, warnings))
 
     try:
@@ -400,19 +381,12 @@ def _add_device(
         )
     reload_device_hosts()
 
-    if derived_name_source == "sn-fallback":
+    if probe.system_name and probe.system_name != alias:
         warnings.append(
-            f"chassis exposes no 'System Name:' (mode={probe.mode!r}); "
-            f"registered under the probed SSH host '{sn}' as the alias. "
-            f"Once DNOS is deployed and a System Name is set, "
-            f"manage_device(rename, name={sn!r}, new_name=<system-name>) "
-            f"to bring the alias back in lockstep with the chassis name."
-        )
-    elif derived_name_source == "explicit" and probe.system_name and probe.system_name != alias:
-        warnings.append(
-            f"registered under explicit alias '{alias}', but the chassis "
-            f"reports System Name '{probe.system_name}'; the registry alias "
-            f"and the chassis name are not in lockstep."
+            f"registered under the name '{alias}'; the chassis reports "
+            f"System Name '{probe.system_name}' (kept as metadata only — "
+            f"the registry name is operator-chosen and independent of the "
+            f"chassis name)."
         )
     if not sn_added:
         warnings.append(
@@ -466,29 +440,25 @@ def _add_nondnos_device(
     vendor: str,
     request: Dict[str, Any],
     fail: Any,
-    alias_override: Optional[str] = None,
+    key_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register a non-DNOS device (``cisco`` / ``juniper``) by hand.
 
     These vendors don't speak the DNOS ``show system`` dialect, so there's
-    nothing to SSH-probe for an alias / role / mgmt0 and no DNOS backup to
-    take. We simply record the operator-supplied ``vendor`` plus the SSH
-    host on the entry. The alias is the explicit ``--alias`` when given,
-    otherwise the ``sn`` itself (a hostname like ``jun204-rt01`` makes a
-    fine alias; a bare IP works too but a friendlier ``--alias`` is nicer).
-    ``mgmt0`` is set to ``sn`` when ``sn`` is an IPv4 literal so the
-    transport target is populated; otherwise it's left for a later edit.
+    nothing to SSH-probe for a role / mgmt0 and no DNOS backup to take. We
+    simply record the operator-supplied ``vendor`` plus the SSH host on
+    the entry. The registry key is ``key_name`` when given, otherwise the
+    ``sn`` itself (a hostname like ``jun204-rt01`` makes a fine key; a
+    bare IP works too but a friendlier name is nicer). ``mgmt0`` is set to
+    ``sn`` when ``sn`` is an IPv4 literal so the transport target is
+    populated; otherwise it's left for a later edit.
     """
     if not sn:
         return fail("sn is required for operation='add'.")
 
-    override = alias_override.strip() if isinstance(alias_override, str) else ""
-    if override:
-        alias = override
-        derived_name_source = "explicit"
-    else:
-        alias = sn
-        derived_name_source = "sn-fallback"
+    chosen = key_name.strip() if isinstance(key_name, str) and key_name.strip() else ""
+    alias = chosen or sn
+    derived_name_source = "explicit" if alias != sn else "ssh-host"
 
     existing_entry = _dn_devices.get_device_entry(alias) or {}
     existing_hosts: List[str] = []
@@ -517,10 +487,10 @@ def _add_nondnos_device(
     reload_device_hosts()
 
     warnings: List[str] = []
-    if not override:
+    if not chosen:
         warnings.append(
             f"registered {vendor} device under the SSH host '{sn}' as the "
-            f"alias; pass --alias <name> to register it under a friendlier "
+            f"name; pass an explicit NAME to register it under a friendlier "
             f"name instead."
         )
     if not sn_added:
@@ -678,13 +648,157 @@ def _refresh_device(
     return response
 
 
+def _name_check_device(
+    name: str,
+    user: str,
+    password: str,
+    timeout: int,
+    request: Dict[str, Any],
+    fail: Any,
+    do_sync: bool = False,
+    keep_old_alias: bool = True,
+) -> Dict[str, Any]:
+    """Implementation of ``manage_device(operation="name-check")``.
+
+    SSH-probes an existing device for its current chassis ``System Name``
+    and compares it to the registry key:
+
+    - read-only by default: reports ``in_sync`` plus the two names and,
+      on drift, a hint to rerun with ``do_sync=True``;
+    - with ``do_sync=True`` it adopts the chassis name by renaming the
+      registry key in place (old name kept as a secondary alias unless
+      ``keep_old_alias=False``), so the operator can opt into lockstep on
+      demand without it being forced at ``add`` time.
+
+    The registry name stays operator-chosen by default — this is the
+    explicit "check / request sync" knob, not an automatic rename.
+    """
+    entry = _dn_devices.get_device_entry(name) or {}
+    if not entry:
+        return fail(
+            f"device '{name}' is not registered. Add it first with "
+            f"operation='add'.",
+            in_sync=False, synced=False,
+        )
+    canonical = _dn_devices.resolve_canonical(name) or name
+    raw_sns = entry.get("expected_sns") if isinstance(entry, dict) else None
+    sns: List[str] = (
+        [s for s in raw_sns if isinstance(s, str) and s]
+        if isinstance(raw_sns, list) else []
+    )
+    if not sns:
+        return fail(
+            f"device '{canonical}' has no expected_sns to probe; can't "
+            f"read its chassis System Name.",
+            in_sync=False, synced=False, hosts=[],
+        )
+
+    probe: Optional[DeviceProbe] = None
+    sn_used: Optional[str] = None
+    failures: List[str] = []
+    for candidate in sns:
+        try:
+            probe = probe_device(
+                transport_registry, host=candidate,
+                user=user, password=password, timeout=float(timeout),
+            )
+            sn_used = candidate
+            break
+        except Exception as exc:  # noqa: BLE001 - try next SN
+            failures.append(f"{candidate}: {type(exc).__name__}: {exc}")
+            probe = None
+
+    if probe is None or sn_used is None:
+        joined = "; ".join(failures) or "no SNs reachable"
+        return fail(
+            f"name-check of '{canonical}' failed: could not SSH-probe any "
+            f"of {sns}. {joined}",
+            in_sync=False, synced=False, hosts=list(sns),
+        )
+
+    chassis_name = probe.system_name
+    warnings: List[str] = []
+    if failures:
+        warnings.append(
+            "earlier SN candidates were unreachable: " + "; ".join(failures)
+        )
+
+    in_sync = bool(chassis_name) and chassis_name == canonical
+    synced = False
+    new_canonical = canonical
+    status = "ok"
+
+    if not chassis_name:
+        status = "warning"
+        warnings.append(
+            "chassis exposed no 'System Name:' — cannot compare; the "
+            "registry name is left unchanged."
+        )
+    elif in_sync:
+        warnings.append(
+            f"registry name '{canonical}' already matches the chassis "
+            f"System Name."
+        )
+    elif do_sync:
+        try:
+            _dn_devices.rename_device(
+                canonical, chassis_name, keep_old_as_alias=keep_old_alias,
+            )
+        except ValueError as exc:
+            return fail(
+                f"sync of '{canonical}' -> '{chassis_name}' failed: {exc}",
+                in_sync=False, synced=False,
+                registry_name=canonical, chassis_system_name=chassis_name,
+            )
+        new_canonical = chassis_name
+        synced = True
+        reload_device_hosts()
+        warnings.append(
+            f"renamed registry key '{canonical}' -> '{chassis_name}' to "
+            f"match the chassis (old name kept as alias: {keep_old_alias})."
+        )
+    else:
+        status = "warning"
+        warnings.append(
+            f"registry name '{canonical}' differs from chassis System Name "
+            f"'{chassis_name}'; rerun with --sync to adopt it "
+            f"(qactl cli device name-check {canonical} --sync -y)."
+        )
+
+    # Keep the stored system_name metadata fresh on the (possibly renamed)
+    # entry whenever we learned a real name from the chassis.
+    if chassis_name:
+        try:
+            _dn_devices.update_device(new_canonical, system_name=chassis_name)
+        except Exception:  # noqa: BLE001 - metadata refresh is best-effort
+            pass
+
+    final_entry = _dn_devices.get_device_entry(new_canonical) or {}
+    response = make_response(
+        status=status,
+        device=new_canonical, host=sn_used,
+        warnings=warnings,
+        operation="name-check",
+        in_sync=in_sync, synced=synced,
+        registry_name=canonical, chassis_system_name=chassis_name,
+        aliases=_dn_devices.get_aliases(new_canonical),
+        entry=final_entry,
+    )
+    log_request("manage_device", request, response)
+    return response
+
+
 def manage_device(
-    operation: Literal["add", "remove", "refresh", "rename", "alias", "unalias"],
+    operation: Literal[
+        "add", "remove", "refresh", "rename", "alias", "unalias", "name-check"
+    ],
     name: Optional[str] = None,
     sn: Optional[str] = None,
     alias: Optional[str] = None,
+    aliases: Optional[List[str]] = None,
     new_name: Optional[str] = None,
     keep_old_alias: bool = True,
+    sync: bool = False,
     rack: Optional[str] = None,
     discover: bool = True,
     vendor: str = DEFAULT_VENDOR,
@@ -706,21 +820,17 @@ def manage_device(
     refreshes the in-memory ``DEVICE_HOSTS`` cache, so the change is
     live for subsequent tool calls without restarting any server.
 
-    The registry alias for any device is normally the chassis's
-    configured ``System Name``, kept in lockstep with the device on
-    purpose. The two exceptions are a box with no ``System Name`` to
-    expose (e.g. one in GI mode — golden-image installer, DNOS not yet
-    deployed — which we still need registered to drive the deploy): pass
-    ``alias=<name>`` on ``add`` to set the key explicitly, or let ``add``
-    fall back to the probed ``sn`` for a recognisable GI-mode chassis.
+    The registry key for any device is the **name the operator chooses**
+    (``name=``), independent of the chassis's configured ``System Name``.
+    This is deliberate: renaming the box on the chassis must never orphan
+    or duplicate its registry entry. When ``name=`` is omitted the key
+    defaults to the probed SSH host (``sn``). The chassis ``System Name``
+    is still captured (the ``system_name`` field) for reference only.
     ``derived_name_source`` on the response records which rule applied
-    (``"system-name"`` / ``"explicit"`` / ``"sn-fallback"``).
-    When a chassis's ``System Name`` later changes, use
-    ``operation="rename"`` to move the registry key in place
-    (preserving creds / ``expected_sns`` / history, no re-probe);
-    the old name is kept as a secondary alias by default. ``add`` of
-    the new SN would instead create a duplicate entry, so prefer
-    ``rename``.
+    (``"explicit"`` when the key differs from the SSH host, ``"ssh-host"``
+    when it defaulted to ``sn``). Secondary nicknames can be attached at
+    add-time via ``aliases=[...]`` or later with ``operation="alias"``;
+    ``operation="rename"`` still moves a canonical key in place.
 
     Operations:
 
@@ -729,11 +839,11 @@ def manage_device(
                    to ``sn`` once and captures everything every other
                    MCP needs from a single pass:
 
-                   1. ``System Name``  → alias, unless ``alias=`` is
-                                         given (explicit override) or the
-                                         box has no System Name and falls
-                                         back to the probed ``sn``
-                                         (GI mode).
+                   1. ``name=``        → the registry key (operator's
+                                         choice). Defaults to the SSH host
+                                         ``sn`` when omitted. The chassis
+                                         ``System Name`` is recorded as
+                                         metadata only, never the key.
                    2. ``System-Id``    → recorded so a future ``add`` of
                                          the same chassis's other NCC
                                          can confirm it really is the
@@ -837,26 +947,41 @@ def manage_device(
                     owns it. Only the nickname is removed; the
                     canonical device is left untouched. Pass the
                     nickname as ``alias=`` (``name=`` is ignored).
+    - ``name-check`` – SSH-probe ``name`` for its current chassis
+                    ``System Name`` and compare it to the registry key.
+                    Read-only by default (reports ``in_sync`` plus both
+                    names); pass ``sync=True`` to adopt the chassis name
+                    by renaming the key in place (old name kept as a
+                    secondary alias unless ``keep_old_alias=False``).
+                    This is the on-demand "is my registry name still
+                    right?" / "make it right" knob — naming stays
+                    operator-chosen otherwise.
 
     Args:
         operation: One of ``"add"``, ``"remove"``, ``"refresh"``,
             ``"alias"``, ``"unalias"``.
-        name: Alias to operate on. NOT accepted for ``add`` (the
-            alias is the chassis's System Name, not configurable);
-            REQUIRED for ``remove`` / ``refresh``; the current
-            (stale) key for ``rename``; the canonical device for
-            ``alias``; IGNORED for ``unalias``.
-        sn: SSH-reachable hostname for ``add``; host to drop
-            (optional) for ``remove``; IGNORED for ``refresh``.
-        alias: For ``add``, an explicit registry alias override (used
-            when the chassis has no ``System Name`` to derive from, e.g.
-            in GI mode). For ``alias`` / ``unalias``, the secondary
-            nickname to add or remove. Ignored for the other operations.
+        name: For ``add``, the registry key the operator chooses (the
+            device name). Defaults to ``sn`` when omitted. REQUIRED for
+            ``remove`` / ``refresh``; the current (stale) key for
+            ``rename``; the canonical device for ``alias``; IGNORED for
+            ``unalias``.
+        sn: SSH-reachable host to probe for ``add`` (defaults to
+            ``name`` when omitted); host to drop (optional) for
+            ``remove``; IGNORED for ``refresh``.
+        alias: For ``add``, a legacy synonym for an explicit ``name``.
+            For ``alias`` / ``unalias``, the secondary nickname to add or
+            remove. Ignored for the other operations.
+        aliases: For ``add`` only — secondary nickname(s) to attach to
+            the new entry in the same call (e.g. ``["cl"]``).
         new_name: The new canonical name for ``rename`` (the chassis's
             new ``System Name``). REQUIRED for ``rename``; ignored
             otherwise.
-        keep_old_alias: For ``rename`` only — keep the old ``name`` as
-            a secondary alias so it still resolves (default ``True``).
+        keep_old_alias: For ``rename`` and ``name-check`` (with
+            ``sync=True``) — keep the old ``name`` as a secondary alias
+            so it still resolves (default ``True``).
+        sync: For ``name-check`` only — when ``True``, adopt the chassis
+            System Name by renaming the registry key (default ``False``,
+            i.e. report-only).
         rack: For ``add`` only — manual rack override (e.g. ``"B13"``).
             When set it wins over LLDP auto-discovery for the stored
             ``rack`` field; the discovered ``mgmt_switch`` / ``fabric_leaf``
@@ -880,7 +1005,7 @@ def manage_device(
     request = {
         "operation": operation, "name": name, "sn": sn,
         "alias": alias, "new_name": new_name,
-        "keep_old_alias": keep_old_alias, "rack": rack,
+        "keep_old_alias": keep_old_alias, "sync": sync, "rack": rack,
         "discover": discover, "vendor": vendor, "user": user,
     }
 
@@ -898,31 +1023,49 @@ def manage_device(
         return response
 
     if operation == "add":
-        if name is not None and isinstance(name, str) and name.strip():
-            return _fail(
-                "name= is not accepted for operation='add'. The "
-                "registry alias is the chassis's configured System "
-                "Name; to use a different alias, rename the chassis "
-                "on the device (`set system name <new>` + commit) "
-                "and then call manage_device(operation='add', "
-                f"sn={sn!r})."
-            )
         vendor_norm = (vendor or DEFAULT_VENDOR).strip().lower()
         if vendor_norm not in SUPPORTED_VENDORS:
             return _fail(
                 f"vendor={vendor!r} is not supported; choose one of "
                 f"{', '.join(SUPPORTED_VENDORS)} (default {DEFAULT_VENDOR})."
             )
+        # The registry key is the operator-chosen ``name`` (independent of
+        # the chassis System Name); the SSH probe target is ``sn`` when
+        # given, else it doubles as the name. ``alias`` (singular) is still
+        # accepted as a legacy synonym for the explicit name.
+        key_name = (name or alias or "").strip() or None
+        ssh_host = (sn or name or "").strip()
         if vendor_norm != DEFAULT_VENDOR:
-            return _add_nondnos_device(
-                sn=sn or "", vendor=vendor_norm, request=request,
-                fail=_fail, alias_override=alias,
+            resp = _add_nondnos_device(
+                sn=ssh_host, vendor=vendor_norm, request=request,
+                fail=_fail, key_name=key_name,
             )
-        return _add_device(
-            sn=sn or "", user=user, password=password,
-            timeout=timeout, request=request, fail=_fail,
-            alias_override=alias, rack=rack, discover=discover,
-        )
+        else:
+            resp = _add_device(
+                sn=ssh_host, user=user, password=password,
+                timeout=timeout, request=request, fail=_fail,
+                key_name=key_name, rack=rack, discover=discover,
+            )
+        if isinstance(resp, dict) and resp.get("status") == "ok" and aliases:
+            attached: List[str] = []
+            for nick in aliases:
+                nick = (nick or "").strip()
+                if not nick:
+                    continue
+                try:
+                    if _dn_devices.add_alias(nick, resp.get("device") or ""):
+                        attached.append(nick)
+                except ValueError as exc:
+                    resp.setdefault("warnings", []).append(
+                        f"secondary alias '{nick}' not attached: {exc}"
+                    )
+            if attached:
+                reload_device_hosts()
+                resp["aliases"] = _dn_devices.get_aliases(resp.get("device") or "")
+                resp.setdefault("warnings", []).append(
+                    f"attached secondary alias(es): {attached}"
+                )
+        return resp
 
     if operation == "alias":
         if not name or not isinstance(name, str):
@@ -987,6 +1130,13 @@ def manage_device(
             timeout=timeout, request=request, fail=_fail,
         )
 
+    if operation == "name-check":
+        return _name_check_device(
+            name=name, user=user, password=password,
+            timeout=timeout, request=request, fail=_fail,
+            do_sync=sync, keep_old_alias=keep_old_alias,
+        )
+
     if operation == "rename":
         if not new_name or not isinstance(new_name, str) or not new_name.strip():
             return _fail(
@@ -1043,10 +1193,10 @@ def manage_device(
     else:
         return _fail(
             f"unknown operation {operation!r} (must be one of "
-            f"add/remove/refresh/rename/alias/unalias). To rename a "
-            f"device whose chassis System Name changed, use "
-            f"operation='rename' with name=<old> new_name=<new>; to "
-            f"give a device an extra nickname, use operation='alias'."
+            f"add/remove/refresh/rename/alias/unalias/name-check). To "
+            f"check (and optionally adopt) the chassis System Name, use "
+            f"operation='name-check' with sync=True; to rename a device "
+            f"key by hand, use operation='rename'."
         )
 
     log_request("manage_device", request, response)

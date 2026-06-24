@@ -659,20 +659,26 @@ def device_list(as_json: O.Json = False):
 
 @device_app.command("add")
 def device_add(
-    sn: Annotated[str, typer.Argument(help="Serial / SSH host to probe. The alias is taken from the chassis System Name unless --alias is given.")],
-    alias: Annotated[Optional[str], typer.Option("--alias", help="Explicit registry alias. Use for a GI-mode chassis (no System Name); otherwise the alias is the chassis System Name.")] = None,
+    name: Annotated[str, typer.Argument(help="Registry name for this device (the name you choose). Becomes the key; independent of the chassis System Name.")],
+    host: Annotated[Optional[str], typer.Option("--host", help="SSH host / IP / SN to probe. Defaults to NAME.")] = None,
+    alias: Annotated[Optional[List[str]], typer.Option("--alias", help="Secondary nickname to attach (repeatable), e.g. --alias cl.")] = None,
     rack: Annotated[Optional[str], typer.Option("--rack", help="Manual rack override (e.g. B13). Default: auto-discover via LLDP.")] = None,
     no_discover: Annotated[bool, typer.Option("--no-discover", help="Skip LLDP location auto-discovery (rack/mgmt-switch/fabric-leaf).")] = False,
-    vendor: Annotated[str, typer.Option("--vendor", help="Device vendor: dnos (default), cisco, or juniper. Non-DNOS devices skip the DNOS probe + initial backup; alias is --alias or the sn.")] = "dnos",
+    vendor: Annotated[str, typer.Option("--vendor", help="Device vendor: dnos (default), cisco, or juniper. Non-DNOS devices skip the DNOS probe + initial backup.")] = "dnos",
     user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Probe a chassis and add it to the registry (DESTRUCTIVE — needs --yes).
 
-    The registry alias is normally the chassis's configured System Name.
-    A box with no System Name (e.g. in GI mode) can still be registered:
-    pass --alias <name> to set the key explicitly, or let add fall back
-    to the probed SN for a recognisable GI-mode chassis.
+    The registry key is NAME — the name you choose — and is independent of
+    the chassis's configured System Name (so renaming the box never
+    orphans its registry entry). The chassis System Name is captured as
+    metadata only. The SSH probe targets --host, defaulting to NAME.
+
+    Attach secondary nicknames inline with one or more --alias flags
+    (e.g. `device add HCL --host 100.64.10.252 --alias cl`); `-d cl` then
+    reaches the same box. More nicknames can be added later with
+    `device alias`.
 
     Physical location (rack / mgmt switch / fabric leaf) is auto-discovered
     from `show lldp neighbors` and stored on the entry; pass --rack to
@@ -680,15 +686,15 @@ def device_add(
 
     --vendor defaults to dnos. Pass --vendor cisco/juniper for a non-DNOS
     box: the DNOS probe and initial backup are skipped and the device is
-    recorded for inventory only (alias is --alias or the sn).
+    recorded for inventory only.
     """
     c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
-    if not confirm.ensure(f"device add {sn}", yes=c.yes, as_json=c.json):
+    if not confirm.ensure(f"device add {name}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(
         O.call(
-            manage_device, c, operation="add", sn=sn, alias=alias,
-            rack=rack, discover=not no_discover, vendor=vendor,
+            manage_device, c, operation="add", name=name, sn=host or name,
+            aliases=alias, rack=rack, discover=not no_discover, vendor=vendor,
         ),
         c,
     )
@@ -717,6 +723,34 @@ def device_refresh(
     if not confirm.ensure(f"device refresh {name}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(manage_device, c, operation="refresh", name=name), c)
+
+
+@device_app.command("name-check")
+def device_name_check(
+    name: Annotated[str, typer.Argument(help="Device to check (registry name or alias).")],
+    sync: Annotated[bool, typer.Option("--sync", help="Adopt the chassis System Name by renaming the registry key (mutating — needs --yes).")] = False,
+    keep_old_alias: Annotated[bool, typer.Option("--keep-old-alias/--drop-old-alias", help="On --sync, keep the old name as a secondary alias (default: keep).")] = True,
+    user: O.User = None, password: O.Password = None,
+    timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Check the registry name vs the chassis System Name (optionally --sync).
+
+    Read-only by default: SSH-probes the device and reports whether its
+    registry name still matches the chassis System Name (`in_sync`). Pass
+    --sync to adopt the chassis name — renames the registry key in place,
+    keeping the old name as a secondary alias — which mutates the registry
+    and therefore needs --yes.
+    """
+    c = O.build_ctx(user=user, password=password, timeout=timeout, as_json=as_json, yes=yes)
+    if sync and not confirm.ensure(f"device name-check {name} --sync", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(
+            manage_device, c, operation="name-check", name=name,
+            sync=sync, keep_old_alias=keep_old_alias,
+        ),
+        c,
+    )
 
 
 @device_app.command("rename")
