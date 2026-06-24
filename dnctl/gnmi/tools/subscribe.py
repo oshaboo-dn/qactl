@@ -198,6 +198,19 @@ def gnmi_subscribe(
     try:
         with client as gc:
             subscriber = gc.subscribe_stream(subscribe=sub_dict)
+            # pygnmi's StreamSubscriber coalesces the first burst of updates
+            # "until sync_response" (_get_updates_till_sync). If the device
+            # emits a message that telemetryParser decodes to None before
+            # that sync arrives — DNOS does — pygnmi runs ``"update" in
+            # None`` and raises a cryptic ``TypeError: ... NoneType ... not
+            # iterable``. Forcing _first_update_seen makes every get_update
+            # return one decoded message at a time, which our loop already
+            # handles (non-dict / None messages are skipped below), so we
+            # never hit that coalescing crash.
+            try:
+                subscriber._first_update_seen = True  # noqa: SLF001
+            except Exception:  # noqa: BLE001 - older pygnmi without the flag
+                pass
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -205,16 +218,34 @@ def gnmi_subscribe(
                 if max_updates and len(events) >= max_updates:
                     truncated = True
                     break
+                # The background gRPC thread stashes any stream-side failure
+                # (e.g. server closed the channel, path rejected) on
+                # ``.error`` instead of raising it to us — surface it.
+                stream_err = getattr(subscriber, "error", None)
+                if stream_err is not None:
+                    raise stream_err
                 try:
                     resp = subscriber.get_update(timeout=remaining)
                 except TimeoutError:
                     break
+                except TypeError as te:
+                    # Belt-and-suspenders: if a pygnmi build still trips the
+                    # None-merge above, fall back to the stashed stream error
+                    # (or a clear message) rather than leaking the TypeError.
+                    raise (getattr(subscriber, "error", None) or te)
                 if not isinstance(resp, dict):
                     continue
                 if resp.get("sync_response"):
                     sync_seen = True
                     continue
                 _collect_events(events, resp, sync_seen)
+            # The server may reject/drop the subscription while get_update is
+            # blocked (DNOS answers an unsupported path with INVALID_ARGUMENT
+            # "No valid requests in the session"); that lands on .error after
+            # we've stopped looping, so check once more before declaring ok.
+            trailing_err = getattr(subscriber, "error", None)
+            if trailing_err is not None and not events:
+                raise trailing_err
     except Exception as e:
         msg = str(e).replace("\n", " ")
         env["status"] = "error"

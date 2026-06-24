@@ -59,6 +59,18 @@ def _classify_grpc_error(msg: str) -> Optional[str]:
         )
     if "data_type" in m and "not supported" in m:
         return "Use datatype='all' — the only datatype this server accepts."
+    if "no valid requests in the session" in m or (
+        "invalid_argument" in m and "subscri" in m
+    ):
+        return (
+            "DNOS rejected the Subscribe request itself (not a transport "
+            "error). The path is gettable but not subscribable on this "
+            "build, or the mode is unsupported. Verify the leaf streams "
+            "(retry --mode sample, then --mode on_change), confirm the "
+            "path with `gnmi get`, and prefer concrete leaf/state paths "
+            "over whole subtrees. If no leaf accepts Subscribe, fall back "
+            "to polling `gnmi get` or to the syslog event source."
+        )
     if "received message larger than max" in m:
         return (
             "Response exceeded the grpc receive cap. Narrow the path; "

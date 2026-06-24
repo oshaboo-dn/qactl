@@ -185,6 +185,68 @@ def test_grpc_error_surfaces_hint(monkeypatch):
     assert any("keyed list" in n for n in env["next_actions"])
 
 
+class _ErrSub:
+    """Fake subscriber that stashes a server-side error like pygnmi does."""
+
+    def __init__(self, error, responses=None):
+        self.error = error
+        self._responses = list(responses or [])
+        self.closed = False
+
+    def get_update(self, timeout=None):
+        if self._responses:
+            return self._responses.pop(0)
+        raise TimeoutError("no more updates")
+
+    def close(self):
+        self.closed = True
+
+
+def _install_sub(monkeypatch, sub):
+    client = _FakeClient(sub)
+    monkeypatch.setattr(
+        sub_mod, "open_client",
+        lambda **k: (client, Resolved(host="10.0.0.1", port=50051, device="cl"), "dnroot"),
+    )
+    monkeypatch.setattr(sub_mod.rate_limiter, "gate", lambda *a, **k: 0.0)
+    return client
+
+
+def test_stashed_stream_error_is_surfaced_with_hint(monkeypatch):
+    # DNOS answers an unsupported Subscribe with INVALID_ARGUMENT and pygnmi
+    # stashes it on .error instead of raising — we must surface it, not
+    # report a misleading "ok / no sync_response".
+    sub = _ErrSub(
+        RuntimeError("StatusCode.INVALID_ARGUMENT No valid requests in the session"),
+    )
+    _install_sub(monkeypatch, sub)
+    env = gnmi_subscribe(paths=["drivenets-top/interfaces"], duration_s=5)
+    assert env["status"] == "error"
+    assert any("No valid requests" in e for e in env["errors"])
+    assert any("rejected the Subscribe" in n for n in env["next_actions"])
+
+
+def test_none_messages_are_skipped_not_crash(monkeypatch):
+    # pygnmi can hand back None for messages it can't decode; our loop must
+    # skip them (this is what dodges the upstream "update in None" TypeError),
+    # while still capturing the real events.
+    sub = _ErrSub(
+        None,
+        responses=[
+            None,
+            {"sync_response": True},
+            {"update": {"timestamp": 7, "update": [{"path": "n/state", "val": "UP"}]}},
+            None,
+        ],
+    )
+    _install_sub(monkeypatch, sub)
+    env = gnmi_subscribe(paths=["n/state"], duration_s=5)
+    assert env["status"] == "ok"
+    assert env["result"]["sync_seen"] is True
+    assert env["result"]["event_count"] == 1
+    assert env["result"]["events"][0]["value"] == "UP"
+
+
 # --- CLI surface -----------------------------------------------------------
 
 def test_cli_subscribe_json(_patch_stream):
