@@ -12,9 +12,16 @@ keep pointing at: a single *tick* that, for each device,
   5. optionally pushes each new alert to **Slack**,
 
 then advances the cursor and exits. A cron/loop runs the tick on an
-interval; nothing here holds a connection open. gNMI Subscribe would be
-the push-native source, but this DNOS build rejects it, so the syslog
-``system-events`` log is the event source.
+interval; nothing here holds a connection open.
+
+Why syslog and not gNMI for these events: DNOS gNMI Subscribe works for
+paths in its on-change registry (interface oper-status/admin-state,
+transceivers, PSU/fan/temp, LACP, ...) — those are better consumed as a
+push stream via ``gnmi subscribe``. But BGP neighbor state and most
+``EVENT_CODE`` platform notifications are NOT in that registry, so the
+syslog ``system-events`` log is the source of truth for them. A future
+revision can fold gNMI on-change link/platform signals into the same
+spool alongside these syslog events.
 
 Why a one-shot instead of a daemon: it matches the agent-safe CLI
 contract (``--json`` envelope, real exit codes, ``--yes`` gating for the

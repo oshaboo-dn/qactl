@@ -63,13 +63,16 @@ def _classify_grpc_error(msg: str) -> Optional[str]:
         "invalid_argument" in m and "subscri" in m
     ):
         return (
-            "DNOS rejected the Subscribe request itself (not a transport "
-            "error). The path is gettable but not subscribable on this "
-            "build, or the mode is unsupported. Verify the leaf streams "
-            "(retry --mode sample, then --mode on_change), confirm the "
-            "path with `gnmi get`, and prefer concrete leaf/state paths "
-            "over whole subtrees. If no leaf accepts Subscribe, fall back "
-            "to polling `gnmi get` or to the syslog event source."
+            "DNOS rejected the Subscribe request itself (the SubscriptionList "
+            "was not accepted), not a transport error. Common causes on DNOS: "
+            "(1) a keyless list path — use OpenConfig keyed wildcards like "
+            "`/interfaces/interface[name=*]/state/oper-status`, not a bare "
+            "subtree; (2) a SAMPLE interval outside 5s–1h (the device floor "
+            "is 5s); (3) ON_CHANGE on a path not in the device's on-change "
+            "registry (interface oper-status/admin-state, transceivers, "
+            "PSU/fan/temp, LACP are registered; BGP neighbor state is NOT — "
+            "use the syslog event source for BGP). Verify the path with "
+            "`gnmi get` first."
         )
     if "received message larger than max" in m:
         return (

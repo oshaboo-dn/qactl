@@ -189,6 +189,15 @@ def gnmi_subscribe(
         env["warnings"].append(
             f"paced {slept:.2f}s before subscribing to keep DNOS rate limiter happy"
         )
+    # DNOS only accepts a SAMPLE interval in [5s, 1h]; anything lower is
+    # rejected with a cryptic "No valid requests in the session". Warn rather
+    # than hard-fail so this stays a generic gNMI primitive for other servers.
+    if mode_norm == "sample" and not (5.0 <= sample_interval_s <= 3600.0):
+        env["warnings"].append(
+            f"sample_interval_s={sample_interval_s} is outside DNOS's accepted "
+            "5s–1h range; DNOS rejects out-of-range intervals with "
+            "'No valid requests in the session'."
+        )
 
     events: List[Dict[str, Any]] = []
     sync_seen = False
