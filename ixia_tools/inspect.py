@@ -51,6 +51,14 @@ from ixia_tools._ngpf_lookup import (
 )
 
 
+# Default wall-clock budget for ``ixia_describe_session``'s deep read.
+# The snapshot walks the whole NGPF tree and (by default) reads a BGP
+# stat view per peer; an empty view makes RestPy block up to its 180 s
+# default. Bounding the read keeps the CLI responsive — overridable via
+# the global ``--timeout``.
+DEFAULT_DESCRIBE_TIMEOUT_S = 30
+
+
 # ----------------------------------------------------------------------
 # Multivalue per-line helpers
 # ----------------------------------------------------------------------
@@ -879,6 +887,7 @@ def ixia_describe_session(
     user: str = DEFAULT_USER,
     include_route_counts: bool = True,
     include_traffic: bool = True,
+    timeout_s: int = DEFAULT_DESCRIBE_TIMEOUT_S,
 ) -> Dict[str, Any]:
     """One-call snapshot of the entire IxNetwork session.
 
@@ -889,9 +898,18 @@ def ixia_describe_session(
 
     Args:
         include_route_counts: Pass through to
-            ``ixia_get_bgp_peer`` per peer (~2-5 s extra over the
-            view fetch).
+            ``ixia_get_bgp_peer`` per peer. This reads a BGP stat view
+            per peer; an empty/not-yet-materialised view makes RestPy's
+            ``StatViewAssistant`` block (up to its 180 s default), which
+            is the usual cause of a "describe hangs" report. Turn it off
+            (``--no-route-counts``) for a fast structural snapshot.
         include_traffic: Include traffic-item summary.
+        timeout_s: Overall wall-clock budget for the deep read. The
+            whole snapshot runs in a worker thread; if it overruns,
+            ``describe`` returns a ``timeout`` envelope (non-zero exit)
+            with a clear message instead of hanging. RestPy can't cancel
+            an in-flight request, so the worker keeps running in the
+            background, but the command no longer blocks the caller.
 
     Read-only — no write lock taken. Use it to bootstrap an agent into
     "what's running on this session" without prior knowledge.
@@ -900,6 +918,7 @@ def ixia_describe_session(
         "host": host, "port": port, "user": user,
         "include_route_counts": include_route_counts,
         "include_traffic": include_traffic,
+        "timeout_s": timeout_s,
     }
     try:
         s = get_session(host=host, port=port, user=user)
@@ -913,7 +932,8 @@ def ixia_describe_session(
         kind="describe_session", host=host, port=port,
         session_id=session_id_of(s), request=request,
     )
-    try:
+
+    def _build() -> Dict[str, Any]:
         ixn = s.ixn
         topos = list(ixn.Topology.find())
         result: Dict[str, Any] = {
@@ -929,12 +949,32 @@ def ixia_describe_session(
         }
         if include_traffic:
             result["traffic_items"] = _traffic_summary(ixn)
-        env["result"] = result
+        return result
+
+    from ixia_tools.run import _run_bounded
+
+    done, value = _run_bounded(_build, timeout=timeout_s)
+    if not done:
+        env["status"] = "timeout"
+        env["errors"].append(
+            f"describe_session exceeded {timeout_s}s. The deep read "
+            "(typically a per-peer BGP stat view) is still running on "
+            "the API server."
+        )
+        next_actions = [
+            "Retry with --no-route-counts for a fast structural snapshot.",
+            "Raise the budget with --timeout <seconds> if the session is large.",
+        ]
+        env["next_actions"].extend(next_actions)
         return env
-    except Exception as e:
+    if isinstance(value, BaseException):
         env["status"] = "error"
-        env["errors"].append(f"{type(e).__name__}: {str(e)[:240]}")
+        env["errors"].append(
+            f"{type(value).__name__}: {str(value)[:240]}"
+        )
         return env
+    env["result"] = value
+    return env
 
 
 def register(mcp) -> None:

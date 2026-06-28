@@ -59,11 +59,14 @@ def _sessions(args: argparse.Namespace) -> int:
 
 
 def _describe(args: argparse.Namespace) -> int:
-    from ixia_tools.inspect import ixia_describe_session
+    from ixia_tools.inspect import (
+        DEFAULT_DESCRIBE_TIMEOUT_S, ixia_describe_session,
+    )
     env = ixia_describe_session(
         host=args.host, port=args.port, user=args.user,
         include_route_counts=not args.no_route_counts,
         include_traffic=not args.no_traffic,
+        timeout_s=primary_timeout(args, DEFAULT_DESCRIBE_TIMEOUT_S),
     )
     return emit(env, as_json=args.json)
 
@@ -184,7 +187,8 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
         help="one-call snapshot of the whole session",
     )
     d.add_argument("--no-route-counts", action="store_true",
-                   help="skip per-peer cumulative route counts (faster)")
+                   help="skip per-peer cumulative route counts (faster; "
+                        "the route-count stat view is the usual hang)")
     d.add_argument("--no-traffic", action="store_true",
                    help="omit the traffic-item summary")
     d.set_defaults(func=_describe)
