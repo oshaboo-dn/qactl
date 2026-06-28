@@ -15,6 +15,13 @@ from ixiactl.core.output import emit
 from ixiactl.cli.common import confirm_or_exit, primary_timeout
 
 
+def _wait_ms(args: argparse.Namespace, default_ms: int) -> int:
+    """Resolve a wait deadline in ms: ``--timeout`` (s) wins, else ms flag."""
+    if getattr(args, "timeout", None) is not None:
+        return int(args.timeout) * 1000
+    return int(getattr(args, "wait_timeout_ms", default_ms))
+
+
 # Windows lab default — same default the ixia_load_config / list_configs
 # tools use. Not a clone path; safe to bake in as a convenience default.
 DEFAULT_CONFIG_FOLDER = r"C:\Users\dn\Desktop\ixia"
@@ -93,6 +100,67 @@ def _wait_vports(args: argparse.Namespace) -> int:
         timeout_ms=timeout_ms,
         only_vport_names=args.only_vport_name or None,
         only_vport_hrefs=args.only_vport_href or None,
+    )
+    return emit(env, as_json=args.json)
+
+
+def _assign(args: argparse.Namespace) -> int:
+    rc = confirm_or_exit(
+        args, kind="assign_port",
+        action=(
+            f"assign chassis port {args.port_spec} to a vport"
+            + (" and connect it" if args.connect else "")
+            + (" (forcing ownership)" if args.force else "")
+            + "."
+        ),
+    )
+    if rc is not None:
+        return rc
+    from ixia_tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_assign_port
+    env = ixia_assign_port(
+        host=args.host, port=args.port, user=args.user,
+        port_spec=args.port_spec, name=args.name,
+        connect=args.connect, wait=args.wait,
+        wait_timeout_ms=_wait_ms(args, DEFAULT_CONNECT_WAIT_MS),
+        force=args.force, confirm=True,
+    )
+    return emit(env, as_json=args.json)
+
+
+def _connect_ports(args: argparse.Namespace) -> int:
+    rc = confirm_or_exit(
+        args, kind="connect_ports",
+        action=f"connect vport {args.vport!r}.",
+    )
+    if rc is not None:
+        return rc
+    from ixia_tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_connect_ports
+    env = ixia_connect_ports(
+        host=args.host, port=args.port, user=args.user,
+        vport=args.vport, wait=args.wait,
+        wait_timeout_ms=_wait_ms(args, DEFAULT_CONNECT_WAIT_MS),
+        confirm=True,
+    )
+    return emit(env, as_json=args.json)
+
+
+def _release(args: argparse.Namespace) -> int:
+    target = args.port_spec or args.vport or "?"
+    rc = confirm_or_exit(
+        args, kind="release_port",
+        action=(
+            f"release {target}"
+            + (" and delete its vport" if args.delete else "")
+            + "."
+        ),
+    )
+    if rc is not None:
+        return rc
+    from ixia_tools.ports import ixia_release_port
+    env = ixia_release_port(
+        host=args.host, port=args.port, user=args.user,
+        port_spec=args.port_spec, vport=args.vport,
+        delete=args.delete, confirm=True,
     )
     return emit(env, as_json=args.json)
 
@@ -213,6 +281,53 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     w.add_argument("--only-vport-href", action="append", default=[],
                    metavar="HREF", help="restrict wait to these vport hrefs")
     w.set_defaults(func=_wait_vports)
+
+    a = sub.add_parser(
+        "assign", parents=[parent],
+        help="claim chassis:card:port onto a vport (create/rebind + connect)",
+    )
+    a.add_argument("--chassis-port", dest="port_spec", required=True,
+                   metavar="CHASSIS:CARD:PORT",
+                   help="physical port to claim, e.g. 100.64.0.56:10:5")
+    a.add_argument("--name", default=None,
+                   help="vport name to create or rebind (default derived "
+                        "from the port spec)")
+    a.add_argument("--no-connect", dest="connect", action="store_false",
+                   help="assign the location only; skip ConnectPorts")
+    a.add_argument("--wait", action="store_true",
+                   help="after connect, block until connectedLinkUp + up")
+    a.add_argument("--wait-timeout-ms", type=int, default=60_000,
+                   help="deadline for --wait in ms (default 60000; "
+                        "--timeout SECONDS overrides)")
+    a.add_argument("--force", action="store_true",
+                   help="seize the port even if owned by another client")
+    a.set_defaults(func=_assign, connect=True)
+
+    cp = sub.add_parser(
+        "connect-ports", parents=[parent],
+        help="ConnectPort an already-assigned vport (by name or href)",
+    )
+    cp.add_argument("--vport", required=True, metavar="NAME|HREF",
+                    help="vport to connect")
+    cp.add_argument("--wait", action="store_true",
+                    help="block until connectedLinkUp + up")
+    cp.add_argument("--wait-timeout-ms", type=int, default=60_000,
+                    help="deadline for --wait in ms (default 60000; "
+                         "--timeout SECONDS overrides)")
+    cp.set_defaults(func=_connect_ports)
+
+    r = sub.add_parser(
+        "release", parents=[parent],
+        help="drop ownership of a port (optionally delete its vport)",
+    )
+    r.add_argument("--chassis-port", dest="port_spec", default=None,
+                   metavar="CHASSIS:CARD:PORT",
+                   help="physical port to release (matched via AssignedTo)")
+    r.add_argument("--vport", default=None, metavar="NAME|HREF",
+                   help="vport to release (alternative to --port)")
+    r.add_argument("--delete", action="store_true",
+                   help="also delete the vport object")
+    r.set_defaults(func=_release)
 
     c = sub.add_parser(
         "configs", parents=[parent],
