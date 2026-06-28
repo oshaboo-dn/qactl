@@ -127,8 +127,8 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     bfd_grp.add_argument("--no-bfd", dest="bfd", action="store_false",
                          help="explicitly clear BGP-over-BFD registration.")
     pc.add_argument("--bfd-mode", default=None,
-                    choices=["singleHop", "multiHop"],
-                    help="modeOfBfdOperations (default singleHop).")
+                    choices=["singlehop", "multihop"],
+                    help="modeOfBfdOperations (default singlehop).")
     pc.set_defaults(func=_peer_create)
 
     pg = ps.add_parser("get", parents=[parent], help="inspect a BGP peer")

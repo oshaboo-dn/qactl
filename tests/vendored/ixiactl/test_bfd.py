@@ -69,10 +69,10 @@ class BfdParserTests(unittest.TestCase):
         args = self.parser.parse_args([
             "bgp", "peer", "create", "--host", "h", "--topology", "CL",
             "--device-group", "DG1", "--name", "p", "--dut-ip", "1.1.1.1",
-            "--local-as", "65000", "--bfd", "--bfd-mode", "multiHop",
+            "--local-as", "65000", "--bfd", "--bfd-mode", "multihop",
         ])
         self.assertIs(args.bfd, True)
-        self.assertEqual(args.bfd_mode, "multiHop")
+        self.assertEqual(args.bfd_mode, "multihop")
 
     def test_peer_create_no_bfd(self):
         args = self.parser.parse_args([
@@ -142,6 +142,26 @@ class BfdValidationTests(unittest.TestCase):
             confirm=False,
         )
         self.assertEqual(env["status"], "confirmation_required")
+
+
+class StateCountsTests(unittest.TestCase):
+    def test_positional_args_relabelled(self):
+        from ixia_tools.bfd import _normalise_state_counts
+        self.assertEqual(
+            _normalise_state_counts(
+                {"arg1": 5, "arg2": 5, "arg3": 0, "arg4": 0}
+            ),
+            {"total": 5, "notStarted": 5, "down": 0, "up": 0},
+        )
+
+    def test_named_dict_passthrough(self):
+        from ixia_tools.bfd import _normalise_state_counts
+        named = {"total": 2, "notStarted": 0, "down": 1, "up": 1}
+        self.assertEqual(_normalise_state_counts(named), named)
+
+    def test_non_dict_passthrough(self):
+        from ixia_tools.bfd import _normalise_state_counts
+        self.assertIsNone(_normalise_state_counts(None))
 
 
 class _FakeConn:

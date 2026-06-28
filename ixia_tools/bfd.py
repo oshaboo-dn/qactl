@@ -62,6 +62,31 @@ from ixia_tools._ngpf_lookup import (
 from ixia_tools.build import _bounce_if_running
 
 
+# IxNetwork's ``stateCounts`` is documented as
+# ``dict(total, notStarted, down, up)`` but the REST server returns the
+# values under positional keys ``arg1..arg4`` in that same order. Remap
+# so a verdict read can do ``state_counts["up"]`` instead of guessing.
+_STATE_COUNT_KEYS = ("total", "notStarted", "down", "up")
+
+
+def _normalise_state_counts(counts: Any) -> Any:
+    """Relabel a positional ``{arg1..arg4}`` stateCounts dict.
+
+    Pass through anything that's already keyed by name (or isn't a
+    dict) untouched, so a future server that returns the documented
+    shape keeps working.
+    """
+    if not isinstance(counts, dict):
+        return counts
+    if all(k in counts for k in ("total", "up")):
+        return dict(counts)
+    out: Dict[str, Any] = {}
+    for i, name in enumerate(_STATE_COUNT_KEYS, start=1):
+        if f"arg{i}" in counts:
+            out[name] = counts[f"arg{i}"]
+    return out or dict(counts)
+
+
 def _find_bfdv4(ipv4_obj, name: str):
     """Return the bfdv4Interface named ``name`` under ``ipv4_obj`` or None."""
     for bfd in ipv4_obj.Bfdv4Interface.find():
@@ -148,7 +173,7 @@ def ixia_create_bfdv4_interface(
           bring the session up.
         - Multihop is a *peer* property in NGPF
           (``modeOfBfdOperations``), not a ``bfdv4Interface`` one — set
-          it via ``ixia_create_bgp_peer(... bfd_mode="multiHop" ...)``.
+          it via ``ixia_create_bgp_peer(... bfd_mode="multihop" ...)``.
     """
     request = {
         "host": host, "port": port, "user": user,
@@ -352,7 +377,7 @@ def _build_bfdv4_view(bfd, ixn) -> Dict[str, Any]:
     status = getattr(bfd, "SessionStatus", None)
     if not isinstance(status, list):
         status = [status] if status is not None else []
-    counts = getattr(bfd, "StateCounts", None)
+    counts = _normalise_state_counts(getattr(bfd, "StateCounts", None))
     return {
         "name": getattr(bfd, "Name", "") or None,
         "href": getattr(bfd, "href", None),

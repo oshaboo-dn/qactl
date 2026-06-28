@@ -13,7 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   multiplier, admin state, control-plane-independent, aggregate. `get`
   surfaces live `session_status` / `state_counts` for verdict reads.
 - `ixia bgp peer create` gains `--bfd` / `--no-bfd` and `--bfd-mode`
-  (`singleHop` | `multiHop`) to register the peer for BGP-over-BFD
+  (`singlehop` | `multihop`) to register the peer for BGP-over-BFD
   (`enableBfdRegistration` / `modeOfBfdOperations`). `ixia bgp peer get`
   and `ixia session describe` now report `bfd_registered` / `bfd_mode`
   per peer and the BFD interfaces under each device group. Unblocks

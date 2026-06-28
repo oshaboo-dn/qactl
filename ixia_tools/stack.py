@@ -132,10 +132,11 @@ _PEER_SCALAR_CAPABILITY_FIELDS: Dict[str, str] = {
 # the SDN variants can call ``ixia_rest_patch`` directly.
 _PEER_TYPES = {"internal", "external"}
 
-# Valid ``modeOfBfdOperations`` enum values on bgpIpv4Peer. Single-hop
-# is the default for a directly-connected eBGP peer; multi-hop is for
-# BGP-over-BFD across more than one IP hop.
-_BFD_MODES = {"singleHop", "multiHop"}
+# Valid ``modeOfBfdOperations`` enum values on bgpIpv4Peer (the
+# IxNetwork server spells them lowercase: ``0=multihop 1=singlehop``).
+# Single-hop is the default for a directly-connected eBGP peer;
+# multi-hop is for BGP-over-BFD across more than one IP hop.
+_BFD_MODES = {"singlehop", "multihop"}
 
 
 # ----------------------------------------------------------------------
@@ -587,8 +588,8 @@ def ixia_create_bgp_peer(
             (``ixia_create_bfdv4_interface``) so there's an actual BFD
             session to track. ``False`` explicitly clears it; omit to
             leave the IxNetwork default.
-        bfd_mode: ``modeOfBfdOperations`` — ``"singleHop"`` (default,
-            directly-connected peer) or ``"multiHop"`` (BFD across
+        bfd_mode: ``modeOfBfdOperations`` — ``"singlehop"`` (default,
+            directly-connected peer) or ``"multihop"`` (BFD across
             more than one IP hop). Only meaningful when ``bfd`` is
             registered; sets the multivalue regardless so a later
             registration picks it up.
