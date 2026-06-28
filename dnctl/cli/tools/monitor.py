@@ -31,10 +31,14 @@ spool, while a loop/cron supplies the "keep running" part.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import sys
 from typing import Any, Dict, List, Optional
 
 from dnctl.cli.core import event_spool as _spool
 from dnctl.cli.core import events as _events
+from dnctl.cli.core import gnmi_links as _links
 from dnctl.cli.core import slack_notify
 from dnctl.cli.core.envelope import make_response
 from dnctl.cli.core.session import (
@@ -44,6 +48,33 @@ from dnctl.cli.core.session import (
 )
 from dnctl.cli.tools.log_read import get_system_events
 from dnctl.core import devices as _dn_devices
+
+try:  # gNMI is an optional source; degrade cleanly if its deps are absent
+    from dnctl.gnmi.tools.rw import gnmi_get as _gnmi_get
+except Exception:  # noqa: BLE001
+    _gnmi_get = None
+
+
+@contextlib.contextmanager
+def _silence_fd1():
+    """Redirect OS fd 1 to /dev/null for the duration of the block.
+
+    gRPC's C core writes TLS notices ("ssl_target_name_override ...")
+    straight to file descriptor 1, bypassing ``sys.stdout`` — which would
+    corrupt the ``--json`` envelope this tool emits. The gNMI link read
+    returns structured data, so it has no stdout we need to keep; mute fd 1
+    around it. Native-side only; the vendored gNMI tree is untouched.
+    """
+    sys.stdout.flush()
+    saved = os.dup(1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        yield
+    finally:
+        os.dup2(saved, 1)
+        os.close(devnull)
+        os.close(saved)
 
 _TICK_NEXT_ACTION = (
     "Re-run `qactl cli monitor tick` on an interval (cron / loop) to keep "
@@ -75,6 +106,9 @@ def monitor_tick(
     lookback: str = "15m",
     notify_slack: str = "",
     max_events_per_device: int = _MAX_EVENTS_DEFAULT,
+    links: bool = True,
+    gnmi_tls_mode: str = "skip_verify",
+    gnmi_port: Optional[int] = None,
     dry_run: bool = False,
     state_path: Optional[str] = None,
     user: str = DEFAULT_USER,
@@ -102,15 +136,21 @@ def monitor_tick(
             disables notification (collection still happens).
         max_events_per_device: cap on new alerts surfaced/notified per
             device per tick (newest kept), so a log storm can't flood.
+        links: also collect interface oper-status over gNMI and emit
+            up/down transition events (snapshot diff). Degrades to a
+            warning if gNMI is unreachable; never blocks the syslog source.
+        gnmi_tls_mode: TLS mode for the gNMI link read (DNOS lab default
+            ``skip_verify``; also ``insecure`` / ``verify_ca`` / ``mtls``).
+        gnmi_port: override the gNMI port (default from the registry/50051).
         dry_run: parse + report but do NOT notify or advance the cursor /
-            dedupe state. Safe to run repeatedly.
+            dedupe state / link snapshot. Safe to run repeatedly.
         state_path: override the spool file path (tests).
-        user/password/timeout: SSH params for the log read.
+        user/password/timeout: SSH (and gNMI) params.
 
     Returns:
         Envelope with ``ticked`` (per-device summaries), ``new_events``
-        (flattened, each tagged with ``device``), ``new_event_count``,
-        ``notified``, and ``notify_errors``.
+        (flattened, each tagged with ``device`` and ``source``),
+        ``new_event_count``, ``notified``, and ``notify_errors``.
     """
     sev = (severity or "").strip().lower()
     if sev not in _events.SEVERITY_RANK:
@@ -163,6 +203,13 @@ def monitor_tick(
             canonical = _dn_devices.resolve_canonical(name) or name
             cursor = _spool.get_cursor(state, canonical)
             since = cursor or lookback
+            summary: Dict[str, Any] = {
+                "device": canonical, "since": since,
+                "alert_count": 0, "new_count": 0,
+            }
+            new_events: List[Dict[str, Any]] = []
+
+            # --- source 1: syslog system-events (BGP + EVENT_CODE) ---------
             # DEVICE_HOSTS (the SSH-host cache get_system_events resolves
             # against) is keyed by canonical name, so read with the resolved
             # key — a secondary alias like "cl" isn't a key there.
@@ -170,40 +217,77 @@ def monitor_tick(
                 tail_lines=None, since=since,
                 device=canonical, user=user, password=password, timeout=timeout,
             )
-            summary: Dict[str, Any] = {
-                "device": canonical, "since": since,
-                "read_status": resp.get("status"),
-                "alert_count": 0, "new_count": 0,
-            }
+            summary["read_status"] = resp.get("status")
             if resp.get("status") != "ok":
                 any_read_error = True
                 errs = resp.get("errors") or ["read failed"]
                 summary["error"] = errs[0]
                 warnings.append(f"{canonical}: system-events read failed: {errs[0]}")
-                ticked.append(summary)
-                continue
+            else:
+                parsed = _events.parse_events(resp.get("stdout") or "")
+                alert = [
+                    ev for ev in parsed
+                    if _events.is_alertworthy(
+                        ev, max_rank=max_rank,
+                        match=match_terms, exclude=exclude_terms,
+                    )
+                ]
+                summary["alert_count"] = len(alert)
+                alert_fps: List[str] = []
+                for ev in alert:
+                    fp = _events.event_fingerprint(canonical, ev)
+                    alert_fps.append(fp)
+                    if _spool.is_new(state, canonical, fp):
+                        tagged = dict(ev)
+                        tagged.setdefault("source", "syslog")
+                        tagged["device"] = canonical
+                        tagged["fingerprint"] = fp
+                        new_events.append(tagged)
+                if not dry_run:
+                    _spool.record(
+                        state, canonical, alert_fps,
+                        cursor=_newest_timestamp(parsed),
+                    )
 
-            parsed = _events.parse_events(resp.get("stdout") or "")
-            alert = [
-                ev for ev in parsed
-                if _events.is_alertworthy(
-                    ev, max_rank=max_rank,
-                    match=match_terms, exclude=exclude_terms,
-                )
-            ]
-            summary["alert_count"] = len(alert)
+            # --- source 2: gNMI interface oper-status (link up/down) -------
+            # A bounded Get + snapshot diff; the diff is the dedupe, so these
+            # bypass the fingerprint ring. Degrades to a warning if gNMI is
+            # unreachable — it must never sink the syslog source.
+            if links and _gnmi_get is not None:
+                with _silence_fd1():
+                    genv = _gnmi_get(
+                        path=_links.OPER_STATUS_PATH, device=canonical,
+                        port=gnmi_port, user=user, password=password,
+                        tls_mode=gnmi_tls_mode, timeout_s=timeout,
+                    )
+                summary["gnmi_status"] = genv.get("status")
+                if genv.get("status") == "ok":
+                    cur = _links.parse_oper_status(genv)
+                    if cur:
+                        old = _spool.get_links(state, canonical)
+                        diffs = _links.diff_link_states(canonical, old, cur)
+                        link_alerts = [
+                            ev for ev in diffs
+                            if _events.is_alertworthy(
+                                ev, max_rank=max_rank,
+                                match=match_terms, exclude=exclude_terms,
+                            )
+                        ]
+                        summary["link_change_count"] = len(link_alerts)
+                        for ev in link_alerts:
+                            ev["device"] = canonical
+                            ev["fingerprint"] = _events.event_fingerprint(canonical, ev)
+                            new_events.append(ev)
+                        if not dry_run:
+                            _spool.set_links(state, canonical, cur)
+                else:
+                    gerrs = genv.get("errors") or ["gnmi get failed"]
+                    summary["gnmi_error"] = gerrs[0]
+                    warnings.append(
+                        f"{canonical}: gNMI link read skipped: {gerrs[0]}"
+                    )
 
-            new_events: List[Dict[str, Any]] = []
-            alert_fps: List[str] = []
-            for ev in alert:
-                fp = _events.event_fingerprint(canonical, ev)
-                alert_fps.append(fp)
-                if _spool.is_new(state, canonical, fp):
-                    tagged = dict(ev)
-                    tagged["device"] = canonical
-                    tagged["fingerprint"] = fp
-                    new_events.append(tagged)
-
+            # --- surface + notify (both sources) --------------------------
             # Newest first, capped — a storm can't flood the notifier.
             new_events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
             if len(new_events) > max_events_per_device:
@@ -223,12 +307,6 @@ def monitor_tick(
                             f"{canonical}: {r.get('error') or 'slack failed'}"
                         )
 
-            if not dry_run:
-                _spool.record(
-                    state, canonical, alert_fps,
-                    cursor=_newest_timestamp(parsed),
-                )
-
             all_new.extend(new_events)
             ticked.append(summary)
 
@@ -238,7 +316,9 @@ def monitor_tick(
     if notify_errors:
         warnings.extend(notify_errors)
 
-    status = "warning" if (any_read_error or notify_errors) else "ok"
+    # Any warning (syslog read failure, gNMI link degrade, notify error)
+    # downgrades to "warning" — still exit 0, but signals a partial tick.
+    status = "warning" if warnings else "ok"
     return make_response(
         status=status, device=None,
         warnings=warnings,
@@ -254,6 +334,40 @@ def monitor_tick(
     )
 
 
+def monitor_reset(
+    devices: Optional[List[str]] = None,
+    state_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Clear collector memory (cursor + dedupe ring + link snapshot).
+
+    With no ``devices``, wipes the whole spool. Otherwise clears only the
+    named devices (resolved to canonical). After a reset the next tick
+    re-establishes a baseline from ``lookback`` and won't re-alert on
+    already-seen history beyond that window.
+
+    Args:
+        devices: device names/aliases to clear. ``None``/empty = all.
+        state_path: override the spool file path (tests).
+
+    Returns:
+        Envelope with ``cleared`` (the device list, or ``["*"]`` for all).
+    """
+    with _spool._LOCK:
+        state = _spool.load(state_path)
+        if devices:
+            cleared = [_dn_devices.resolve_canonical(d) or d for d in devices]
+            for d in cleared:
+                _spool.reset(state, d)
+        else:
+            cleared = ["*"]
+            _spool.reset(state, None)
+        _spool.save(state, state_path)
+    return make_response(
+        status="ok", device=None, operation="monitor-reset", cleared=cleared,
+    )
+
+
 def register(mcp) -> None:
     """Wire this module's tools onto a FastMCP instance."""
     mcp.tool()(monitor_tick)
+    mcp.tool()(monitor_reset)

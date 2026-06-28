@@ -99,6 +99,26 @@ def get_cursor(state: Dict[str, Any], device: str) -> Optional[str]:
     return None
 
 
+def get_links(state: Dict[str, Any], device: str) -> Optional[Dict[str, str]]:
+    """Return the last interface oper-status snapshot for ``device``.
+
+    ``None`` means "no baseline yet" — the gNMI link source treats that as
+    "establish a baseline this tick, don't alert".
+    """
+    entry = state.get("devices", {}).get(device)
+    if isinstance(entry, dict):
+        links = entry.get("links")
+        if isinstance(links, dict):
+            return {str(k): str(v) for k, v in links.items()}
+    return None
+
+
+def set_links(state: Dict[str, Any], device: str, links: Dict[str, str]) -> None:
+    """Store the current interface oper-status snapshot for ``device``."""
+    entry = _dev(state, device)
+    entry["links"] = {str(k): str(v) for k, v in links.items()}
+
+
 def is_new(state: Dict[str, Any], device: str, fingerprint: str) -> bool:
     """True if ``fingerprint`` has not been seen for ``device`` yet."""
     entry = state.get("devices", {}).get(device)
@@ -141,6 +161,6 @@ def reset(state: Dict[str, Any], device: Optional[str] = None) -> None:
 
 
 __all__ = [
-    "load", "save", "get_cursor", "is_new", "record", "reset",
-    "_LOCK", "_SEEN_CAP",
+    "load", "save", "get_cursor", "get_links", "set_links",
+    "is_new", "record", "reset", "_LOCK", "_SEEN_CAP",
 ]

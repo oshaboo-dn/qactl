@@ -7,6 +7,8 @@ deploy / restore / tar-load are destructive and gated by ``--yes``.
 
 from __future__ import annotations
 
+import json as _json
+import time as _time
 from typing import Annotated, List, Optional
 
 import typer
@@ -33,7 +35,7 @@ from dnctl.cli.tools.gitcommit import get_gitcommit
 from dnctl.cli.tools.interfaces import interfaces as interfaces_tool
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
 from dnctl.cli.core.events import DEFAULT_SEVERITY as _DEFAULT_SEVERITY
-from dnctl.cli.tools.monitor import monitor_tick
+from dnctl.cli.tools.monitor import monitor_reset, monitor_tick
 from dnctl.cli.tools.ping import run_ping_ipv4
 from dnctl.cli.tools.raw import run_raw
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
@@ -249,17 +251,20 @@ def monitor_tick_cmd(
     lookback: Annotated[str, typer.Option("--lookback", help="First-tick lookback window when a device has no cursor yet.")] = "15m",
     notify: Annotated[str, typer.Option("--notify", help="Slack channel/@user to post new alerts to (side-effecting — needs --yes).")] = "",
     max_events: Annotated[int, typer.Option("--max-events", help="Cap on new alerts surfaced/notified per device per tick.")] = 200,
+    links: Annotated[bool, typer.Option("--links/--no-links", help="Also detect interface up/down via gNMI oper-status (snapshot diff).")] = True,
+    gnmi_tls_mode: Annotated[str, typer.Option("--gnmi-tls-mode", help="TLS mode for the gNMI link read (insecure | skip_verify | verify_ca | mtls).")] = "skip_verify",
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview only: parse + report, don't notify or advance the cursor.")] = False,
     user: O.User = None, password: O.Password = None, timeout: O.Timeout = None,
     as_json: O.Json = False, yes: O.Yes = False,
 ):
-    """Run one event-collection tick over the fleet (system-events → dedupe → alert).
+    """Run one event-collection tick over the fleet (system-events + gNMI links → dedupe → alert).
 
     For each device, reads its system-events log since the last tick (a
-    persisted per-device cursor; first run uses --lookback), keeps the
-    alert-worthy events (severity threshold OR an interesting code/message
-    substring), dedupes against earlier ticks, and reports the new ones.
-    Run it on a cron/loop to keep collecting.
+    persisted per-device cursor; first run uses --lookback) and — unless
+    --no-links — the interface oper-status over gNMI, keeps the alert-worthy
+    events (severity threshold OR an interesting code/message substring),
+    dedupes against earlier ticks, and reports the new ones. Run it on a
+    cron/loop, or use `monitor watch`.
 
     Read-only by default. Posting to Slack with --notify is side-effecting
     and requires --yes (skipped under --dry-run).
@@ -275,10 +280,82 @@ def monitor_tick_cmd(
             devices=device, severity=severity, match=match, exclude=exclude,
             use_default_rules=default_rules, lookback=lookback,
             notify_slack=notify, max_events_per_device=max_events,
-            dry_run=dry_run,
+            links=links, gnmi_tls_mode=gnmi_tls_mode, dry_run=dry_run,
         ),
         c,
     )
+
+
+@monitor_app.command("watch")
+def monitor_watch_cmd(
+    device: Annotated[Optional[List[str]], typer.Option("--device", "-d", help="Device(s) to poll (repeatable). Default: every registered device.")] = None,
+    interval: Annotated[float, typer.Option("--interval", help="Seconds to sleep between ticks.")] = 60.0,
+    count: Annotated[int, typer.Option("--count", help="Number of ticks to run (0 = run forever until interrupted).")] = 0,
+    severity: Annotated[str, typer.Option("--severity", help="Min syslog severity that alerts on its own.")] = _DEFAULT_SEVERITY,
+    match: Annotated[Optional[List[str]], typer.Option("--match", help="Extra substring that marks an event alert-worthy (repeatable).")] = None,
+    exclude: Annotated[Optional[List[str]], typer.Option("--exclude", help="Substring that vetoes an event (repeatable).")] = None,
+    default_rules: Annotated[bool, typer.Option("--default-rules/--no-default-rules", help="Include the built-in interesting-code list.")] = True,
+    lookback: Annotated[str, typer.Option("--lookback", help="First-tick lookback window when a device has no cursor yet.")] = "15m",
+    notify: Annotated[str, typer.Option("--notify", help="Slack channel/@user to post new alerts to (side-effecting — needs --yes).")] = "",
+    max_events: Annotated[int, typer.Option("--max-events", help="Cap on new alerts surfaced/notified per device per tick.")] = 200,
+    links: Annotated[bool, typer.Option("--links/--no-links", help="Also detect interface up/down via gNMI oper-status.")] = True,
+    gnmi_tls_mode: Annotated[str, typer.Option("--gnmi-tls-mode", help="TLS mode for the gNMI link read.")] = "skip_verify",
+    user: O.User = None, password: O.Password = None, timeout: O.Timeout = None,
+    as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Run `monitor tick` in a loop (foreground collector daemon).
+
+    Calls a tick every --interval seconds (--count times, or forever).
+    With --json each tick prints its envelope as one JSON line (JSONL);
+    otherwise a concise per-tick status line. Stop with Ctrl-C.
+
+    --notify is side-effecting and requires --yes.
+    """
+    c = O.build_ctx(None, None, user, password, None, timeout, True, as_json, yes)
+    if notify and not confirm.ensure(
+        f"monitor watch --notify {notify}", yes=c.yes, as_json=c.json,
+    ):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    i = 0
+    try:
+        while count <= 0 or i < count:
+            env = O.call(
+                monitor_tick, c,
+                devices=device, severity=severity, match=match, exclude=exclude,
+                use_default_rules=default_rules, lookback=lookback,
+                notify_slack=notify, max_events_per_device=max_events,
+                links=links, gnmi_tls_mode=gnmi_tls_mode, dry_run=False,
+            )
+            if c.json:
+                typer.echo(_json.dumps(env))
+            else:
+                ts = _time.strftime("%H:%M:%S")
+                typer.echo(
+                    f"[{ts}] tick {i + 1}: {env.get('new_event_count', 0)} new, "
+                    f"{env.get('notified', 0)} notified, status={env.get('status')}"
+                )
+            i += 1
+            if count <= 0 or i < count:
+                _time.sleep(max(0.0, interval))
+    except KeyboardInterrupt:
+        typer.echo("monitor watch stopped." if not c.json else _json.dumps({"status": "ok", "stopped": True, "ticks": i}))
+
+
+@monitor_app.command("reset")
+def monitor_reset_cmd(
+    device: Annotated[Optional[List[str]], typer.Option("--device", "-d", help="Device(s) to clear (repeatable). Default: all.")] = None,
+    as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Clear collector memory (cursor + dedupe + link snapshot).
+
+    Destructive (drops saved progress) — requires --yes. After a reset the
+    next tick re-baselines from --lookback.
+    """
+    c = O.build_ctx(None, None, None, None, None, None, True, as_json, yes)
+    target = ", ".join(device) if device else "ALL devices"
+    if not confirm.ensure(f"monitor reset {target}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(O.call(monitor_reset, c, devices=device), c)
 
 
 @app.command()

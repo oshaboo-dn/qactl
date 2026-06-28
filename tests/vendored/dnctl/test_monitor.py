@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from dnctl.__main__ import app
 from dnctl.cli.core import event_spool as spool
 from dnctl.cli.core import events as ev
+from dnctl.cli.core import gnmi_links as gl
 from dnctl.cli.tools import monitor as mon
 
 runner = CliRunner()
@@ -123,7 +124,17 @@ def test_spool_seen_is_capped():
 
 # --- monitor tick (integration with fakes) ---------------------------------
 
-def _fake_fleet(monkeypatch, stdout=_SAMPLE, status="ok", errors=None):
+def _gnmi_env(opermap, status="ok", errors=None):
+    ups = [
+        {"path": f"interfaces/interface[name={k}]/state/oper-status", "val": v}
+        for k, v in opermap.items()
+    ]
+    return {"status": status, "result": {"notification": [{"update": ups}]},
+            "errors": errors or []}
+
+
+def _fake_fleet(monkeypatch, stdout=_SAMPLE, status="ok", errors=None,
+                gnmi_oper=None):
     monkeypatch.setattr(mon._dn_devices, "list_device_aliases", lambda: ["HCL"])
     monkeypatch.setattr(mon._dn_devices, "resolve_canonical", lambda name: name)
 
@@ -131,6 +142,9 @@ def _fake_fleet(monkeypatch, stdout=_SAMPLE, status="ok", errors=None):
         return {"status": status, "stdout": stdout, "errors": errors or []}
 
     monkeypatch.setattr(mon, "get_system_events", _fake_events)
+    # gNMI link source: a stable snapshot by default (baseline, no diff).
+    oper = gnmi_oper if gnmi_oper is not None else {"eth1": "UP"}
+    monkeypatch.setattr(mon, "_gnmi_get", lambda **k: _gnmi_env(oper))
 
 
 def test_tick_surfaces_new_alerts_then_dedupes(tmp_path, monkeypatch):
@@ -209,6 +223,103 @@ def test_tick_no_default_rules_only_threshold(tmp_path, monkeypatch):
     r = mon.monitor_tick(state_path=str(tmp_path / "s.json"), use_default_rules=False)
     assert r["new_event_count"] == 1
     assert r["new_events"][0]["event_code"] == "NCF_STATE_CHANGE_DISCONNECTED"
+
+
+# --- gNMI link source ------------------------------------------------------
+
+def test_parse_oper_status():
+    env = _gnmi_env({"ge100-0/0/0": "DOWN", "ge100-0/0/1": "UP"})
+    got = gl.parse_oper_status(env)
+    assert got == {"ge100-0/0/0": "DOWN", "ge100-0/0/1": "UP"}
+
+
+def test_diff_link_states_no_baseline_is_silent():
+    assert gl.diff_link_states("cl", None, {"a": "UP"}) == []
+    assert gl.diff_link_states("cl", {}, {"a": "UP"}) == []
+
+
+def test_diff_link_states_down_and_up_transitions():
+    old = {"a": "UP", "b": "UP"}
+    new = {"a": "DOWN", "b": "UP"}  # only 'a' changed
+    evs = gl.diff_link_states("cl", old, new)
+    assert len(evs) == 1
+    e = evs[0]
+    assert e["event_code"] == "OPER_STATUS_DOWN"
+    assert e["severity"] == "warning"
+    assert "a oper-status UP -> DOWN" in e["message"]
+    # a recovery uses OPER_STATUS_UP at notice
+    up = gl.diff_link_states("cl", {"a": "DOWN"}, {"a": "UP"})
+    assert up[0]["event_code"] == "OPER_STATUS_UP"
+    assert up[0]["severity"] == "notice"
+
+
+def test_spool_links_roundtrip(tmp_path):
+    p = str(tmp_path / "s.json")
+    st = spool.load(p)
+    assert spool.get_links(st, "cl") is None
+    spool.set_links(st, "cl", {"a": "UP", "b": "DOWN"})
+    spool.save(st, p)
+    assert spool.get_links(spool.load(p), "cl") == {"a": "UP", "b": "DOWN"}
+
+
+def test_tick_detects_link_down_across_ticks(tmp_path, monkeypatch):
+    p = str(tmp_path / "s.json")
+    # tick 1: baseline eth1=UP, no boring syslog alerts beyond the sample
+    _fake_fleet(monkeypatch, stdout="", gnmi_oper={"eth1": "UP"})
+    r1 = mon.monitor_tick(state_path=p)
+    assert all(e.get("event_code") != "OPER_STATUS_DOWN" for e in r1["new_events"])
+
+    # tick 2: eth1 goes DOWN -> a link-down event appears, tagged source gnmi
+    monkeypatch.setattr(mon, "_gnmi_get", lambda **k: _gnmi_env({"eth1": "DOWN"}))
+    r2 = mon.monitor_tick(state_path=p)
+    downs = [e for e in r2["new_events"] if e.get("event_code") == "OPER_STATUS_DOWN"]
+    assert len(downs) == 1
+    assert downs[0]["source"] == "gnmi-oper"
+    assert downs[0]["device"] == "HCL"
+
+    # tick 3: still DOWN (no change) -> not re-alerted (snapshot is the dedupe)
+    r3 = mon.monitor_tick(state_path=p)
+    assert all(e.get("event_code") != "OPER_STATUS_DOWN" for e in r3["new_events"])
+
+
+def test_tick_no_links_skips_gnmi(tmp_path, monkeypatch):
+    _fake_fleet(monkeypatch, stdout="")
+    called = {"n": 0}
+
+    def _boom(**k):
+        called["n"] += 1
+        return _gnmi_env({"eth1": "UP"})
+
+    monkeypatch.setattr(mon, "_gnmi_get", _boom)
+    mon.monitor_tick(state_path=str(tmp_path / "s.json"), links=False)
+    assert called["n"] == 0
+
+
+def test_tick_gnmi_failure_degrades_to_warning(tmp_path, monkeypatch):
+    _fake_fleet(monkeypatch, stdout="")
+    monkeypatch.setattr(
+        mon, "_gnmi_get",
+        lambda **k: {"status": "connect_error", "errors": ["gnmi down"]},
+    )
+    r = mon.monitor_tick(state_path=str(tmp_path / "s.json"))
+    assert r["status"] == "warning"
+    assert any("gNMI link read skipped" in w for w in r["warnings"])
+
+
+def test_reset_clears_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(mon._dn_devices, "resolve_canonical", lambda name: name)
+    p = str(tmp_path / "s.json")
+    st = spool.load(p)
+    spool.record(st, "HCL", ["fp1"], cursor="2026-06-28T07:00:00Z")
+    spool.set_links(st, "HCL", {"a": "UP"})
+    spool.save(st, p)
+
+    r = mon.monitor_reset(devices=["HCL"], state_path=p)
+    assert r["status"] == "ok"
+    assert "HCL" in r["cleared"]
+    after = spool.load(p)
+    assert spool.get_cursor(after, "HCL") is None
+    assert spool.get_links(after, "HCL") is None
 
 
 # --- CLI surface -----------------------------------------------------------
