@@ -32,6 +32,8 @@ from dnctl.cli.tools.edit import (
 from dnctl.cli.tools.gitcommit import get_gitcommit
 from dnctl.cli.tools.interfaces import interfaces as interfaces_tool
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
+from dnctl.cli.core.events import DEFAULT_SEVERITY as _DEFAULT_SEVERITY
+from dnctl.cli.tools.monitor import monitor_tick
 from dnctl.cli.tools.ping import run_ping_ipv4
 from dnctl.cli.tools.raw import run_raw
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
@@ -68,12 +70,14 @@ ts_app = typer.Typer(no_args_is_help=True, help="Tech-support bundles.")
 tarload_app = typer.Typer(no_args_is_help=True, help="Stage upgrade image tars (target-stack).")
 backup_app = typer.Typer(no_args_is_help=True, help="Config backups (create / list / read / restore).")
 restart_app = typer.Typer(no_args_is_help=True, help="Restart system / node / container / process.")
+monitor_app = typer.Typer(no_args_is_help=True, help="Event collector (system-events → dedupe → Slack).")
 app.add_typer(template_app, name="template")
 app.add_typer(device_app, name="device")
 app.add_typer(ts_app, name="techsupport")
 app.add_typer(tarload_app, name="tar-load")
 app.add_typer(backup_app, name="backup")
 app.add_typer(restart_app, name="restart")
+app.add_typer(monitor_app, name="monitor")
 
 
 # --- reads / discovery -----------------------------------------------------
@@ -233,6 +237,48 @@ def events(
     """Read the system events log."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     O.finish(O.call(get_system_events, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
+
+
+@monitor_app.command("tick")
+def monitor_tick_cmd(
+    device: Annotated[Optional[List[str]], typer.Option("--device", "-d", help="Device(s) to poll (repeatable). Default: every registered device.")] = None,
+    severity: Annotated[str, typer.Option("--severity", help="Min syslog severity that alerts on its own (emerg|alert|crit|err|warning|notice|info|debug).")] = _DEFAULT_SEVERITY,
+    match: Annotated[Optional[List[str]], typer.Option("--match", help="Extra substring that marks an event alert-worthy below the severity threshold (repeatable).")] = None,
+    exclude: Annotated[Optional[List[str]], typer.Option("--exclude", help="Substring that vetoes an event (repeatable).")] = None,
+    default_rules: Annotated[bool, typer.Option("--default-rules/--no-default-rules", help="Include the built-in interesting-code list (BGP, link-down, crash, ...).")] = True,
+    lookback: Annotated[str, typer.Option("--lookback", help="First-tick lookback window when a device has no cursor yet.")] = "15m",
+    notify: Annotated[str, typer.Option("--notify", help="Slack channel/@user to post new alerts to (side-effecting — needs --yes).")] = "",
+    max_events: Annotated[int, typer.Option("--max-events", help="Cap on new alerts surfaced/notified per device per tick.")] = 200,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview only: parse + report, don't notify or advance the cursor.")] = False,
+    user: O.User = None, password: O.Password = None, timeout: O.Timeout = None,
+    as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Run one event-collection tick over the fleet (system-events → dedupe → alert).
+
+    For each device, reads its system-events log since the last tick (a
+    persisted per-device cursor; first run uses --lookback), keeps the
+    alert-worthy events (severity threshold OR an interesting code/message
+    substring), dedupes against earlier ticks, and reports the new ones.
+    Run it on a cron/loop to keep collecting.
+
+    Read-only by default. Posting to Slack with --notify is side-effecting
+    and requires --yes (skipped under --dry-run).
+    """
+    c = O.build_ctx(None, None, user, password, None, timeout, True, as_json, yes)
+    if notify and not dry_run and not confirm.ensure(
+        f"monitor tick --notify {notify}", yes=c.yes, as_json=c.json,
+    ):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(
+            monitor_tick, c,
+            devices=device, severity=severity, match=match, exclude=exclude,
+            use_default_rules=default_rules, lookback=lookback,
+            notify_slack=notify, max_events_per_device=max_events,
+            dry_run=dry_run,
+        ),
+        c,
+    )
 
 
 @app.command()
