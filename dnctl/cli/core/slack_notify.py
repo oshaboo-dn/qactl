@@ -134,6 +134,29 @@ def _run_blocking(coro: Awaitable[Any], timeout_s: float) -> Any:
     return box["v"]
 
 
+def _route(channel: str, text: str, thread_ts: Optional[str]) -> tuple[str, dict[str, Any]]:
+    """Pick the slackbot tool + args for a destination.
+
+    A leading ``@`` means "DM this user" — that needs the user-resolving
+    tool ``slackbot_slack_send_msg_to_user``. ``slackbot_slack_send_msg``
+    only takes a real channel name/ID and would silently target a
+    non-existent "@name" channel.
+    """
+    target = channel.strip()
+    if target.startswith("@"):
+        tool = "slackbot_slack_send_msg_to_user"
+        args: dict[str, Any] = {
+            "username_or_display_name": target[1:],
+            "message_content": text,
+        }
+    else:
+        tool = "slackbot_slack_send_msg"
+        args = {"channel": target, "message_content": text}
+    if thread_ts:
+        args["thread_ts"] = thread_ts
+    return tool, args
+
+
 async def _send(
     channel: str, text: str, thread_ts: Optional[str],
 ) -> dict[str, Any]:
@@ -144,64 +167,73 @@ async def _send(
         "X-Email-User": SLACK_USER_EMAIL,
         "X-SLACKBOT-TOOLS": "enabled",
     }
-    args: dict[str, Any] = {
-        "channel": channel,
-        "message_content": text,
-    }
-    if thread_ts:
-        args["thread_ts"] = thread_ts
+    tool, args = _route(channel, text, thread_ts)
     async with streamablehttp_client(DN_MCP_URL, headers=headers) as (r, w, _):
         async with ClientSession(r, w) as s:
             await s.initialize()
-            result = await s.call_tool("slackbot_slack_send_msg", args)
+            result = await s.call_tool(tool, args)
     return _extract_ok(result)
 
 
 def _extract_ok(result: Any) -> dict[str, Any]:
-    """Pull ``ts`` out of the slackbot result envelope, defensively.
+    """Decide success and pull ``ts`` out of the slackbot result envelope.
 
-    The slackbot tool returns ``{"result": "<json-string>"}``; the
-    JSON string typically contains ``ts``. Different MCP SDK versions
-    surface this in either ``structuredContent`` or ``content[].text``,
-    so we try both.
+    The slackbot returns a JSON payload like
+    ``{"success": true, "details": {"timestamp": "..."}}`` on success and
+    ``{"success": false, "error": "user_not_found", ...}`` on failure.
+    Different MCP SDK versions surface it in either ``structuredContent``
+    or ``content[].text``, so we try both — and we HONOR an explicit
+    failure rather than reporting every non-raising call as delivered.
     """
+    payload: Optional[dict[str, Any]] = None
     raw_text: Optional[str] = None
+
     structured = getattr(result, "structuredContent", None)
     if isinstance(structured, dict):
         inner = structured.get("result", structured)
         if isinstance(inner, dict):
-            ts = inner.get("ts") or inner.get("message_ts")
-            if ts:
-                return {"ok": True, "ts": ts, "error": None}
-            inner_str = inner.get("result")
-            if isinstance(inner_str, str):
-                raw_text = inner_str
+            payload = inner
         elif isinstance(inner, str):
             raw_text = inner
-    if raw_text is None:
-        for c in (getattr(result, "content", None) or []):
-            t = getattr(c, "text", None)
-            if isinstance(t, str):
-                raw_text = t
-                break
-    ts: Optional[str] = None
-    if isinstance(raw_text, str):
-        try:
-            d = json.loads(raw_text)
-            if isinstance(d, dict):
-                # The slackbot returns the message ts at
-                # ``details.timestamp``. We also tolerate a couple of
-                # other shapes (``ts`` / ``message_ts`` / ``message.ts``)
-                # in case the slackbot's response shape changes.
-                details = d.get("details") if isinstance(d.get("details"), dict) else {}
-                msg = d.get("message") if isinstance(d.get("message"), dict) else {}
-                ts = (
-                    details.get("timestamp")
-                    or details.get("ts")
-                    or d.get("ts")
-                    or d.get("message_ts")
-                    or msg.get("ts")
-                )
-        except json.JSONDecodeError:
-            pass
-    return {"ok": True, "ts": ts, "error": None}
+
+    if payload is None:
+        if raw_text is None:
+            for c in (getattr(result, "content", None) or []):
+                t = getattr(c, "text", None)
+                if isinstance(t, str):
+                    raw_text = t
+                    break
+        if isinstance(raw_text, str):
+            try:
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except json.JSONDecodeError:
+                payload = None
+
+    # No parseable payload — can't prove failure, so don't cry wolf; but we
+    # also can't prove a ts. Treat as best-effort success (legacy behavior).
+    if not isinstance(payload, dict):
+        return {"ok": True, "ts": None, "error": None}
+
+    # Explicit failure flags from the slackbot.
+    if payload.get("success") is False or payload.get("ok") is False:
+        err = (
+            payload.get("error")
+            or payload.get("message")
+            or "slack send failed"
+        )
+        return {"ok": False, "ts": None, "error": str(err)}
+    if isinstance(payload.get("error"), str) and payload["error"]:
+        return {"ok": False, "ts": None, "error": payload["error"]}
+
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    msg = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+    ts = (
+        details.get("timestamp")
+        or details.get("ts")
+        or payload.get("ts")
+        or payload.get("message_ts")
+        or msg.get("ts")
+    )
+    return {"ok": True, "ts": ts if isinstance(ts, str) else None, "error": None}

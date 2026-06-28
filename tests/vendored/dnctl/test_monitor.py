@@ -14,6 +14,7 @@ from dnctl.__main__ import app
 from dnctl.cli.core import event_spool as spool
 from dnctl.cli.core import events as ev
 from dnctl.cli.core import gnmi_links as gl
+from dnctl.cli.core import slack_notify
 from dnctl.cli.tools import monitor as mon
 
 runner = CliRunner()
@@ -320,6 +321,43 @@ def test_reset_clears_state(tmp_path, monkeypatch):
     after = spool.load(p)
     assert spool.get_cursor(after, "HCL") is None
     assert spool.get_links(after, "HCL") is None
+
+
+# --- slack notify routing + result parsing ---------------------------------
+
+def test_slack_route_user_dm():
+    tool, args = slack_notify._route("@oshaboo", "hi", None)
+    assert tool == "slackbot_slack_send_msg_to_user"
+    assert args == {"username_or_display_name": "oshaboo", "message_content": "hi"}
+
+
+def test_slack_route_channel():
+    tool, args = slack_notify._route("#netops", "hi", "123.45")
+    assert tool == "slackbot_slack_send_msg"
+    assert args == {"channel": "#netops", "message_content": "hi", "thread_ts": "123.45"}
+
+
+class _Res:
+    def __init__(self, structured=None, text=None):
+        self.structuredContent = structured
+        self.content = [type("C", (), {"text": text})()] if text else []
+
+
+def test_extract_ok_success_with_ts():
+    r = _Res(text=json.dumps({"success": True, "details": {"timestamp": "1782.69"}}))
+    out = slack_notify._extract_ok(r)
+    assert out["ok"] is True and out["ts"] == "1782.69"
+
+
+def test_extract_ok_failure_is_not_silently_ok():
+    r = _Res(text=json.dumps({"success": False, "error": "user_not_found"}))
+    out = slack_notify._extract_ok(r)
+    assert out["ok"] is False and out["error"] == "user_not_found"
+
+
+def test_extract_ok_unparseable_is_best_effort():
+    out = slack_notify._extract_ok(_Res(text="not json"))
+    assert out["ok"] is True and out["ts"] is None
 
 
 # --- CLI surface -----------------------------------------------------------
