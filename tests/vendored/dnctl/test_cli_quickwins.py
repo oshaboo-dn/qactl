@@ -263,6 +263,24 @@ def test_clear_invalid_command_errors_before_device():
 
 
 # --------------------------------------------------------------------------
+# search: invalid SCOPE is a clean usage error, not a KeyError (issue #50)
+# --------------------------------------------------------------------------
+
+def test_search_invalid_scope_errors_before_device():
+    # An unknown scope used to crash with KeyError + exit 0; it must now be
+    # a clean error envelope with a non-zero exit and the valid choices.
+    r = runner.invoke(
+        app, ["cli", "search", "oper", "transceiver", "-d", "sa", "--json"]
+    )
+    assert r.exit_code == 1
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert any("invalid SCOPE" in e for e in payload["errors"])
+    assert any("'oper'" in e for e in payload["errors"])
+    assert any("show_config" in e for e in payload["errors"])
+
+
+# --------------------------------------------------------------------------
 # techsupport list: enumerate bundles on dnftp (issue #38)
 # --------------------------------------------------------------------------
 

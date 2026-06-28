@@ -148,6 +148,12 @@ def cmd_search(
         password: SSH password (default dnroot).
         timeout: Per-command timeout seconds.
     """
+    if scope not in _CMD_SEARCH_NEXT_ACTIONS:
+        choices = ", ".join(_CMD_SEARCH_NEXT_ACTIONS)
+        return error_response(
+            f"invalid SCOPE {scope!r} (choose one of: {choices})",
+            device=device, host=host,
+        )
     chain = _quote_list(words or [])
     if chain is None:
         return error_response(
