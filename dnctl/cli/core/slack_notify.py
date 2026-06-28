@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import threading
+import urllib.request
 from typing import Any, Awaitable, Optional
 
 # NOTE: the ``mcp`` SDK is an optional, lazily-imported dependency. Slack
@@ -34,6 +35,23 @@ from typing import Any, Awaitable, Optional
 
 DN_MCP_URL = os.environ.get("DN_MCP_URL", "http://ai-server:8000/mcp")
 SLACK_USER_EMAIL = os.environ.get("SLACK_USER_EMAIL", "oshaboo@drivenets.com")
+# A Slack webhook (a classic incoming webhook ``https://hooks.slack.com/
+# services/...`` OR a Workflow Builder trigger ``.../triggers/...`` whose
+# workflow takes a ``text`` variable). When set, it is the preferred
+# transport: a single self-contained credential bound to one channel, with no
+# OAuth / MCP server / bot-in-channel dependency — the right fit for an
+# unattended collector (``monitor watch``). The webhook posts to its own fixed
+# channel, so the ``channel``/``@user`` arg is informational when a webhook is
+# configured. Falls back to the MCP slackbot path when unset.
+#
+# We mirror the ``diva`` tool's slack adapter (same ``{"text": ...}`` body,
+# any-2xx = success) and reuse its ``DIVA_SLACK_WEBHOOK_URL`` as a fallback so
+# a single shared webhook serves both tools.
+SLACK_WEBHOOK_URL = (
+    os.environ.get("QACTL_SLACK_WEBHOOK_URL")
+    or os.environ.get("DIVA_SLACK_WEBHOOK_URL")
+    or ""
+)
 DEFAULT_TIMEOUT_S = 10.0
 
 
@@ -61,6 +79,8 @@ def post(
         On ``ok=False`` the caller typically appends ``error`` to
         ``job.warnings``.
     """
+    if SLACK_WEBHOOK_URL:
+        return _post_webhook(SLACK_WEBHOOK_URL, text, timeout_s)
     if not channel:
         return {"ok": False, "ts": None, "error": "no channel set"}
     try:
@@ -75,6 +95,33 @@ def post(
             "ok": False, "ts": None,
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+def _post_webhook(url: str, text: str, timeout_s: float) -> dict[str, Any]:
+    """Post ``text`` to a Slack webhook. Always returns; never raises.
+
+    Sends ``{"text": ...}`` and treats **any HTTP 2xx as success** — matching
+    the ``diva`` slack adapter, so the same URL works whether it's a classic
+    incoming webhook (``.../services/...``, body ``ok``) or a Workflow Builder
+    trigger (``.../triggers/...``, JSON ack body). No auth header, no MCP, no
+    ``ts`` (webhooks don't return a message timestamp).
+    """
+    try:
+        body = json.dumps({"text": text}).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            status = resp.status
+            payload = resp.read().decode("utf-8", "replace").strip()
+        if 200 <= status < 300:
+            return {"ok": True, "ts": None, "error": None}
+        return {
+            "ok": False, "ts": None,
+            "error": f"slack webhook returned {status}: {payload[:200]}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "ts": None, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _run_blocking(coro: Awaitable[Any], timeout_s: float) -> Any:

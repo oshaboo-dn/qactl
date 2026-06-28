@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Slack notify now supports a self-contained **webhook** via
+  `QACTL_SLACK_WEBHOOK_URL` (falling back to `DIVA_SLACK_WEBHOOK_URL` so a
+  single shared webhook serves both tools). Works with a classic incoming
+  webhook (`.../services/...`) or a Workflow Builder trigger
+  (`.../triggers/...` taking a `text` variable). When set it is the
+  preferred transport for `monitor`'s `--notify`, bypassing the MCP
+  slackbot (no OAuth / bot-in-channel / per-user email dependency) — the
+  right fit for an unattended `monitor watch`. Mirrors the `diva` slack
+  adapter: posts `{"text": ...}` and treats any HTTP 2xx as success. The
+  webhook posts to its own fixed channel, so the `--notify` channel arg is
+  informational when a webhook is configured.
 - `ixia bfd create|get|delete` (MCP: `ixia_create_bfdv4_interface` /
   `ixia_get_bfdv4_interface` / `ixia_delete_bfdv4_interface`): manage a
   `bfdv4Interface` on an IPv4 stack — TX/RX intervals, detect
