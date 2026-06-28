@@ -35,15 +35,45 @@ _VALID_GET = {"GET", "OPTIONS"}
 _VALID_WRITE = {"POST", "PATCH", "PUT", "DELETE"}
 
 
-def _normalise_path(path: str) -> str:
-    """Ensure path starts with /api/v1/sessions/<id>/ixnetwork or is
-    relative to ixnetwork root. Passes through absolute paths as-is so
-    the caller can hit other roots if needed."""
+def _ixnetwork_root(s) -> Optional[str]:
+    """Best-effort ``/api/v1/sessions/<id>/ixnetwork`` prefix for ``s``.
+
+    Read off the connected handle's ``ixn.href`` so relative paths can
+    be resolved against the real session root rather than the bare
+    server root (which RestPy otherwise rewrites to a local
+    ``/api/v1/sessions/<id>/ixnetwork/.../apibrowser`` HTML page —
+    the inconsistency called out in #49).
+    """
+    try:
+        href = s.ixn.href
+    except Exception:
+        return None
+    if not isinstance(href, str) or not href:
+        return None
+    return "/" + href.strip("/")
+
+
+def _normalise_path(path: str, root: Optional[str] = None) -> str:
+    """Resolve a REST path to one rooted at the IxNetwork server.
+
+    Three shapes are accepted:
+
+    - absolute API paths (``/api/v1/sessions/...``) pass through as-is;
+    - relative paths (``topology/1/deviceGroup/1``) are joined onto the
+      session's ``ixnetwork`` root when ``root`` is known, so they hit
+      the live session instead of the bare server root;
+    - any other leading-slash path is left rooted at the server.
+    """
     if not path:
         raise ValueError("path must be non-empty")
-    if path.startswith("/"):
-        return path
-    return "/" + path.lstrip("/")
+    p = path.strip()
+    if p.startswith("/api/") or p.startswith("api/"):
+        return "/" + p.lstrip("/")
+    if p.startswith("/"):
+        return p
+    if root:
+        return root.rstrip("/") + "/" + p.lstrip("/")
+    return "/" + p.lstrip("/")
 
 
 def _trim_body(body: Any, max_chars: int = 40_000) -> Any:
@@ -92,12 +122,10 @@ def ixia_rest_get(
             status="bad_argument",
         )
 
-    try:
-        p = _normalise_path(path)
-    except ValueError as e:
+    if not path:
         return error_envelope(
-            str(e), kind="rest_get", host=host, port=port,
-            status="bad_argument",
+            "path must be non-empty", kind="rest_get",
+            host=host, port=port, status="bad_argument",
         )
 
     try:
@@ -106,6 +134,14 @@ def ixia_rest_get(
         return error_envelope(
             f"{type(e).__name__}: {e}", kind="rest_get",
             host=host, port=port, status="connect_error",
+        )
+
+    try:
+        p = _normalise_path(path, _ixnetwork_root(s))
+    except ValueError as e:
+        return error_envelope(
+            str(e), kind="rest_get", host=host, port=port,
+            status="bad_argument",
         )
 
     env = make_envelope(
@@ -117,7 +153,11 @@ def ixia_rest_get(
         if method.upper() == "GET":
             body = conn._read(p)
         else:
-            body = conn._execute("OPTIONS", p, None, None)
+            # RestPy's ``_execute`` is POST-only (``_execute(url,
+            # payload)``); calling it for OPTIONS raised the
+            # TypeError reported in #49. ``_send_recv`` is the generic
+            # verb dispatcher and the one ``_read`` itself delegates to.
+            body = conn._send_recv("OPTIONS", p)
         env["result"] = _trim_body(body)
         return env
     except Exception as e:
@@ -174,12 +214,10 @@ def ixia_rest_patch(
             next_actions=["Re-invoke with confirm=True to proceed."],
         )
 
-    try:
-        p = _normalise_path(path)
-    except ValueError as e:
+    if not path:
         return error_envelope(
-            str(e), kind="rest_patch", host=host, port=port,
-            status="bad_argument",
+            "path must be non-empty", kind="rest_patch",
+            host=host, port=port, status="bad_argument",
         )
 
     try:
@@ -188,6 +226,14 @@ def ixia_rest_patch(
         return error_envelope(
             f"{type(e).__name__}: {e}", kind="rest_patch",
             host=host, port=port, status="connect_error",
+        )
+
+    try:
+        p = _normalise_path(path, _ixnetwork_root(s))
+    except ValueError as e:
+        return error_envelope(
+            str(e), kind="rest_patch", host=host, port=port,
+            status="bad_argument",
         )
 
     env = make_envelope(

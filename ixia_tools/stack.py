@@ -132,6 +132,11 @@ _PEER_SCALAR_CAPABILITY_FIELDS: Dict[str, str] = {
 # the SDN variants can call ``ixia_rest_patch`` directly.
 _PEER_TYPES = {"internal", "external"}
 
+# Valid ``modeOfBfdOperations`` enum values on bgpIpv4Peer. Single-hop
+# is the default for a directly-connected eBGP peer; multi-hop is for
+# BGP-over-BFD across more than one IP hop.
+_BFD_MODES = {"singleHop", "multiHop"}
+
 
 # ----------------------------------------------------------------------
 # Ethernet
@@ -521,6 +526,8 @@ def ixia_create_bgp_peer(
     hold_timer: Optional[int] = None,
     keepalive_timer: Optional[int] = None,
     capabilities: Optional[Dict[str, bool]] = None,
+    bfd: Optional[bool] = None,
+    bfd_mode: Optional[str] = None,
     port: int = DEFAULT_PORT,
     user: str = DEFAULT_USER,
 ) -> Dict[str, Any]:
@@ -573,6 +580,18 @@ def ixia_create_bgp_peer(
             extension) are NOT aliases. Set ``ipv4_mpls=True`` for
             standard BGP-LU; only set ``ipv4_multi_mpls_labels=True``
             when you actually want a label stack.
+        bfd: Register this peer for BGP-over-BFD
+            (``enableBfdRegistration``). ``True`` ties the peer's
+            session liveness to a BFD session — pair it with a
+            ``bfdv4Interface`` on the same IPv4 stack
+            (``ixia_create_bfdv4_interface``) so there's an actual BFD
+            session to track. ``False`` explicitly clears it; omit to
+            leave the IxNetwork default.
+        bfd_mode: ``modeOfBfdOperations`` — ``"singleHop"`` (default,
+            directly-connected peer) or ``"multiHop"`` (BFD across
+            more than one IP hop). Only meaningful when ``bfd`` is
+            registered; sets the multivalue regardless so a later
+            registration picks it up.
 
     Returns envelope with
     ``result = {topology, device_group, ipv4, name, href, dut_ip,
@@ -595,8 +614,16 @@ def ixia_create_bgp_peer(
         "dut_ip": dut_ip, "local_as": local_as, "peer_type": peer_type,
         "hold_timer": hold_timer, "keepalive_timer": keepalive_timer,
         "capabilities": dict(capabilities or {}),
+        "bfd": bfd, "bfd_mode": bfd_mode,
     }
 
+    if bfd_mode is not None and bfd_mode not in _BFD_MODES:
+        return error_envelope(
+            f"bfd_mode must be one of {sorted(_BFD_MODES)}, got "
+            f"{bfd_mode!r}.",
+            kind="create_bgp_peer", host=host, port=port,
+            status="bad_argument",
+        )
     if peer_type not in _PEER_TYPES:
         return error_envelope(
             f"peer_type must be one of {sorted(_PEER_TYPES)}, got {peer_type!r}.",
@@ -715,6 +742,19 @@ def ixia_create_bgp_peer(
                     caps_applied[label] = bool(value)
                 if scalar_patch:
                     ixn._connection._update(peer_href, scalar_patch)
+
+                # BGP-over-BFD registration. ``enableBfdRegistration``
+                # and ``modeOfBfdOperations`` are both multivalues on
+                # the peer body.
+                if bfd is not None:
+                    patch_singlevalue(
+                        ixn, peer_body["enableBfdRegistration"],
+                        "true" if bfd else "false",
+                    )
+                if bfd_mode is not None:
+                    patch_singlevalue(
+                        ixn, peer_body["modeOfBfdOperations"], bfd_mode,
+                    )
             except Exception:
                 try:
                     peer.remove()
@@ -734,6 +774,8 @@ def ixia_create_bgp_peer(
             "hold_timer": hold_timer,
             "keepalive_timer": keepalive_timer,
             "capabilities_set": caps_applied,
+            "bfd": bfd,
+            "bfd_mode": bfd_mode,
         }
         return env
     except IxiaNotFoundError as e:

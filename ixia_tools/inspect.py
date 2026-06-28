@@ -659,6 +659,12 @@ def _build_peer_view(
         ),
         "capabilities": _peer_capabilities(peer, ixn),
         "rx_filters": _peer_filters(peer, ixn),
+        "bfd_registered": _safe_bool(
+            _mv_scalar(getattr(peer, "EnableBfdRegistration", None), ixn)
+        ),
+        "bfd_mode": _mv_scalar(
+            getattr(peer, "ModeOfBfdOperations", None), ixn
+        ),
         "bgp_vrfs": _peer_vrfs(peer, ixn, parent_dg=parent_dg),
     }
     if include_route_counts:
@@ -723,6 +729,31 @@ def _ipv4_view(dg, ixn) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _dg_bfd_interfaces(dg, ixn) -> List[Dict[str, Any]]:
+    """Every bfdv4Interface under ``dg`` with its config + session state.
+
+    Walks Ethernet → IPv4 → Bfdv4Interface. Best-effort: a stack with
+    no BFD child contributes nothing; a read error on one interface
+    doesn't tank the describe.
+    """
+    from ixia_tools.bfd import _build_bfdv4_view
+    out: List[Dict[str, Any]] = []
+    try:
+        for eth in dg.Ethernet.find():
+            for ipv4 in eth.Ipv4.find():
+                coll = getattr(ipv4, "Bfdv4Interface", None)
+                if coll is None:
+                    continue
+                for bfd in coll.find():
+                    try:
+                        out.append(_build_bfdv4_view(bfd, ixn))
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    return out
+
+
 def _dg_view(dg, ixn, s, *, include_route_counts: bool) -> Dict[str, Any]:
     peers_out: List[Dict[str, Any]] = []
     for peer, _ipv4 in list_bgp_peers(dg):
@@ -768,6 +799,7 @@ def _dg_view(dg, ixn, s, *, include_route_counts: bool) -> Dict[str, Any]:
         "multiplier": int(getattr(dg, "Multiplier", 1) or 1),
         "ipv4": _ipv4_view(dg, ixn),
         "bgp_peers": peers_out,
+        "bfd_interfaces": _dg_bfd_interfaces(dg, ixn),
         "network_groups": ngs_out,
     }
 

@@ -25,7 +25,8 @@ def _peer_create(args: argparse.Namespace) -> int:
         dut_ip=args.dut_ip, local_as=args.local_as, peer_type=args.peer_type,
         ipv4=name_or_index(args.ipv4),
         hold_timer=args.hold_timer, keepalive_timer=args.keepalive_timer,
-        capabilities=caps or None, port=args.port, user=args.user,
+        capabilities=caps or None, bfd=args.bfd, bfd_mode=args.bfd_mode,
+        port=args.port, user=args.user,
     )
     return emit(env, as_json=args.json)
 
@@ -117,6 +118,17 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     pc.add_argument("--capability", action="append", default=[],
                     metavar="LABEL=BOOL",
                     help="capability flag, e.g. ipv4_mpls=true (repeatable)")
+    bfd_grp = pc.add_mutually_exclusive_group()
+    bfd_grp.add_argument("--bfd", dest="bfd", action="store_true",
+                         default=None,
+                         help="register the peer for BGP-over-BFD "
+                              "(enableBfdRegistration). Pair with "
+                              "`qactl ixia bfd create`.")
+    bfd_grp.add_argument("--no-bfd", dest="bfd", action="store_false",
+                         help="explicitly clear BGP-over-BFD registration.")
+    pc.add_argument("--bfd-mode", default=None,
+                    choices=["singleHop", "multiHop"],
+                    help="modeOfBfdOperations (default singleHop).")
     pc.set_defaults(func=_peer_create)
 
     pg = ps.add_parser("get", parents=[parent], help="inspect a BGP peer")

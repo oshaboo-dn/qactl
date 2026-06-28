@@ -15,7 +15,7 @@ import sys
 from typing import List, Optional
 
 from ixiactl import __version__
-from ixiactl.cli import bgp, proto, rest, session_cmds, topo
+from ixiactl.cli import bfd, bgp, proto, rest, session_cmds, topo
 from ixiactl.cli import traffic as traffic_cli
 from ixiactl.cli.common import apply_session_policy, global_parent
 
@@ -34,6 +34,7 @@ def build_parser(prog: str = "ixiactl") -> argparse.ArgumentParser:
     session_cmds.register(sub, parent)
     topo.register(sub, parent)
     bgp.register(sub, parent)
+    bfd.register(sub, parent)
     proto.register(sub, parent)
     traffic_cli.register(sub, parent)
     rest.register(sub, parent)

@@ -7,6 +7,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `ixia bfd create|get|delete` (MCP: `ixia_create_bfdv4_interface` /
+  `ixia_get_bfdv4_interface` / `ixia_delete_bfdv4_interface`): manage a
+  `bfdv4Interface` on an IPv4 stack — TX/RX intervals, detect
+  multiplier, admin state, control-plane-independent, aggregate. `get`
+  surfaces live `session_status` / `state_counts` for verdict reads.
+- `ixia bgp peer create` gains `--bfd` / `--no-bfd` and `--bfd-mode`
+  (`singleHop` | `multiHop`) to register the peer for BGP-over-BFD
+  (`enableBfdRegistration` / `modeOfBfdOperations`). `ixia bgp peer get`
+  and `ixia session describe` now report `bfd_registered` / `bfd_mode`
+  per peer and the BFD interfaces under each device group. Unblocks
+  bug-verification harnesses whose verdict is BFD session state
+  (e.g. SW-279182) (#49).
+
+### Fixed
+- `ixia rest get --method OPTIONS` no longer raises
+  `TypeError: _execute() takes 3 positional arguments but 5 were given`
+  — OPTIONS now dispatches through RestPy's generic `_send_recv` (the
+  same path `_read` uses) instead of the POST-only `_execute`. Relative
+  REST paths (`topology/1/...`) now resolve against the live session's
+  `ixnetwork` root rather than the bare server root, so the raw-REST
+  schema-discovery fallback works (#49).
+
 - `cli raw` (MCP: `run_raw`): an escape hatch that sends arbitrary CLI
   line(s) verbatim, in order, on ONE ephemeral channel and returns the
   full per-step transcript (`stdout` for humans, `steps` for machines) —
