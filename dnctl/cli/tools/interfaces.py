@@ -39,6 +39,7 @@ from dnctl.cli.vendors import CAP_INTERFACES, requires
 from dnctl.cli.core.registry import transport_registry
 from dnctl.cli.core.session import (
     ConnectError,
+    connect_error_next_actions,
     DEFAULT_CMD_TIMEOUT,
     DEFAULT_PASSWORD,
     DEFAULT_USER,
@@ -473,7 +474,7 @@ def interfaces(
         response.update(
             status="connect_error",
             errors=[str(exc)],
-            next_actions=["Verify device is reachable and credentials are correct."],
+            next_actions=connect_error_next_actions(exc),
         )
         log_request("interfaces", request, response)
         return response

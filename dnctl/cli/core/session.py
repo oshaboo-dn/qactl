@@ -262,6 +262,37 @@ class ConnectError(RuntimeError):
     """Raised when we cannot establish the SSH transport (TCP or auth)."""
 
 
+class UnknownDeviceError(ConnectError):
+    """Raised when a device alias/SN is not in the registry at all.
+
+    A subclass of :class:`ConnectError` so existing handlers keep treating it
+    as a connect failure, but distinguishable so callers can offer a
+    registry-specific hint instead of the misleading reachability/credentials
+    one (the box may be perfectly reachable — it's just not registered).
+    """
+
+
+_GENERIC_CONNECT_NEXT_ACTION = (
+    "Verify device is reachable and credentials are correct."
+)
+_REGISTRY_MISS_NEXT_ACTION = (
+    "Pass --host <ip/sn> to skip the registry, or register the device with "
+    "`qactl cli device add <name> --host <ip/sn>` (MCP: manage_device "
+    "operation=add)."
+)
+
+
+def connect_error_next_actions(exc: ConnectError) -> List[str]:
+    """next_actions for a :class:`ConnectError`.
+
+    A registry-miss hint when the device simply isn't registered, else the
+    generic reachability/credentials hint.
+    """
+    if isinstance(exc, UnknownDeviceError):
+        return [_REGISTRY_MISS_NEXT_ACTION]
+    return [_GENERIC_CONNECT_NEXT_ACTION]
+
+
 @dataclass
 class Transport:
     """A cached SSH connection (TCP + auth). Holds no CLI state itself."""
@@ -437,7 +468,9 @@ def _open_transport(
     if device:
         candidates = DEVICE_HOSTS.get(device)
         if not candidates:
-            raise ConnectError(f"Unknown device: {device}")
+            raise UnknownDeviceError(
+                f"'{device}' is not in the device registry."
+            )
     else:
         assert host
         candidates = [host]
@@ -1075,6 +1108,8 @@ __all__ = [
     "DEFAULT_CONNECT_TIMEOUT",
     "DEFAULT_CMD_TIMEOUT",
     "ConnectError",
+    "UnknownDeviceError",
+    "connect_error_next_actions",
     "Transport",
     "TransportRegistry",
     "Invocation",

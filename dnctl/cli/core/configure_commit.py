@@ -22,6 +22,8 @@ from typing import List, Optional, Sequence, Tuple
 from dnctl.cli.core.logging import log_invocation, log_request
 from dnctl.cli.core.session import (
     ConnectError,
+    UnknownDeviceError,
+    connect_error_next_actions,
     Invocation,
     StepCapture,
     TransportRegistry,
@@ -105,7 +107,11 @@ def drive_configure_commit(
     except ConnectError as exc:
         response.update(
             status="connect_error", errors=[str(exc)],
-            next_actions=[connect_next_action],
+            next_actions=(
+                connect_error_next_actions(exc)
+                if isinstance(exc, UnknownDeviceError)
+                else [connect_next_action]
+            ),
         )
         log_request(tool_name, request, response)
         return None

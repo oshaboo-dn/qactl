@@ -39,6 +39,7 @@ from dnctl.cli.core.session import (
     DEFAULT_PASSWORD,
     DEFAULT_USER,
     ConnectError,
+    connect_error_next_actions,
     run_sequence,
 )
 from dnctl.cli.core.shell_exec import run_linux_on_device
@@ -158,7 +159,7 @@ def _restart_execute(
         response.update(
             status="connect_error",
             errors=[str(exc)],
-            next_actions=["Verify device is reachable and credentials are correct."],
+            next_actions=connect_error_next_actions(exc),
         )
         log_request(tool, request, response)
         return response

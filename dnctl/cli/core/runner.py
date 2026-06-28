@@ -19,7 +19,13 @@ from dnctl.cli.core.envelope import make_response
 from dnctl.cli.core.errors import detect_error
 from dnctl.cli.core.logging import log_invocation, log_request
 from dnctl.cli.core.registry import transport_registry
-from dnctl.cli.core.session import ConnectError, run_ncm_cli, run_once, run_sequence
+from dnctl.cli.core.session import (
+    ConnectError,
+    connect_error_next_actions,
+    run_ncm_cli,
+    run_once,
+    run_sequence,
+)
 
 
 def _run_on_device(
@@ -53,7 +59,7 @@ def _run_on_device(
         response.update(
             status="connect_error",
             errors=[str(exc)],
-            next_actions=["Verify device is reachable and credentials are correct."],
+            next_actions=connect_error_next_actions(exc),
         )
         log_request(tool, request, response)
         return response
@@ -145,7 +151,7 @@ def _run_raw_on_device(
         response.update(
             status="connect_error",
             errors=[str(exc)],
-            next_actions=["Verify device is reachable and credentials are correct."],
+            next_actions=connect_error_next_actions(exc),
         )
         log_request(tool, request, response)
         return response
@@ -252,7 +258,7 @@ def _run_ncm_on_device(
         response.update(
             status="connect_error",
             errors=[str(exc)],
-            next_actions=["Verify device is reachable and credentials are correct."],
+            next_actions=connect_error_next_actions(exc),
         )
         log_request(tool, request, response)
         return response

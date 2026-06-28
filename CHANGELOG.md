@@ -32,6 +32,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (e.g. SW-279182) (#49).
 
 ### Fixed
+- Registry-backed device commands (`cli` / `interfaces` / config-commit
+  and their MCP equivalents) now distinguish "device not in the registry"
+  from "registered but unreachable". A registry miss returns a dedicated
+  `UnknownDeviceError` (`'<name>' is not in the device registry.`) and a
+  next-action hinting `--host <ip/sn>` or `qactl cli device add <name>
+  --host <ip/sn>` (MCP: `manage_device operation=add`), instead of the
+  misleading "Verify device is reachable and credentials are correct."
+  that sent users chasing phantom connectivity problems (#53).
+
 - `ixia rest get --method OPTIONS` no longer raises
   `TypeError: _execute() takes 3 positional arguments but 5 were given`
   — OPTIONS now dispatches through RestPy's generic `_send_recv` (the
