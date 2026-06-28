@@ -71,12 +71,21 @@ class JiraClient:
     # ---- status ------------------------------------------------------
 
     def get_issue_status(self, issue_key: str) -> dict[str, Any]:
-        """Return the issue's status object plus summary (one GET)."""
+        """Return the issue's status object plus summary (one GET).
+
+        Falls back to the JSM service-desk API on a 404: portal customers
+        lack Browse-Project permission on a service desk, so a JSM ticket
+        (e.g. ``HD-*``) is invisible to ``/rest/api/3/issue`` but readable
+        via ``/rest/servicedeskapi/request/{key}``. The fallback only fires
+        on 404, so a real auth error (401/403) still surfaces unchanged.
+        """
         r = self._session.get(
             self._url(f"/rest/api/3/issue/{quote(issue_key, safe='')}"),
             params={"fields": "status,summary"},
             timeout=self.timeout,
         )
+        if r.status_code == 404:
+            return self._get_servicedesk_status(issue_key)
         self._check(r, method="GET")
         fields = (r.json() or {}).get("fields") or {}
         status = fields.get("status") or {}
@@ -85,6 +94,36 @@ class JiraClient:
             "summary": fields.get("summary"),
             "status": status.get("name"),
             "status_category": ((status.get("statusCategory") or {}).get("name")),
+            "source": "jira",
+        }
+
+    def _get_servicedesk_status(self, issue_key: str) -> dict[str, Any]:
+        """Status + summary for a JSM service-desk request (portal ticket).
+
+        Used as the 404 fallback for :meth:`get_issue_status`. If the key
+        is genuinely missing this GET 404s too, so :meth:`_check` raises the
+        usual :class:`JiraError` and the not-found behaviour is preserved.
+        """
+        r = self._session.get(
+            self._url(
+                f"/rest/servicedeskapi/request/{quote(issue_key, safe='')}"
+            ),
+            timeout=self.timeout,
+        )
+        self._check(r, method="GET")
+        data = r.json() or {}
+        current = data.get("currentStatus") or {}
+        summary = None
+        for fv in data.get("requestFieldValues") or []:
+            if fv.get("fieldId") == "summary":
+                summary = fv.get("value")
+                break
+        return {
+            "issue_key": data.get("issueKey") or issue_key,
+            "summary": summary,
+            "status": current.get("status"),
+            "status_category": current.get("statusCategory"),
+            "source": "servicedesk",
         }
 
     # ---- watchers ----------------------------------------------------

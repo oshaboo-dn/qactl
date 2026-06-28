@@ -32,6 +32,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (e.g. SW-279182) (#49).
 
 ### Fixed
+- `jira status` (MCP: `jira_status`) now resolves JSM service-desk portal
+  tickets (e.g. `HD-*`). Portal customers lack Browse-Project permission on
+  a service desk, so `/rest/api/3/issue/{key}` 404s; on a 404 the client
+  now falls back to `/rest/servicedeskapi/request/{key}` and maps its
+  `currentStatus` / `summary`. A real auth error (401/403) still surfaces
+  unchanged, and a genuinely missing key still 404s. The result carries a
+  `source` field (`jira` | `servicedesk`) (#54).
+
 - Registry-backed device commands (`cli` / `interfaces` / config-commit
   and their MCP equivalents) now distinguish "device not in the registry"
   from "registered but unreachable". A registry miss returns a dedicated

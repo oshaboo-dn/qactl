@@ -114,7 +114,7 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
 
     leaf("whoami", help="resolve the token to a Jira user").set_defaults(func=_whoami)
 
-    p = leaf("status", help="issue status + summary")
+    p = leaf("status", help="issue status + summary (falls back to JSM service-desk on 404)")
     p.add_argument("issue_key")
     p.set_defaults(func=_status)
 
