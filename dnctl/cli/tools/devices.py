@@ -48,11 +48,11 @@ _MANAGE_DEVICE_FIX = (
 
 # The vendors the registry understands. ``dnos`` is the default and the
 # only one cli-mcp can SSH-probe (`show system` etc.); ``cisco`` /
-# ``juniper`` are registered manually — their CLIs speak a different
-# dialect, so we skip the DNOS probe and initial backup and just record
-# the operator-supplied vendor + SSH host on the entry.
+# ``juniper`` / ``arista`` are registered manually — their CLIs speak a
+# different dialect, so we skip the DNOS probe and initial backup and just
+# record the operator-supplied vendor + SSH host on the entry.
 DEFAULT_VENDOR = "dnos"
-SUPPORTED_VENDORS = ("dnos", "cisco", "juniper")
+SUPPORTED_VENDORS = ("dnos", "cisco", "juniper", "arista")
 
 _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
@@ -442,7 +442,7 @@ def _add_nondnos_device(
     fail: Any,
     key_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Register a non-DNOS device (``cisco`` / ``juniper``) by hand.
+    """Register a non-DNOS device (``cisco`` / ``juniper`` / ``arista``) by hand.
 
     These vendors don't speak the DNOS ``show system`` dialect, so there's
     nothing to SSH-probe for a role / mgmt0 and no DNOS backup to take. We
@@ -991,12 +991,13 @@ def manage_device(
             ``show lldp neighbors`` during the registration probe
             (default ``True``). Set ``False`` to skip the LLDP step.
         vendor: For ``add`` only — the device vendor, one of ``"dnos"``
-            (default), ``"cisco"``, ``"juniper"``. ``dnos`` runs the full
-            SSH probe (System Name → alias, role, mgmt0, LLDP location)
-            and initial backup. ``cisco`` / ``juniper`` skip all of that
-            (their CLIs aren't DNOS): no probe, no backup — the alias is
-            ``--alias`` or the ``sn``, and only the vendor + SSH host are
-            recorded. Ignored for the other operations.
+            (default), ``"cisco"``, ``"juniper"``, ``"arista"``. ``dnos``
+            runs the full SSH probe (System Name → alias, role, mgmt0, LLDP
+            location) and initial backup. ``cisco`` / ``juniper`` /
+            ``arista`` skip all of that (their CLIs aren't DNOS): no probe,
+            no backup — the alias is ``--alias`` or the ``sn``, and only
+            the vendor + SSH host are recorded. Ignored for the other
+            operations.
         user: SSH username used for the registration / refresh probe
             and the post-add backup. Default: ``dnroot``.
         password: SSH password. Default: ``dnroot``.

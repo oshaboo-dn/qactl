@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
+from dnctl.cli.vendors import arista as _arista
 from dnctl.cli.vendors import cisco as _cisco
 from dnctl.cli.vendors import dnos as _dnos
 from dnctl.cli.vendors import juniper as _juniper
@@ -22,6 +23,7 @@ _PLUGINS: Dict[str, VendorPlugin] = {
     "dnos": _dnos.PLUGIN,
     "cisco": _cisco.PLUGIN,
     "juniper": _juniper.PLUGIN,
+    "arista": _arista.PLUGIN,
 }
 
 

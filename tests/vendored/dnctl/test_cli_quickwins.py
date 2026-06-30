@@ -219,7 +219,7 @@ def test_manage_device_add_vendor_is_case_insensitive(monkeypatch):
 
 
 def test_manage_device_add_rejects_unknown_vendor():
-    r = devices.manage_device(operation="add", sn="1.2.3.4", vendor="arista")
+    r = devices.manage_device(operation="add", sn="1.2.3.4", vendor="nokia")
     assert r["status"] == "error"
     assert any("not supported" in e for e in r["errors"])
 

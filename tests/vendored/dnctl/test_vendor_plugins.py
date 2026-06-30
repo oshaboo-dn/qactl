@@ -30,7 +30,7 @@ def _isolated_state(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_supported_vendors():
-    assert set(V.supported_vendors()) == {"dnos", "cisco", "juniper"}
+    assert set(V.supported_vendors()) == {"dnos", "cisco", "juniper", "arista"}
 
 
 def test_dnos_supports_every_capability():
@@ -39,8 +39,8 @@ def test_dnos_supports_every_capability():
         assert dnos.supports(cap), cap
 
 
-def test_cisco_and_juniper_are_show_only():
-    for name in ("cisco", "juniper"):
+def test_cisco_juniper_arista_are_show_only():
+    for name in ("cisco", "juniper", "arista"):
         plugin = V.get_plugin(name)
         assert plugin.supports(V.CAP_SHOW)
         assert not plugin.supports(V.CAP_CONFIGURE)
@@ -51,12 +51,13 @@ def test_cisco_and_juniper_are_show_only():
 def test_unknown_or_missing_vendor_falls_back_to_dnos():
     assert V.get_plugin(None).name == "dnos"
     assert V.get_plugin("").name == "dnos"
-    assert V.get_plugin("arista").name == "dnos"
+    assert V.get_plugin("nokia").name == "dnos"
 
 
 def test_vendor_resolution_is_case_insensitive():
     assert V.get_plugin("Cisco").name == "cisco"
     assert V.get_plugin("JUNIPER").name == "juniper"
+    assert V.get_plugin("Arista").name == "arista"
 
 
 # --------------------------------------------------------------------------
@@ -92,6 +93,18 @@ def test_cisco_dialect_detects_ios_xr_prompt():
     ) == p
 
 
+def test_arista_dialect_detects_exec_and_config_prompts():
+    # Arista EOS shares the IOS-style prompt grammar.
+    arista = V.get_plugin("arista").dialect
+    assert shell.detect_prompt("arista410>", dialect=arista) == "arista410>"
+    assert shell.detect_prompt("arista410#", dialect=arista) == "arista410#"
+    # config-mode context is normalised away so matching survives it
+    assert shell.detect_prompt("arista410(config)#", dialect=arista) == "arista410#"
+    assert shell.detect_prompt(
+        "arista410(config-if)#", dialect=arista
+    ) == "arista410#"
+
+
 def test_juniper_dialect_detects_operational_prompt():
     juniper = V.get_plugin("juniper").dialect
     assert shell.detect_prompt("admin@mx204>", dialect=juniper) == "admin@mx204>"
@@ -108,6 +121,7 @@ def test_cisco_dialect_does_not_match_dnos_prompt_as_juniper():
 def test_page_off_commands_per_vendor():
     assert V.get_plugin("dnos").dialect.page_off == ("set cli-terminal-length 0",)
     assert V.get_plugin("cisco").dialect.page_off == ("terminal length 0",)
+    assert V.get_plugin("arista").dialect.page_off == ("terminal length 0",)
     assert "set cli screen-length 0" in V.get_plugin("juniper").dialect.page_off
 
 
@@ -127,8 +141,15 @@ def test_juniper_detects_error_prefix():
     assert is_err
 
 
+def test_arista_detects_invalid_input():
+    is_err, lines = V.get_plugin("arista").detect_error(
+        "% Invalid input detected at '^' marker."
+    )
+    assert is_err and lines
+
+
 def test_clean_output_is_not_an_error():
-    for name in ("dnos", "cisco", "juniper"):
+    for name in ("dnos", "cisco", "juniper", "arista"):
         is_err, _ = V.get_plugin(name).detect_error("interface ge-0/0/0 is up")
         assert not is_err
 
@@ -189,6 +210,28 @@ def test_clear_is_not_implemented_on_cisco_device():
     assert resp["status"] == "error"
     assert resp["unsupported"] is True
     assert resp["vendor"] == "cisco"
+    assert any("not implemented" in e for e in resp["errors"])
+
+
+def test_add_arista_device_is_inventory_only():
+    # arista registers like cisco/juniper: no DNOS probe/backup, just the
+    # operator-supplied vendor + SSH host recorded for inventory.
+    resp = devices_tool.manage_device(
+        operation="add", name="arista410", sn="100.64.15.151", vendor="arista"
+    )
+    assert resp["status"] == "ok"
+    assert resp["vendor"] == "arista"
+    assert V.vendor_for_device("arista410") == "arista"
+
+
+def test_clear_is_not_implemented_on_arista_device():
+    devices_tool.manage_device(
+        operation="add", name="arista410", sn="100.64.15.151", vendor="arista"
+    )
+    resp = clear_tool.clear(command="clear arp", device="arista410")
+    assert resp["status"] == "error"
+    assert resp["unsupported"] is True
+    assert resp["vendor"] == "arista"
     assert any("not implemented" in e for e in resp["errors"])
 
 
