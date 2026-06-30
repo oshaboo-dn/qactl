@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import json as _json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Callable, Optional
@@ -108,7 +109,9 @@ def _append_log(result: Any, c: Ctx) -> None:
     Tee-like evidence capture: writes a self-describing header
     (``# ===== <ISO-ts> | device=<dev> | cmd=<cmd> =====``) followed by
     the verbatim ``stdout`` (``result_xml`` for config reads) of the
-    envelope, in append mode so repeated calls accumulate. Captures the
+    envelope wrapped in a ```` ``` ```` code fence so it renders as a
+    block in markdown evidence files, in append mode so repeated calls
+    accumulate. Captures the
     raw text payload regardless of ``--json``. A logging failure never
     fails the command — it is downgraded to a warning on the envelope.
     """
@@ -129,9 +132,16 @@ def _append_log(result: Any, c: Ctx) -> None:
         command = result.get("command") or ""
 
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    chunk = f"# ===== {ts} | device={device} | cmd={command!r} =====\n{body}"
+    header = f"# ===== {ts} | device={device} | cmd={command!r} ====="
+    # Wrap the verbatim body in a code fence so it renders as a block in
+    # markdown evidence files. If the body itself contains a backtick run,
+    # use a longer fence so it can't terminate the block prematurely.
+    longest_run = max((len(m) for m in re.findall(r"`+", body)), default=0)
+    fence = "`" * max(3, longest_run + 1)
+    chunk = f"{header}\n\n{fence}\n{body}"
     if not chunk.endswith("\n"):
         chunk += "\n"
+    chunk += f"{fence}\n"
 
     try:
         p = Path(path)

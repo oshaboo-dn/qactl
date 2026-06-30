@@ -36,6 +36,31 @@ def test_append_writes_header_and_raw_stdout(tmp_path):
     assert text.startswith("# =====")
 
 
+def test_body_wrapped_in_code_fence(tmp_path):
+    f = tmp_path / "run.md"
+    O._append_log(
+        {"status": "ok", "command": "show bgp summary", "stdout": "raw line 1\nraw line 2\n"},
+        _ctx(f),
+    )
+    text = f.read_text()
+    # header, blank line, opening fence, verbatim body, closing fence
+    assert "=====\n\n```\nraw line 1\nraw line 2\n```\n" in text
+
+
+def test_body_without_trailing_newline_still_fenced(tmp_path):
+    f = tmp_path / "run.md"
+    O._append_log({"status": "ok", "command": "show", "stdout": "no-newline"}, _ctx(f))
+    assert f.read_text().endswith("```\nno-newline\n```\n")
+
+
+def test_backtick_run_in_body_uses_longer_fence(tmp_path):
+    f = tmp_path / "run.md"
+    O._append_log({"status": "ok", "command": "show", "stdout": "a\n```\nb\n"}, _ctx(f))
+    text = f.read_text()
+    # the inner ``` must not terminate the block: outer fence is longer
+    assert "````\na\n```\nb\n````\n" in text
+
+
 def test_repeated_calls_accumulate(tmp_path):
     f = tmp_path / "run.md"
     O._append_log({"status": "ok", "command": "show a", "stdout": "AAA\n"}, _ctx(f))
@@ -60,7 +85,7 @@ def test_noop_without_log_flag(tmp_path):
 def test_creates_missing_parent_dirs(tmp_path):
     f = tmp_path / "nested" / "deep" / "run.md"
     O._append_log({"status": "ok", "command": "show", "stdout": "y\n"}, _ctx(f))
-    assert f.read_text().endswith("y\n")
+    assert f.read_text().endswith("y\n```\n")
 
 
 def test_write_failure_degrades_to_warning(tmp_path):
