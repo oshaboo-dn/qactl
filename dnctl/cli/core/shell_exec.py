@@ -30,6 +30,134 @@ _SHELL_CONTAINER_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 _SHELL_NCM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]*$")
 
 
+# --- read-only classification (the ``shell`` --yes gate) -------------------
+#
+# ``run start shell`` exec is destructive by default, but the common use is
+# pure inspection (``grep``/``ps``/``cat /proc/...`` etc.). ``is_read_only``
+# lets the CLI drop the ``--yes`` gate for provably read-only command lines
+# while keeping it for everything else. It is deliberately FAIL-CLOSED: only
+# a line whose every segment starts with a known read-only binary — and
+# which carries no redirection, command substitution, or known write flag —
+# is read-only; anything unrecognised stays gated. Relaxing here can only
+# ever remove friction for safe commands, never open a new write path.
+
+# Binaries that cannot mutate device state in ordinary use. Mutating tools
+# (``rm``/``tee``/``dd``/``ip``/``sed -i``/``xargs`` ...) are intentionally
+# absent so they keep the gate.
+_READ_ONLY_BINS = frozenset({
+    "cat", "tac", "zcat", "ls", "grep", "egrep", "fgrep", "zgrep",
+    "head", "tail", "wc", "stat", "readlink", "realpath", "ldd",
+    "file", "echo", "printf", "pwd", "whoami", "id", "uname",
+    "hostname", "env", "printenv", "date", "uptime", "free", "df",
+    "du", "lsof", "netstat", "ss", "dmesg", "cut", "sort", "uniq",
+    "tr", "basename", "dirname", "true", "nproc", "lscpu", "lsmod",
+    "md5sum", "sha1sum", "sha256sum", "strings", "nm", "objdump",
+    "readelf", "xxd", "od", "hexdump", "ps", "find", "which", "type",
+    "vmstat", "iostat", "getconf", "column", "comm", "fold", "expand",
+})
+
+# ``find`` is read-only only without an action that writes or runs a command.
+_FIND_WRITE_FLAGS = frozenset({
+    "-delete", "-exec", "-execdir", "-ok", "-okdir",
+    "-fprint", "-fprintf", "-fls",
+})
+
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+# Shell operators that separate one command from the next.
+_SEGMENT_OPS = frozenset({";", "|", "&"})
+
+
+def _split_segments(raw: str) -> Tuple[Optional[list], bool]:
+    """Quote-aware split of a command line into command segments.
+
+    Walks the string tracking single/double quotes and backslash escapes,
+    so an operator *inside quotes* (e.g. the ``|`` in ``grep 'a|b'``) is not
+    mistaken for a pipe. Splits on unquoted ``;`` / ``|`` / ``&`` runs
+    (``&&`` / ``||`` / ``;;`` collapse to one boundary).
+
+    Returns ``(segments, has_write)``. ``has_write`` is ``True`` if an
+    unquoted output redirection (``>``), command substitution (``$(``), or
+    backtick appears. ``segments`` is ``None`` on an unbalanced quote — the
+    caller treats either as "not provably read-only".
+    """
+    segments: list = []
+    cur: list = []
+    has_write = False
+    quote: Optional[str] = None
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+        elif ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+            i += 1
+        elif ch == "\\":
+            cur.append(ch)
+            if i + 1 < n:
+                cur.append(raw[i + 1])
+                i += 2
+            else:
+                i += 1
+        elif ch == ">" or ch == "`":
+            has_write = True
+            i += 1
+        elif ch == "$" and i + 1 < n and raw[i + 1] == "(":
+            has_write = True
+            i += 2
+        elif ch in _SEGMENT_OPS:
+            segments.append("".join(cur))
+            cur = []
+            while i < n and raw[i] in _SEGMENT_OPS:
+                i += 1
+        else:
+            cur.append(ch)
+            i += 1
+    if quote is not None:
+        return None, True
+    segments.append("".join(cur))
+    return segments, has_write
+
+
+def is_read_only_shell(commands: Any) -> bool:
+    """True iff every command line is provably a read-only inspection.
+
+    Used by ``qactl cli shell`` to decide whether the destructive ``--yes``
+    gate applies. Fail-closed: returns ``False`` on anything it cannot prove
+    safe (unknown binary, redirection, command substitution, a writing
+    ``find`` action, an unbalanced quote), so an unrecognised line is treated
+    as a write.
+    """
+    if isinstance(commands, str):
+        commands = [commands]
+    saw_command = False
+    for raw in commands or []:
+        if not raw or not raw.strip():
+            continue
+        segments, has_write = _split_segments(raw)
+        if has_write or segments is None:
+            return False
+        for segment in segments:
+            tokens = segment.split()
+            # Step past leading ``VAR=value`` assignments to the real command.
+            i = 0
+            while i < len(tokens) and _ASSIGNMENT_RE.fullmatch(tokens[i]):
+                i += 1
+            if i >= len(tokens):
+                continue
+            base = tokens[i].rsplit("/", 1)[-1]  # /usr/bin/grep -> grep
+            if base not in _READ_ONLY_BINS:
+                return False
+            if base == "find" and any(t in _FIND_WRITE_FLAGS for t in tokens[i + 1:]):
+                return False
+            saw_command = True
+    return saw_command
+
+
 # ``run start shell`` grammar (crawled):
 #   run start shell                                → active NCC default container
 #   run start shell ncc <0|1|active>               → select NCC

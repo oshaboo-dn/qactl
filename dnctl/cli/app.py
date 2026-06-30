@@ -39,6 +39,7 @@ from dnctl.cli.core.events import DEFAULT_SEVERITY as _DEFAULT_SEVERITY
 from dnctl.cli.tools.monitor import monitor_reset, monitor_tick
 from dnctl.cli.tools.ping import run_ping_ipv4
 from dnctl.cli.tools.raw import run_raw
+from dnctl.cli.core.shell_exec import is_read_only_shell
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
 from dnctl.cli.tools.restart import (
     kill_9_ncc_process,
@@ -442,11 +443,18 @@ def shell(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
-    """Run one or a sequence of Linux commands via `run start shell`, then exit (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
-    if not confirm.ensure(f"run start shell on {c.device or c.host}", yes=c.yes, as_json=c.json):
-        raise typer.Exit(confirm.REFUSAL_EXIT)
+    """Run one or a sequence of Linux commands via `run start shell`, then exit.
+
+    Read-only inspection commands (grep / ps / cat / ldd / find ... — no
+    redirection, command substitution, or write flags) run WITHOUT --yes.
+    Anything that could write keeps the destructive gate and needs --yes.
+    """
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    if not is_read_only_shell(commands):
+        if not confirm.ensure(f"run start shell on {c.device or c.host}", yes=c.yes, as_json=c.json):
+            raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(
         O.call(run_shell, c, commands=commands, ncc=ncc, ncp=ncp, ncm=ncm,
                container=container, continue_on_error=continue_on_error),

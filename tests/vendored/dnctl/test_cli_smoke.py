@@ -44,9 +44,11 @@ def test_destructive_refuses_without_yes():
     assert any("--yes" in n for n in payload["next_actions"])
 
 
-def test_shell_refuses_without_yes():
-    # non-interactive (CliRunner has no TTY) → must refuse, exit 2.
-    r = runner.invoke(app, ["cli", "shell", "uptime", "-d", "sa", "--json"])
+def test_shell_write_refuses_without_yes():
+    # A mutating shell command stays gated: non-interactive (CliRunner has no
+    # TTY) → must refuse, exit 2. (#56: read-only commands run ungated; only
+    # writes keep the --yes gate.)
+    r = runner.invoke(app, ["cli", "shell", "rm -rf /tmp/x", "-d", "sa", "--json"])
     assert r.exit_code == 2
     payload = json.loads(r.stdout)
     assert payload["status"] == "error"
