@@ -28,6 +28,7 @@ from dnctl.cli.tools.discovery import (
 from dnctl.cli.tools.edit import (
     edit_config,
     edit_config_check,
+    edit_config_compare,
     load_override_factory_default,
     rollback_config,
 )
@@ -518,12 +519,17 @@ def clear(
 def config(
     statements: Annotated[List[str], typer.Argument(help="Configure-mode statements.")],
     check: Annotated[bool, typer.Option("--check", help="Dry-run via 'commit check' — no commit, not destructive (no --yes needed).")] = False,
+    compare: Annotated[bool, typer.Option("--compare", help="Show the candidate-vs-running diff ('show config compare') without committing — not destructive (no --yes needed).")] = False,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
-    """Apply configure-mode statements + commit; --check dry-runs instead (DESTRUCTIVE without --check — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    """Apply configure-mode statements + commit; --check dry-runs, --compare previews the diff (both non-destructive; apply needs --yes)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    if compare:
+        O.finish(O.call(edit_config_compare, c, statements=statements), c)
+        return
     if check:
         O.finish(O.call(edit_config_check, c, statements=statements), c)
         return

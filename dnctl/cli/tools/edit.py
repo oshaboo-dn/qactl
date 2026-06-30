@@ -536,6 +536,133 @@ def edit_config_check(
         return response
 
 
+_COMPARE_CMD = "show config compare"
+
+
+def _extract_compare_diff(steps: List[Any]) -> str:
+    """Return the cleaned ``show config compare`` step body from a transcript.
+
+    The diff lives in its own step's output (everything between the echoed
+    ``show config compare`` line and the next prompt). Falls back to an
+    empty string if the step never ran (e.g. a timeout earlier in the
+    sequence).
+    """
+    for step in steps:
+        if (step.command or "").strip() == _COMPARE_CMD:
+            return step.output.strip("\n")
+    return ""
+
+
+@requires(CAP_CONFIGURE)
+def edit_config_compare(
+    statements: List[str],
+    device: Optional[str] = None,
+    host: Optional[str] = None,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASSWORD,
+    timeout: int = 120,
+) -> Dict[str, Any]:
+    """Preview the candidate-vs-running diff for statements WITHOUT committing.
+
+    Same input shape as :func:`edit_config`, but instead of committing it
+    stages the statements, runs DNOS ``show config compare`` to capture the
+    candidate-vs-running delta, then drops the candidate. The running config
+    is never touched — non-destructive, no ``confirm``/``--yes`` gate.
+
+    Flow on one channel:
+
+        1. ``configure``
+        2. each entry of ``statements`` (in order, one per step)
+        3. ``show config compare`` — the candidate-vs-running diff
+        4. ``rollback 0`` — drop the staged statements from the shared
+           candidate so the next operator doesn't inherit them.
+
+    The raw diff text is returned both as ``stdout`` (so it prints in text
+    mode and is captured verbatim by ``--log`` evidence) and under the
+    ``compare`` key. An empty diff means the statements already match the
+    running config (no change).
+
+    Args:
+        statements: Same constraints as :func:`edit_config`.
+        device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
+        host: Raw hostname/IP (alternative to device).
+        user: SSH username on the device (default dnroot).
+        password: SSH password on the device (default dnroot).
+        timeout: Per-step timeout seconds.
+    """
+    err = validate_edit_statements(statements)
+    if err:
+        return error_response(
+            err, device=device, host=host,
+            next_action=EDIT_CONFIG_NEXT_ACTION,
+        )
+
+    body = [s.strip() for s in statements]
+    steps = [("configure", None)]
+    steps += [(s, None) for s in body]
+    steps += [(_COMPARE_CMD, None), ("rollback 0", None)]
+    command = " ; ".join(cmd for cmd, _ in steps)
+
+    request = {
+        "device": device, "host": host, "user": user,
+        "statements": list(statements),
+    }
+    response = make_response(device=device, host=host, command=command)
+
+    device_key = device or host or ""
+    with device_lock(device_key):
+        result = drive_configure_commit(
+            transport_registry, tool_name="edit_config_compare",
+            device=device, host=host, user=user, password=password,
+            timeout=timeout, steps=steps, command=command,
+            request=request, response=response,
+            # Need the full transcript to pull the compare step's body.
+            capture_all=True,
+        )
+        if result is None:
+            return response
+
+        if not result.hit_prompt:
+            response["status"] = "timeout"
+            response["errors"].append(
+                f"Timed out waiting for CLI prompt after {timeout}s."
+            )
+            response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+            log_request("edit_config_compare", request, response)
+            return response
+
+        # A statement the parser rejected never enters the candidate, so the
+        # diff would silently under-report. Surface those as a hard error —
+        # same trap edit_config_check guards against. The compare/rollback
+        # scaffolding lines are not user statements, so skip them.
+        body_set = set(body)
+        rejected = [
+            (cmd, lines)
+            for cmd, lines in detect_rejected_statements(result.steps)
+            if cmd in body_set
+        ]
+
+        diff = _extract_compare_diff(result.steps)
+        response["compare"] = diff
+        response["stdout"] = diff
+
+        if rejected:
+            response["status"] = "error"
+            response["errors"].append(
+                f"{len(rejected)} of {len(statements)} statement(s) were "
+                "rejected by the device parser and never entered the "
+                "candidate, so the diff under-reports. Fix the statement(s) "
+                "and re-run."
+            )
+            for stmt, lines in rejected:
+                response["errors"].append(f"rejected statement: {stmt}")
+                response["errors"].extend(lines[-2:])
+            response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+
+        log_request("edit_config_compare", request, response)
+        return response
+
+
 @requires(CAP_FACTORY_DEFAULT)
 def load_override_factory_default(
     device: Optional[str] = None,
@@ -674,5 +801,6 @@ def register(mcp) -> None:
     """Wire this module's tools onto a FastMCP instance."""
     mcp.tool()(edit_config)
     mcp.tool()(edit_config_check)
+    mcp.tool()(edit_config_compare)
     mcp.tool()(load_override_factory_default)
     mcp.tool()(rollback_config)
