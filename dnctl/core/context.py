@@ -24,3 +24,4 @@ class Ctx:
     no_verify: bool = True
     json: bool = False
     yes: bool = False
+    log: Optional[str] = None

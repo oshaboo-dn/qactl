@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import inspect
 import json as _json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any, Callable, Optional
 
 import typer
@@ -31,6 +33,7 @@ Timeout = Annotated[Optional[int], typer.Option("--timeout", help="Per-call time
 NoVerify = Annotated[bool, typer.Option("--no-verify/--verify", help="Skip TLS/host-key verification (default: on).")]
 Json = Annotated[bool, typer.Option("--json", help="Emit the raw structured payload (jq-friendly).")]
 Yes = Annotated[bool, typer.Option("--yes", "-y", help="Confirm a destructive op; required when non-interactive.")]
+Log = Annotated[Optional[str], typer.Option("--log", help="Append the full raw command output (with a timestamp/device/cmd header) to this file, in addition to normal output. Append mode — repeated calls accumulate; usable as standalone QA evidence.")]
 
 
 def build_ctx(
@@ -43,11 +46,12 @@ def build_ctx(
     no_verify: bool = True,
     as_json: bool = False,
     yes: bool = False,
+    log: Optional[str] = None,
 ) -> Ctx:
     return Ctx(
         device=device, host=host, user=user, password=password,
         port=port, timeout=timeout, no_verify=no_verify,
-        json=as_json, yes=yes,
+        json=as_json, yes=yes, log=log,
     )
 
 
@@ -98,8 +102,53 @@ def call(fn: Callable[..., Any], c: Ctx, **extra: Any) -> Any:
     return fn(**kwargs)
 
 
+def _append_log(result: Any, c: Ctx) -> None:
+    """Append the full raw device output to ``c.log`` (the ``--log`` file).
+
+    Tee-like evidence capture: writes a self-describing header
+    (``# ===== <ISO-ts> | device=<dev> | cmd=<cmd> =====``) followed by
+    the verbatim ``stdout`` (``result_xml`` for config reads) of the
+    envelope, in append mode so repeated calls accumulate. Captures the
+    raw text payload regardless of ``--json``. A logging failure never
+    fails the command — it is downgraded to a warning on the envelope.
+    """
+    path = c.log
+    if not path:
+        return
+
+    body = ""
+    device = c.device or c.host or ""
+    command = ""
+    if isinstance(result, dict):
+        for key in ("stdout", "result_xml"):
+            v = result.get(key)
+            if isinstance(v, str) and v:
+                body = v
+                break
+        device = result.get("device") or result.get("host") or device
+        command = result.get("command") or ""
+
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    chunk = f"# ===== {ts} | device={device} | cmd={command!r} =====\n{body}"
+    if not chunk.endswith("\n"):
+        chunk += "\n"
+
+    try:
+        p = Path(path)
+        if p.parent and not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(chunk)
+    except OSError as exc:
+        if isinstance(result, dict):
+            result.setdefault("warnings", []).append(
+                f"could not append --log to {path!r}: {exc}"
+            )
+
+
 def finish(result: Any, c: Ctx) -> None:
     """Render ``result`` per ``--json`` and exit with its status code."""
+    _append_log(result, c)
     raise typer.Exit(output.emit(result, as_json=c.json))
 
 

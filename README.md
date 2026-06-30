@@ -216,6 +216,7 @@ same behaviour, same `--json`/`--yes` contract:
 qactl setup ...                       # one-time device registry / creds (dnctl)
 qactl cli system -d sa --json
 qactl cli interfaces -d cl --json    # aggregated per-iface: state+desc+LLDP+IGP
+qactl cli show -d cl 'show bgp summary' --log run.md   # tee raw output → QA evidence
 cat filter.xml | qactl nc get -d sa - --json
 qactl gnmi get -d cl /interfaces --json
 qactl ixia session connect --host 10.0.0.5 --json   # IXIA_HOST also honoured

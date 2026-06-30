@@ -91,9 +91,10 @@ def show(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Run an operational `show` command."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     from dnctl.cli.tools.discovery import show as show_tool
     O.finish(O.call(show_tool, c, command=" ".join(cmd)), c)
 
@@ -104,9 +105,10 @@ def show_config_cmd(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Run a configuration `show config` command."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(show_config, c, command=" ".join(cmd)), c)
 
 
@@ -115,9 +117,10 @@ def system(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Topology + version snapshot (call first for system/restart tasks)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(show_system, c), c)
 
 
@@ -127,9 +130,10 @@ def interfaces(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Aggregated per-interface view: state + description + LLDP + IGP in one call."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(interfaces_tool, c, interface=interface), c)
 
 
@@ -201,9 +205,10 @@ def accounting(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Read the CLI accounting log."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(get_accounting, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
 
 
@@ -218,9 +223,10 @@ def netconf_accounting(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Read the NETCONF accounting log."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(get_netconf_accounting, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
 
 
@@ -235,9 +241,10 @@ def events(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Read the system events log."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(get_system_events, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
 
 
@@ -370,9 +377,10 @@ def traces(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """List trace files."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(list_traces, c, target=target, component=component, max_entries=max_entries,
                     include_rotated=not no_rotated, ncc=ncc, ncp=ncp, container=container), c)
 
@@ -396,9 +404,10 @@ def trace(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Read a trace file with filters."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(get_trace, c, name=name, target=target, tail_lines=tail, since=since, until=until,
                     grep=grep, grep_exclude=grep_exclude, grep_ignore_case=ignore_case, level=level,
                     live_only=live_only, count_only=count_only, ncc=ncc, ncp=ncp, container=container), c)
@@ -414,9 +423,10 @@ def ping(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
 ):
     """Run `ping` from the device."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
     O.finish(O.call(run_ping_ipv4, c, dest=dest, count=count, size=size, vrf=vrf, source_interface=source_interface), c)
 
 
