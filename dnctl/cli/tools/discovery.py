@@ -61,6 +61,22 @@ _CMD_HELP_MCP_TOOL_HINT = (
     "configure / clear / set / unset / cmd)."
 )
 
+# DNOS prints this marker (e.g. ``* A partial match is found ...``) when
+# ``cmd help`` cannot resolve the exact line and falls back to the nearest
+# documented ancestor doc. The fallback still exits 0 / status ok, so it is
+# easy to mistake for real leaf-level help. We surface it as ``partial_match``
+# plus a warning so callers can detect the fallback programmatically.
+_CMD_HELP_PARTIAL_MATCH_MARKER = "a partial match is found"
+
+_CMD_HELP_PARTIAL_MATCH_WARNING = (
+    "DNOS returned an ANCESTOR doc, not leaf help for this exact line — "
+    "`cmd help` only resolves the canonical command string with "
+    "`<placeholder>` tokens intact (exactly as `qactl cli search` emits "
+    "it). A concrete/instantiated path (real AS, IP, ...) falls back to the "
+    "nearest documented ancestor. Re-run with the canonical form, e.g. "
+    "`configure protocols bgp <bgp> neighbor <neighbor> ...`."
+)
+
 
 _CMD_SEARCH_NEXT_ACTIONS = {
     "show": SHOW_NEXT_ACTION,
@@ -179,10 +195,29 @@ def cmd_help(
 ) -> Dict[str, Any]:
     """Fetch CLI help for any full DNOS command (show / show config / request / run / ...).
 
-    ``command`` MUST be a real DNOS command — one of:
+    ``command`` MUST be the **canonical command string with ``<placeholder>``
+    tokens intact** — exactly as ``cmd_search`` emits it. Keep argument slots
+    as ``<bgp>`` / ``<neighbor>`` / ``<hold_time>``; do NOT instantiate them
+    with concrete values (real AS numbers, IPs, names). Example that resolves
+    leaf-level help::
+
+        configure protocols bgp <bgp> neighbor <neighbor> bfd strict-mode \\
+            hold-time <hold_time>
+
+    **A concrete/instantiated path silently falls back.** Passing
+    ``configure protocols bgp 100001 neighbor 1.1.1.2 bfd strict-mode
+    hold-time`` does NOT error — DNOS returns the nearest documented ANCESTOR
+    doc (here, the generic ``protocols bgp`` doc) with a small ``* A partial
+    match is found ...`` line, still at ``status: ok`` / exit 0. That looks
+    like a successful help response, so it's easy to wrongly conclude "this
+    command has no help". When this happens the envelope sets
+    ``partial_match: true`` and adds a warning — re-run with the canonical
+    ``<placeholder>`` form from ``cmd_search``.
+
+    ``command`` must be a real DNOS command — one of:
 
       - A line returned by ``cmd_search`` (preferred — guaranteed to
-        exist in this build's grammar).
+        exist in this build's grammar, with placeholders intact).
       - A line returned by ``cli_crawler`` / ``cli_config_crawler``.
       - A command you've actually seen DNOS accept on this device.
 
@@ -209,10 +244,11 @@ def cmd_help(
     round-trip.
 
     Args:
-        command: Full DNOS command line to look up (no outer quotes).
-            Must be a real DNOS command — typically a line returned by
-            ``cmd_search``. Made-up commands return "No additional
-            information"; there is no fuzzy match.
+        command: Canonical DNOS command line to look up (no outer quotes),
+            with ``<placeholder>`` tokens intact — typically a line returned
+            by ``cmd_search``. A concrete/instantiated path falls back to an
+            ancestor doc (``partial_match: true``); made-up commands return
+            "No additional information". There is no fuzzy match.
         device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
         host: Raw hostname/IP (alternative to device).
         user: SSH username (default dnroot).
@@ -247,10 +283,19 @@ def cmd_help(
         )
 
     wrapped = f'cmd help "{cleaned}"'
-    return _run_on_device(
+    response = _run_on_device(
         "cmd_help", device, host, user, password,
         wrapped, timeout, CMD_HELP_NEXT_ACTION,
     )
+
+    # Flag the silent fall-back to an ancestor doc (see module constants).
+    # Only meaningful on an otherwise-successful response.
+    if response.get("status") == "ok":
+        if _CMD_HELP_PARTIAL_MATCH_MARKER in (response.get("stdout") or "").lower():
+            response["partial_match"] = True
+            response.setdefault("warnings", []).append(_CMD_HELP_PARTIAL_MATCH_WARNING)
+            response.setdefault("next_actions", []).append(CMD_HELP_NEXT_ACTION)
+    return response
 
 
 @requires(CAP_SHOW)

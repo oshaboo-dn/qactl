@@ -154,12 +154,22 @@ def search(
 
 @app.command("help")
 def help_cmd(
-    command: Annotated[List[str], typer.Argument(help="DNOS command line to get help for.")],
+    command: Annotated[List[str], typer.Argument(
+        help="Canonical DNOS command line (keep <placeholder> tokens intact, "
+             "as 'cli search' emits them).")],
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
 ):
-    """Full help for a specific DNOS command line."""
+    """Full help for a specific DNOS command line.
+
+    COMMAND must be the canonical command string with <placeholder> tokens
+    intact — exactly as 'qactl cli search' emits it (e.g. 'configure protocols
+    bgp <bgp> neighbor <neighbor> bfd strict-mode hold-time <hold_time>'). A
+    concrete/instantiated path (real AS/IP) does NOT error: DNOS silently falls
+    back to the nearest ancestor doc (status ok, exit 0) — the envelope then
+    sets partial_match=true and warns. Re-run with the canonical form.
+    """
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     O.finish(O.call(cmd_help, c, command=" ".join(command)), c)
 
