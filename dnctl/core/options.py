@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import json as _json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,25 +104,17 @@ def call(fn: Callable[..., Any], c: Ctx, **extra: Any) -> Any:
     return fn(**kwargs)
 
 
-def _append_log(result: Any, c: Ctx) -> None:
-    """Append the full raw device output to ``c.log`` (the ``--log`` file).
+def _evidence_fields(result: Any, c: Ctx) -> tuple[str, str, str, str]:
+    """Pull the (device, command, status, body) we record for a call.
 
-    Tee-like evidence capture: writes a self-describing header
-    (``# ===== <ISO-ts> | device=<dev> | cmd=<cmd> =====``) followed by
-    the verbatim ``stdout`` (``result_xml`` for config reads) of the
-    envelope wrapped in a ```` ``` ```` code fence so it renders as a
-    block in markdown evidence files, in append mode so repeated calls
-    accumulate. Captures the
-    raw text payload regardless of ``--json``. A logging failure never
-    fails the command — it is downgraded to a warning on the envelope.
+    ``body`` is the verbatim raw text payload (``stdout``, or
+    ``result_xml`` for config reads) regardless of ``--json``; the rest
+    fall back to the context when the envelope omits them.
     """
-    path = c.log
-    if not path:
-        return
-
     body = ""
     device = c.device or c.host or ""
     command = ""
+    status = ""
     if isinstance(result, dict):
         for key in ("stdout", "result_xml"):
             v = result.get(key)
@@ -130,18 +123,56 @@ def _append_log(result: Any, c: Ctx) -> None:
                 break
         device = result.get("device") or result.get("host") or device
         command = result.get("command") or ""
+        status = str(result.get("status") or "")
+    return device, command, status, body
 
+
+def _evidence_chunk(device: str, command: str, body: str, status: str = "") -> str:
+    """A self-describing header + fenced verbatim body, append-ready.
+
+    Header: ``# ===== <ISO-ts> | device=<dev> | cmd=<cmd> [| status=..] =====``.
+    The body is wrapped in a code fence so it renders as a block in
+    markdown; a longer fence is used when the body itself contains a
+    backtick run, so it can't terminate the block prematurely.
+    """
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    header = f"# ===== {ts} | device={device} | cmd={command!r} ====="
-    # Wrap the verbatim body in a code fence so it renders as a block in
-    # markdown evidence files. If the body itself contains a backtick run,
-    # use a longer fence so it can't terminate the block prematurely.
+    header = f"# ===== {ts} | device={device} | cmd={command!r}"
+    if status:
+        header += f" | status={status}"
+    header += " ====="
     longest_run = max((len(m) for m in re.findall(r"`+", body)), default=0)
     fence = "`" * max(3, longest_run + 1)
     chunk = f"{header}\n\n{fence}\n{body}"
     if not chunk.endswith("\n"):
         chunk += "\n"
     chunk += f"{fence}\n"
+    return chunk
+
+
+def _safe_name(name: str) -> str:
+    """Filesystem-safe device key for the journal directory."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name) or "_"
+
+
+def _journal_dir() -> Path:
+    """Root of the always-on per-device journal (override with QACTL_DEVICE_LOG_DIR)."""
+    root = os.environ.get("QACTL_DEVICE_LOG_DIR") or str(Path.home() / ".qactl" / "device-logs")
+    return Path(root)
+
+
+def _append_log(result: Any, c: Ctx) -> None:
+    """Append the full raw device output to ``c.log`` (the ``--log`` file).
+
+    Tee-like evidence capture, in append mode so repeated calls
+    accumulate; usable as standalone QA evidence. A logging failure never
+    fails the command — it is downgraded to a warning on the envelope.
+    """
+    path = c.log
+    if not path:
+        return
+
+    device, command, _status, body = _evidence_fields(result, c)
+    chunk = _evidence_chunk(device, command, body)
 
     try:
         p = Path(path)
@@ -156,9 +187,36 @@ def _append_log(result: Any, c: Ctx) -> None:
             )
 
 
+def _append_journal(result: Any, c: Ctx) -> None:
+    """Always-on per-device daily journal: a full raw record of every
+    device command, keyed by device under ``<root>/<device>/<YYYY-MM-DD>.md``.
+
+    Unlike ``--log`` (opt-in, you pick the file), this captures *all*
+    work against a device without anyone remembering a flag. It only
+    fires when a device can be identified (skips local/registry-only
+    commands) and degrades silently on write failure — the journal must
+    never break a command.
+    """
+    device, command, status, body = _evidence_fields(result, c)
+    if not device:
+        return
+
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    chunk = _evidence_chunk(device, command, body, status=status)
+    try:
+        dir_ = _journal_dir() / _safe_name(device)
+        dir_.mkdir(parents=True, exist_ok=True)
+        with (dir_ / f"{day}.md").open("a", encoding="utf-8") as fh:
+            fh.write(chunk)
+    except OSError:
+        # The journal is best-effort; never let it fail a command.
+        pass
+
+
 def finish(result: Any, c: Ctx) -> None:
     """Render ``result`` per ``--json`` and exit with its status code."""
     _append_log(result, c)
+    _append_journal(result, c)
     raise typer.Exit(output.emit(result, as_json=c.json))
 
 

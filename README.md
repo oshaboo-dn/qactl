@@ -229,6 +229,22 @@ Device credentials/registry come from `qactl setup` (dnctl's resolver);
 Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
 `qactl <group> --help` for the full surface.
 
+### Per-device daily journal
+
+Every `qactl cli`/`nc`/`gnmi`/`rc` command keyed to a device also tees its
+full raw output — with a `ts | device | cmd | status` header — to an
+always-on journal, no flag needed:
+
+```
+~/.qactl/device-logs/<device>/<YYYY-MM-DD>.md   # override root with QACTL_DEVICE_LOG_DIR
+```
+
+So a day's work on any device is captured automatically (`--log FILE`
+remains for hand-picking a single evidence file). The journal is
+best-effort: a write failure degrades silently and never breaks a command.
+It's the CLI front that journals — the CLI is the primary, human-and-agent
+surface; the MCP front keeps its own per-group request log.
+
 ## Layout
 
 ```

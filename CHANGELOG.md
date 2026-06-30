@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Always-on per-device daily journal.** Every `qactl cli`/`nc`/`gnmi`/`rc`
+  command keyed to a device now tees its full raw output — under a
+  `ts | device | cmd | status` header, fenced for markdown — to
+  `~/.qactl/device-logs/<device>/<YYYY-MM-DD>.md` (root overridable with
+  `QACTL_DEVICE_LOG_DIR`), with no flag required. A whole day's work on a
+  device is captured automatically; `--log FILE` remains for hand-picking a
+  single evidence file. Best-effort: a write failure degrades silently and
+  never breaks a command. CLI-only (the primary front); the MCP server
+  keeps its own per-group request log.
 - Slack notify now supports a self-contained **webhook** via
   `QACTL_SLACK_WEBHOOK_URL` (falling back to `DIVA_SLACK_WEBHOOK_URL` so a
   single shared webhook serves both tools). Works with a classic incoming
