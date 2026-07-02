@@ -5,7 +5,10 @@ IxNetwork traffic, Jira, Confluence, Jenkins — behind one consistent contract,
 exposed over two interchangeable fronts that drive the *same* shared tool layer:
 
 - a **CLI**: `qactl <group> <cmd> --json`
-- a **stdio MCP server**: `qactl mcp <group>`
+- a **stdio MCP server**: `qactl mcp <group>` — **FROZEN** (2026-07): the CLI
+  is the only exposed front for now. Don't extend or fix `qactl/mcp/`; don't
+  delete it either. Keep the tool layer front-agnostic so MCP can return as a
+  frontend-only change later.
 
 See [README.md](README.md) for the full surface. This file is the working
 contract; keep it short and follow it.
