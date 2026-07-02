@@ -268,7 +268,10 @@ Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
 Transient SSH connect failures (timeout / banner / reset — e.g. DNOS sshd
 rate-limiting back-to-back calls) are retried automatically: 3 attempts,
 2s/5s backoff. Tune with `QACTL_CONNECT_RETRIES` (total attempts, `1` =
-fail fast) and `QACTL_CONNECT_BACKOFF` (comma-separated seconds).
+fail fast) and `QACTL_CONNECT_BACKOFF` (comma-separated seconds). Every
+retry that fires is tallied (JSONL) in
+`~/.local/state/dnctl/cli/connect-retries.jsonl` — `outcome` is
+`recovered` (a retry saved the call) or `gave_up` (attempts exhausted).
 
 ### Per-device daily journal
 

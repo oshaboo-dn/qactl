@@ -296,6 +296,47 @@ def _connect_backoff() -> Tuple[float, ...]:
     return vals
 
 
+def _connect_retry_log_path() -> str:
+    """JSONL tally of connect retries — how often sshd rate-limiting bites.
+
+    Lives next to the request logs (``<state>/cli/connect-retries.jsonl``)
+    so `jq` over one file answers "how often did retry save us / give up".
+    """
+    from dnctl.core import paths as _paths
+
+    return os.path.join(str(_paths.state_dir("cli")), "connect-retries.jsonl")
+
+
+def _log_connect_retry(
+    device: Optional[str],
+    host: Optional[str],
+    attempts: int,
+    outcome: str,
+    error: str,
+) -> None:
+    """Best-effort append; a logging failure must never break a connect."""
+    try:
+        import json
+        from datetime import datetime, timezone
+
+        path = _connect_retry_log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        line = json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "device": device,
+                "host": host,
+                "attempts": attempts,
+                "outcome": outcome,  # "recovered" | "gave_up"
+                "error": error,
+            }
+        )
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+
+
 def _is_transient_connect_error(exc: Exception) -> bool:
     """True when a connect failure is worth retrying.
 
@@ -558,7 +599,17 @@ def _open_transport(
             except Exception as exc:
                 last_err = exc
                 transient = transient or _is_transient_connect_error(exc)
-        if client is not None or not transient or attempt == attempts - 1:
+        if client is not None:
+            if attempt > 0:
+                _log_connect_retry(
+                    device, host, attempt + 1, "recovered", str(last_err)
+                )
+            break
+        if not transient or attempt == attempts - 1:
+            if transient:
+                _log_connect_retry(
+                    device, host, attempts, "gave_up", str(last_err)
+                )
             break
         time.sleep(backoff[min(attempt, len(backoff) - 1)])
     if client is None:

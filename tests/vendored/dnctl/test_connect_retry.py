@@ -18,6 +18,14 @@ class FakeClient:
     """Stand-in for a connected paramiko.SSHClient."""
 
 
+@pytest.fixture(autouse=True)
+def retry_log(monkeypatch, tmp_path):
+    """Keep the retry tally out of the user's real state dir."""
+    path = tmp_path / "connect-retries.jsonl"
+    monkeypatch.setattr(sess, "_connect_retry_log_path", lambda: str(path))
+    return path
+
+
 @pytest.fixture
 def no_sleep(monkeypatch):
     sleeps = []
@@ -161,3 +169,37 @@ def test_unknown_device_never_retries(no_sleep):
 )
 def test_transient_classification(exc, transient):
     assert sess._is_transient_connect_error(exc) is transient
+
+
+def test_recovered_connect_is_tallied(monkeypatch, no_sleep, retry_log):
+    import json
+
+    _script(monkeypatch, [socket.timeout("timed out"), FakeClient()])
+    sess._open_transport(
+        device=None, host="10.0.0.1", user="u", password="p", connect_timeout=1
+    )
+    rec = json.loads(retry_log.read_text().strip())
+    assert rec["outcome"] == "recovered"
+    assert rec["attempts"] == 2
+    assert rec["host"] == "10.0.0.1"
+
+
+def test_exhausted_connect_is_tallied(monkeypatch, no_sleep, retry_log):
+    import json
+
+    _script(monkeypatch, [socket.timeout("timed out")] * 3)
+    with pytest.raises(sess.ConnectError):
+        sess._open_transport(
+            device=None, host="10.0.0.1", user="u", password="p", connect_timeout=1
+        )
+    rec = json.loads(retry_log.read_text().strip())
+    assert rec["outcome"] == "gave_up"
+    assert rec["attempts"] == 3
+
+
+def test_first_try_success_not_tallied(monkeypatch, no_sleep, retry_log):
+    _script(monkeypatch, [FakeClient()])
+    sess._open_transport(
+        device=None, host="10.0.0.1", user="u", password="p", connect_timeout=1
+    )
+    assert not retry_log.exists()
