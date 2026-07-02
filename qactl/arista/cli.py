@@ -1,4 +1,4 @@
-"""``qactl arista ...`` — read-only Arista EOS queries over eAPI.
+"""``qactl arista ...`` — read-only Arista EOS queries over SSH.
 
 Thin argparse front over :mod:`qactl.arista.tools` (the same envelope
 layer the stdio MCP server exposes). All commands are read-only shows,
@@ -21,7 +21,6 @@ def _creds(args: argparse.Namespace) -> Dict[str, Any]:
         "user": args.user,
         "password": args.password,
         "port": args.port,
-        "http": args.http,
     }
 
 
@@ -48,18 +47,15 @@ def _version(args):
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("host", help="Arista switch hostname or IP (e.g. arista410)")
-    g = p.add_argument_group("eapi credentials (default: environment)")
+    g = p.add_argument_group("ssh credentials (default: environment)")
     g.add_argument("--user", default=None, help="override $ARISTA_USER (default admin)")
     g.add_argument("--password", default=None, help="override $ARISTA_PASSWORD")
-    g.add_argument("--port", type=int, default=None,
-                   help="eAPI port (default 443, or 80 with --http)")
-    g.add_argument("--http", action="store_true",
-                   help="plain-HTTP eAPI instead of HTTPS")
+    g.add_argument("--port", type=int, default=None, help="SSH port (default 22)")
 
 
 def register(subparsers, parent: argparse.ArgumentParser) -> None:
     grp = subparsers.add_parser("arista",
-                                help="Arista EOS switches (read-only, over eAPI)")
+                                help="Arista EOS switches (read-only, over SSH)")
     sub = grp.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("interfaces", parents=[parent],

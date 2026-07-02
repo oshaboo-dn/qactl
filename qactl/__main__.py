@@ -57,7 +57,7 @@ Atlassian + CI (native):
   confluence    Confluence comments / attachments
   jenkins       Jenkins builds: trigger / inspect / stop
 
-Arista EOS switches (native, read-only over eAPI):
+Arista EOS switches (native, read-only over SSH):
   arista        interfaces / lldp / config / version
 
 MCP front (same tools, over stdio):

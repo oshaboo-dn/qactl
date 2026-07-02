@@ -5,7 +5,7 @@ A single executable that unifies every surface a QA engineer drives:
     cli / nc / gnmi / rc / setup   DNOS devices   (vendored dnctl)
     ixia                           IxNetwork      (vendored ixiactl)
     jira / confluence / jenkins    Atlassian/CI   (native)
-    arista                         Arista EOS     (native, read-only eAPI)
+    arista                         Arista EOS     (native, read-only SSH)
 
 Two fronts over one shared tool layer: the shell-driven CLI
 (``--json`` everywhere, real exit codes, stdin payloads, ``--yes``

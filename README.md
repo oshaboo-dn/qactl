@@ -18,7 +18,7 @@ executable.
 | `jira` | Jira watchers / attachments / comments / transitions / status | native |
 | `confluence` | Confluence comments / attachments | native |
 | `jenkins` | Jenkins builds: trigger / inspect / stop | native |
-| `arista` | Arista EOS switches: interfaces / lldp / config / version (read-only, eAPI) | native |
+| `arista` | Arista EOS switches: interfaces / lldp / config / version (read-only, SSH) | native |
 
 `qactl` is a thin dispatcher: the `cli/nc/gnmi/rc/setup` and `ixia`
 groups delegate to the bundled `dnctl` / `ixiactl` entrypoints unchanged
@@ -199,10 +199,11 @@ Cheetah trigger knobs map to Jenkins parameters: `--sanitizer`
 
 ### `qactl arista`
 
-Read-only queries against Arista EOS switches over eAPI (JSON-RPC over
-HTTPS; enable with `management api http-commands` on the switch). Host is
-positional; credentials default to `$ARISTA_USER` / `$ARISTA_PASSWORD`
-(`--port` / `--http` select the eAPI endpoint).
+Read-only queries against Arista EOS switches over SSH: each command is a
+non-interactive `enable\n<show ...> | json`, which returns the same JSON
+payloads eAPI would — and works on the old lab images (EOS 4.16-era) where
+eAPI isn't enabled. Host is positional; credentials default to
+`$ARISTA_USER` / `$ARISTA_PASSWORD` (`--port` overrides SSH port 22).
 
 | Command | Description | Gate |
 |---|---|---|
@@ -287,7 +288,7 @@ qactl/
     jira/        client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jira ...
     confluence/  client.py (REST) + tools.py (envelopes) + cli.py  -> qactl confluence ...
     jenkins/     client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jenkins ...
-    arista/      client.py (eAPI) + tools.py (envelopes) + cli.py  -> qactl arista ...
+    arista/      client.py (SSH)  + tools.py (envelopes) + cli.py  -> qactl arista ...
     mcp/         registry.py (group->tool surface map) + server.py -> qactl mcp ...
     __main__.py  dispatcher: native groups, mcp front, delegation to dnctl / ixiactl
   dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup (+ MCP tools)

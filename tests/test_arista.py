@@ -1,7 +1,7 @@
-"""Arista EOS group (#62): parser wiring, envelope shapes, eAPI plumbing.
+"""Arista EOS group (#62): parser wiring, envelope shapes, SSH plumbing.
 
 No live switch anywhere: tool-layer tests monkeypatch ``AristaClient``
-with a canned fake; client-layer tests monkeypatch the HTTP session.
+with a canned fake; client-layer tests monkeypatch the SSH exec.
 """
 
 from __future__ import annotations
@@ -47,6 +47,9 @@ class _FakeClient:
             raise self.error
         return [self.results[c] for c in cmds]
 
+    def close(self):
+        self.closed = True
+
 
 def _patch_client(fake):
     return mock.patch.object(tools.AristaClient, "connect",
@@ -72,31 +75,26 @@ class ParserTests(unittest.TestCase):
     def test_lldp_and_version_and_creds_flags(self):
         ns = self.parser.parse_args([
             "arista", "lldp", "10.0.0.5", "--user", "qa", "--password", "x",
-            "--port", "8443",
+            "--port", "2222",
         ])
-        self.assertEqual((ns.user, ns.password, ns.port), ("qa", "x", 8443))
-        ns = self.parser.parse_args(["arista", "version", "arista410", "--http"])
-        self.assertTrue(ns.http)
+        self.assertEqual((ns.user, ns.password, ns.port), ("qa", "x", 2222))
+        ns = self.parser.parse_args(["arista", "version", "arista410"])
+        self.assertEqual(ns.host, "arista410")
 
 
 class ConfigTests(unittest.TestCase):
     def test_defaults(self):
         with mock.patch.dict("os.environ", {}, clear=True):
             cfg = AristaConfig.resolve("arista410")
-        self.assertEqual((cfg.user, cfg.password, cfg.port), ("admin", "", 443))
-        self.assertEqual(cfg.url, "https://arista410:443/command-api")
+        self.assertEqual((cfg.user, cfg.password, cfg.port), ("admin", "", 22))
 
     def test_env_and_overrides(self):
         with mock.patch.dict("os.environ",
                              {"ARISTA_USER": "qa", "ARISTA_PASSWORD": "pw"}):
             cfg = AristaConfig.resolve("arista410")
             self.assertEqual((cfg.user, cfg.password), ("qa", "pw"))
-            cfg = AristaConfig.resolve("arista410", user="other", password="")
-            self.assertEqual((cfg.user, cfg.password), ("other", ""))
-
-    def test_http_default_port(self):
-        cfg = AristaConfig.resolve("h", http=True)
-        self.assertEqual(cfg.url, "http://h:80/command-api")
+            cfg = AristaConfig.resolve("arista410", user="other", password="", port=2222)
+            self.assertEqual((cfg.user, cfg.password, cfg.port), ("other", "", 2222))
 
     def test_empty_host_rejected(self):
         with self.assertRaises(CredentialError):
@@ -162,42 +160,48 @@ class ToolEnvelopeTests(unittest.TestCase):
 
 
 class ClientTests(unittest.TestCase):
-    def _client(self, response):
+    """Exercise run_cmds' SSH plumbing by faking the exec layer."""
+
+    def _client(self, replies):
         c = AristaClient(AristaConfig.resolve("arista410", user="a", password="b"))
-        c._session = mock.Mock()
-        c._session.post.return_value = response
+        c.executed = []
+
+        def fake_exec(command):
+            c.executed.append(command)
+            return replies.pop(0)
+        c._exec = fake_exec
         return c
 
-    @staticmethod
-    def _response(status_code=200, payload=None):
-        r = mock.Mock()
-        r.status_code = status_code
-        r.json.return_value = payload or {}
-        r.raise_for_status = mock.Mock()
-        return r
-
-    def test_run_cmds_posts_jsonrpc_and_unwraps_result(self):
-        c = self._client(self._response(payload={"jsonrpc": "2.0", "id": "qactl",
-                                                 "result": [{"ok": 1}]}))
+    def test_json_cmds_pipe_json_and_prefix_enable(self):
+        c = self._client([(0, '{"modelName": "DCS-7260CX-64-F"}')])
         out = c.run_cmds(["show version"])
-        self.assertEqual(out, [{"ok": 1}])
-        body = c._session.post.call_args.kwargs["json"]
-        self.assertEqual(body["method"], "runCmds")
-        self.assertEqual(body["params"]["cmds"], ["show version"])
-        self.assertEqual(body["params"]["format"], "json")
+        self.assertEqual(out, [{"modelName": "DCS-7260CX-64-F"}])
+        self.assertEqual(c.executed, ["enable\nshow version | json"])
 
-    def test_401_raises_credential_hint(self):
-        c = self._client(self._response(status_code=401))
-        with self.assertRaisesRegex(AristaError, "ARISTA_USER"):
-            c.run_cmds(["show version"])
+    def test_text_cmds_skip_json_pipe(self):
+        c = self._client([(0, "interface Ethernet2/1\n")])
+        out = c.run_cmds(["show running-config interfaces Ethernet2/1"], fmt="text")
+        self.assertEqual(out, [{"output": "interface Ethernet2/1\n"}])
+        self.assertEqual(
+            c.executed, ["enable\nshow running-config interfaces Ethernet2/1"])
 
-    def test_jsonrpc_error_surfaces_cli_errors(self):
-        c = self._client(self._response(payload={"error": {
-            "code": 1002, "message": "CLI command 1 failed",
-            "data": [{"errors": ["Invalid input"]}],
-        }}))
+    def test_cli_rejection_surfaces_percent_line(self):
+        c = self._client([(1, "\n> show bogus\n% Invalid input at line 1\n")])
         with self.assertRaisesRegex(AristaError, "Invalid input"):
             c.run_cmds(["show bogus"])
+
+    def test_unparseable_json_raises(self):
+        c = self._client([(0, "not json at all")])
+        with self.assertRaisesRegex(AristaError, "no parseable JSON"):
+            c.run_cmds(["show version"])
+
+    def test_auth_failure_hints_env_vars(self):
+        import paramiko
+        c = AristaClient(AristaConfig.resolve("arista410", user="a", password="b"))
+        with mock.patch("paramiko.SSHClient") as cls:
+            cls.return_value.connect.side_effect = paramiko.AuthenticationException()
+            with self.assertRaisesRegex(AristaError, "ARISTA_USER"):
+                c.run_cmds(["show version"])
 
 
 class McpSurfaceTests(unittest.TestCase):

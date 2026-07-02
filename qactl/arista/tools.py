@@ -30,11 +30,11 @@ def _natural_key(name: str) -> List[Any]:
 
 def _client(
     kind: str, host: str, *, timeout: float = 30.0, user: Optional[str] = None,
-    password: Optional[str] = None, port: Optional[int] = None, http: bool = False,
+    password: Optional[str] = None, port: Optional[int] = None,
 ) -> Tuple[Optional[AristaClient], Optional[dict]]:
     try:
         return AristaClient.connect(
-            host, timeout=timeout, user=user, password=password, port=port, http=http,
+            host, timeout=timeout, user=user, password=password, port=port,
         ), None
     except CredentialError as e:
         return None, error_envelope(str(e), kind=kind, status="bad_argument")
@@ -43,10 +43,10 @@ def _client(
 def _run(
     kind: str, host: str, fn: Callable[[AristaClient], dict], *, timeout: float = 30.0,
     user: Optional[str] = None, password: Optional[str] = None,
-    port: Optional[int] = None, http: bool = False,
+    port: Optional[int] = None,
 ) -> dict:
     client, err = _client(kind, host, timeout=timeout, user=user,
-                          password=password, port=port, http=http)
+                          password=password, port=port)
     if err is not None:
         return err
     try:
@@ -55,11 +55,13 @@ def _run(
         return error_envelope(str(e), kind=kind)
     except Exception as e:  # noqa: BLE001
         return error_envelope(f"{kind} failed: {e}", kind=kind)
+    finally:
+        client.close()
 
 
 def arista_interfaces(
     host: str, *, timeout: float = 30.0, user: Optional[str] = None,
-    password: Optional[str] = None, port: Optional[int] = None, http: bool = False,
+    password: Optional[str] = None, port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Interface status on an Arista switch, with free-port candidates.
 
@@ -87,12 +89,12 @@ def arista_interfaces(
             ] if free else [],
         )
     return _run("arista_interfaces", host, fn, timeout=timeout, user=user,
-                password=password, port=port, http=http)
+                password=password, port=port)
 
 
 def arista_lldp(
     host: str, *, timeout: float = 30.0, user: Optional[str] = None,
-    password: Optional[str] = None, port: Optional[int] = None, http: bool = False,
+    password: Optional[str] = None, port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """LLDP neighbors on an Arista switch (maps local ports to fabric/DUT peers)."""
     def fn(c: AristaClient) -> dict:
@@ -102,18 +104,18 @@ def arista_lldp(
             "host": host, "count": len(neighbors), "neighbors": neighbors,
         })
     return _run("arista_lldp", host, fn, timeout=timeout, user=user,
-                password=password, port=port, http=http)
+                password=password, port=port)
 
 
 def arista_config(
     host: str, interfaces: Optional[List[str]] = None, *, timeout: float = 30.0,
     user: Optional[str] = None, password: Optional[str] = None,
-    port: Optional[int] = None, http: bool = False,
+    port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Running config — whole box, or per-interface sections.
 
-    ``show running-config`` has no JSON renderer, so this uses eAPI's
-    text format; the result carries the raw CLI text.
+    ``show running-config`` has no JSON renderer, so this asks for raw
+    CLI text; the result carries it verbatim.
     """
     def fn(c: AristaClient) -> dict:
         if interfaces:
@@ -128,19 +130,19 @@ def arista_config(
             "host": host, "text": data.get("output") or "",
         })
     return _run("arista_config", host, fn, timeout=timeout, user=user,
-                password=password, port=port, http=http)
+                password=password, port=port)
 
 
 def arista_version(
     host: str, *, timeout: float = 30.0, user: Optional[str] = None,
-    password: Optional[str] = None, port: Optional[int] = None, http: bool = False,
+    password: Optional[str] = None, port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """``show version`` — model, EOS version, serial; the connectivity sanity check."""
     def fn(c: AristaClient) -> dict:
         (data,) = c.run_cmds(["show version"])
         return ok_envelope(kind="arista_version", result={"host": host, **data})
     return _run("arista_version", host, fn, timeout=timeout, user=user,
-                password=password, port=port, http=http)
+                password=password, port=port)
 
 
 def register(mcp) -> None:
