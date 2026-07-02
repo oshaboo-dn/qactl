@@ -28,7 +28,10 @@ from dnctl.cli.core.commit_sequence import parse_commit_output
 from dnctl.cli.core.configure_commit import drive_configure_commit
 from dnctl.cli.core.edit_helpers import (
     abort_shared_candidate,
+    batch_abort_errors,
     build_edit_config_commands,
+    commit_was_attempted,
+    stop_on_rejected_statement,
     validate_edit_log,
     validate_edit_statements,
 )
@@ -372,6 +375,11 @@ def _deploy_rendered_statements(
             timeout=timeout, steps=steps, command=display_command,
             request=request, response=response,
             capture_all=not deploy,
+            # All-or-nothing on the live push (issue #64): a rejected
+            # statement stops the sequence before 'commit and-exit'. The
+            # dry-run ends in 'rollback 0' and never applies, so it keeps
+            # running to report every rejection at once.
+            stop_predicate=stop_on_rejected_statement if deploy else None,
         )
         if result is None:
             return response
@@ -394,6 +402,38 @@ def _deploy_rendered_statements(
                     response["warnings"].append(
                         "candidate-abort cleanup: ran 'configure ; rollback 0' "
                         "to clear the shared candidate."
+                    )
+            log_request(tool_name, request, response)
+            return response
+
+        # Empty steps ⇒ no per-step transcript; only a captured transcript
+        # missing its commit step proves the stop_predicate cut the batch.
+        if deploy and result.steps and not commit_was_attempted(result.steps):
+            # The stop_predicate cut the batch at a rejected statement, so
+            # 'commit and-exit' was never sent — nothing changed on the
+            # device. Clear the statements staged before the rejection
+            # from the shared candidate.
+            response["status"] = "error"
+            response["commit"] = {
+                "status": "aborted", "user": None, "timestamp": None,
+            }
+            response["errors"].extend(
+                batch_abort_errors(result.steps, len(statements))
+            )
+            response["next_actions"].append(next_action)
+            if abort_on_failure:
+                abort_err = abort_shared_candidate(
+                    device, host, user, password, timeout,
+                )
+                if abort_err:
+                    response["warnings"].append(
+                        f"candidate-abort cleanup failed: {abort_err}"
+                    )
+                else:
+                    response["warnings"].append(
+                        "candidate-abort cleanup: ran 'configure ; "
+                        "rollback 0' to clear the statements staged before "
+                        "the rejection."
                     )
             log_request(tool_name, request, response)
             return response

@@ -174,6 +174,67 @@ def detect_rejected_statements(
     return rejected
 
 
+def stop_on_rejected_statement(step: StepCapture) -> bool:
+    """``stop_predicate`` for the live-deploy configure sequence (issue #64).
+
+    Trips on the first step whose output trips :func:`detect_error` — the
+    statement steps AND the interleaved ``top`` resets / ``configure``
+    scaffold, where a prompt-pacing race can land the rejection echo — so
+    the driver never sends ``commit and-exit`` on a batch that already
+    lost a statement. The commit step itself is exempt: its errors belong
+    to ``parse_commit_output``.
+    """
+    cmd = (step.command or "").strip()
+    if not cmd or cmd.startswith("commit"):
+        return False
+    return detect_error(step.output)[0]
+
+
+def commit_was_attempted(steps: Sequence[StepCapture]) -> bool:
+    """True if the executed sequence reached its commit step.
+
+    ``False`` means :func:`stop_on_rejected_statement` (or a timeout) cut
+    the batch short before the commit line was sent, so the running
+    config is untouched — the all-or-nothing guarantee of issue #64.
+    """
+    return any((s.command or "").strip().startswith("commit") for s in steps)
+
+
+def batch_abort_errors(
+    steps: Sequence[StepCapture], statements_total: int,
+) -> List[str]:
+    """Error lines for a batch aborted before its commit (issue #64).
+
+    Names the rejected statement(s); when the rejection echo landed in a
+    scaffold step (``top`` / ``configure``) instead, falls back to the
+    last executed step — the predicate stops the sequence right there.
+    """
+    sent = 0
+    for s in steps:
+        cmd = (s.command or "").strip()
+        if cmd and cmd not in _SCAFFOLD_COMMANDS and not cmd.startswith("commit"):
+            sent += 1
+    errors = [
+        "batch aborted before commit: DNOS rejected a statement mid-batch "
+        f"(after {sent} of {statements_total} statement(s) were staged), "
+        "so the commit was never sent — the running config is unchanged "
+        "(all-or-nothing)."
+    ]
+    rejected = detect_rejected_statements(steps)
+    if rejected:
+        for stmt, lines in rejected:
+            errors.append(f"rejected statement: {stmt}")
+            errors.extend(lines[-2:])
+    elif steps:
+        last = steps[-1]
+        _, lines = detect_error(last.output)
+        errors.append(
+            f"error surfaced at step '{(last.command or '').strip()}':"
+        )
+        errors.extend(lines[-2:])
+    return errors
+
+
 def abort_shared_candidate(
     device: Optional[str],
     host: Optional[str],

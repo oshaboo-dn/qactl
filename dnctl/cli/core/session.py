@@ -918,6 +918,7 @@ def run_sequence_pw(
     timeout: float = DEFAULT_CMD_TIMEOUT,
     capture_all: bool = False,
     commit_conflict_answer: Optional[str] = None,
+    stop_predicate: Optional[Callable[["StepCapture"], bool]] = None,
 ) -> Invocation:
     """Same as :func:`run_sequence` but each command can carry a sub-prompt password.
 
@@ -944,6 +945,12 @@ def run_sequence_pw(
     instead of returning only the last. Useful when the caller needs to
     inspect the output of a middle step (e.g. ``edit_config`` wants the
     ``commit check`` verdict even though the sequence ends with ``abort``).
+
+    ``stop_predicate`` mirrors :func:`run_sequence`: invoked after every
+    step with the just-completed :class:`StepCapture`; a truthy return
+    stops the loop and the remaining commands are NOT sent. This is how
+    ``edit_config`` aborts a batch before its ``commit and-exit`` when a
+    statement was rejected mid-sequence (issue #64).
     """
     if not commands:
         raise ValueError("commands must be non-empty")
@@ -981,7 +988,8 @@ def run_sequence_pw(
                         channel, cmd, sub_pw, prompt,
                         overall_timeout=timeout,
                     )
-                steps.append(StepCapture(cmd, head, output, tail, hit))
+                step = StepCapture(cmd, head, output, tail, hit)
+                steps.append(step)
                 all_outputs.append(output)
                 last_output, last_head, last_tail, last_hit = (
                     output, head, tail, hit,
@@ -991,6 +999,8 @@ def run_sequence_pw(
                 # channel and must not be reaped for idleness while busy.
                 transport.last_used = time.time()
                 if not hit:
+                    break
+                if stop_predicate is not None and stop_predicate(step):
                     break
 
             transport.last_used = time.time()

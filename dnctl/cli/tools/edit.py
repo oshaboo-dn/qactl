@@ -29,8 +29,11 @@ from dnctl.cli.core.configure_commit import build_configure_commit_steps, drive_
 from dnctl.cli.core.edit_helpers import (
     CONTEXT_RESET,
     abort_shared_candidate,
+    batch_abort_errors,
     build_edit_config_commands,
+    commit_was_attempted,
     detect_rejected_statements,
+    stop_on_rejected_statement,
     validate_edit_log,
     validate_edit_statements,
 )
@@ -184,6 +187,14 @@ def edit_config(
            this atomically commits and leaves configure mode, so the
            channel is on firm ground at teardown.
 
+    The batch is all-or-nothing: if the device rejects any statement
+    mid-sequence (e.g. ``ERROR: Unknown word: ...`` from a prompt-pacing
+    race), the sequence stops right there and ``commit and-exit`` is never
+    sent — no partial config can land. The call returns ``commit.status ==
+    "aborted"`` (``status: error``) naming the rejected statement, and the
+    statements staged before the rejection are cleared from the shared
+    candidate (see ``abort_on_failure``).
+
     If another session committed while this candidate was open, DNOS
     interrupts the live commit with a rebase prompt ("...out of sync. What
     would you like to do (commit, merge-only, abort)?"). We answer
@@ -272,6 +283,10 @@ def edit_config(
             timeout=timeout, steps=steps, command=full_command,
             request=request, response=response,
             capture_all=False,
+            # All-or-nothing (issue #64): a statement rejected mid-batch
+            # stops the sequence BEFORE 'commit and-exit' is sent, so a
+            # partial batch can never partially commit.
+            stop_predicate=stop_on_rejected_statement,
         )
         if result is None:
             return response
@@ -294,6 +309,40 @@ def edit_config(
                     response["warnings"].append(
                         "candidate-abort cleanup: ran 'configure ; abort' "
                         "to clear the shared candidate."
+                    )
+            log_request("edit_config", request, response)
+            return response
+
+        # Empty steps ⇒ the driver didn't capture a per-step transcript;
+        # only a captured transcript missing its commit step proves the
+        # stop_predicate cut the batch short.
+        if result.steps and not commit_was_attempted(result.steps):
+            # The stop_predicate cut the batch at a rejected statement, so
+            # 'commit and-exit' was never sent — nothing changed on the
+            # device. The statements staged before the rejection still sit
+            # in the shared candidate, though: clear it so the next
+            # operator doesn't inherit them.
+            response["status"] = "error"
+            response["commit"] = {
+                "status": "aborted", "user": None, "timestamp": None,
+            }
+            response["errors"].extend(
+                batch_abort_errors(result.steps, len(statements))
+            )
+            response["next_actions"].append(EDIT_CONFIG_NEXT_ACTION)
+            if abort_on_failure:
+                abort_err = abort_shared_candidate(
+                    device, host, user, password, timeout,
+                )
+                if abort_err:
+                    response["warnings"].append(
+                        f"candidate-abort cleanup failed: {abort_err}"
+                    )
+                else:
+                    response["warnings"].append(
+                        "candidate-abort cleanup: ran 'configure ; "
+                        "rollback 0' to clear the statements staged before "
+                        "the rejection."
                     )
             log_request("edit_config", request, response)
             return response

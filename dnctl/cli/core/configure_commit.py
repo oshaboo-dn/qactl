@@ -17,7 +17,7 @@ Contract: :func:`drive_configure_commit` returns the raw
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from dnctl.cli.core.logging import log_invocation, log_request
 from dnctl.cli.core.session import (
@@ -72,6 +72,7 @@ def drive_configure_commit(
     scrub_secret: Optional[str] = None,
     connect_next_action: str = _DEFAULT_CONNECT_NEXT_ACTION,
     commit_conflict_answer: Optional[str] = "abort",
+    stop_predicate: Optional[Callable[[StepCapture], bool]] = None,
 ) -> Optional[Invocation]:
     """Run ``steps`` on one ephemeral channel and fold the result into
     ``response``.
@@ -95,6 +96,12 @@ def drive_configure_commit(
     the caller can advise a re-run. The dry-run (``commit check``) path
     already appends ``no-warning`` and never reaches the prompt, so the
     answer is harmless there.
+
+    ``stop_predicate`` is forwarded to :func:`run_sequence_pw`: when it
+    returns truthy for a just-completed step the remaining steps —
+    including the commit line — are NOT sent. The caller can tell the
+    sequence was cut short because the commit step is absent from
+    ``Invocation.steps``.
     """
     try:
         inv = run_sequence_pw(
@@ -103,6 +110,7 @@ def drive_configure_commit(
             commands=list(steps), timeout=timeout,
             capture_all=capture_all,
             commit_conflict_answer=commit_conflict_answer,
+            stop_predicate=stop_predicate,
         )
     except ConnectError as exc:
         response.update(
