@@ -16,7 +16,7 @@ from dnctl.cli.core.shell_exec import run_linux_on_device
 from dnctl.cli.vendors import CAP_LOGS, requires
 
 
-_GITCOMMIT_RE = re.compile(r"^([0-9a-fA-F]{7,40})(?:-PR-(\d+))?$")
+_GITCOMMIT_RE = re.compile(r"^([0-9a-fA-F]{7,40})(?:-PR-(\d+)|-(\S+))?$")
 
 
 @requires(CAP_LOGS)
@@ -32,9 +32,10 @@ def get_gitcommit(
     Enters ``run start shell`` and runs ``cat /.gitcommit``. The file
     typically contains a single line of the form
     ``<commit_sha>-PR-<pr_number>`` (e.g.
-    ``b669275319207358e3a196c1dd0c7a5f4b67116b-PR-86107``), but older /
-    non-PR builds may have just the bare sha. Both shapes are parsed into
-    the response.
+    ``b669275319207358e3a196c1dd0c7a5f4b67116b-PR-86107``); feature builds
+    write ``<commit_sha>-<branch>`` (e.g. ``a3809a00...-feature/bfd_...``),
+    and older / non-PR builds may have just the bare sha. All three shapes
+    are parsed into the response.
 
     Args:
         device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
@@ -48,6 +49,7 @@ def get_gitcommit(
         - ``gitcommit``: raw contents, trimmed.
         - ``commit_sha``: the hex sha prefix.
         - ``pr_number``: integer PR number, if present.
+        - ``branch``: branch suffix, if present.
     """
     response = run_linux_on_device(
         "get_gitcommit", device, host, user, password,
@@ -61,6 +63,8 @@ def get_gitcommit(
             response["commit_sha"] = m.group(1)
             if m.group(2) is not None:
                 response["pr_number"] = int(m.group(2))
+            elif m.group(3) is not None:
+                response["branch"] = m.group(3)
     # `cat /.gitcommit` of a missing/empty file (e.g. "No such file or
     # directory") leaves status "ok" with no parseable sha — that's a
     # failed read, not a build with no commit id. Surface it.

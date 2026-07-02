@@ -114,6 +114,43 @@ def test_gitcommit_parses_sha(monkeypatch):
     assert resp["pr_number"] == 86107
 
 
+def test_gitcommit_parses_sha_branch(monkeypatch):
+    from dnctl.cli.tools import gitcommit
+
+    monkeypatch.setattr(
+        gitcommit, "run_linux_on_device",
+        lambda *a, **k: {
+            "status": "ok",
+            "stdout": "a3809a00c2bcf4e83cd523944c626891ceea9a50"
+                      "-feature/bfd_strict_mode_and_refactor",
+            "errors": [], "next_actions": [],
+        },
+    )
+    resp = gitcommit.get_gitcommit(device="cl")
+    assert resp["status"] == "ok"
+    assert resp["commit_sha"] == "a3809a00c2bcf4e83cd523944c626891ceea9a50"
+    assert resp["branch"] == "feature/bfd_strict_mode_and_refactor"
+    assert "pr_number" not in resp
+
+
+def test_gitcommit_parses_bare_sha(monkeypatch):
+    from dnctl.cli.tools import gitcommit
+
+    monkeypatch.setattr(
+        gitcommit, "run_linux_on_device",
+        lambda *a, **k: {
+            "status": "ok",
+            "stdout": "b669275319207358e3a196c1dd0c7a5f4b67116b",
+            "errors": [], "next_actions": [],
+        },
+    )
+    resp = gitcommit.get_gitcommit(device="cl")
+    assert resp["status"] == "ok"
+    assert resp["commit_sha"] == "b669275319207358e3a196c1dd0c7a5f4b67116b"
+    assert "pr_number" not in resp
+    assert "branch" not in resp
+
+
 # --------------------------------------------------------------------------
 # log_read: no candidate path -> error
 # --------------------------------------------------------------------------
