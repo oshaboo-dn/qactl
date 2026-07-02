@@ -59,6 +59,7 @@ from dnctl.cli.tools.techsupport import (
     create_techsupport,
     get_techsupport_job,
     list_techsupports,
+    upload_techsupport,
 )
 from dnctl.cli.tools.templates import (
     render_config,
@@ -753,6 +754,13 @@ def backup_restore(
 @ts_app.command("create")
 def techsupport_create(
     name: Annotated[str, typer.Argument(help="Tech-support bundle name.")],
+    include: Annotated[Optional[List[str]], typer.Option(
+        "--include",
+        help=(
+            "Extra info-types to bundle: basic | core-dumps | "
+            "journal-files. Repeatable or comma-separated."
+        ),
+    )] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -762,7 +770,26 @@ def techsupport_create(
     # block=True: the CLI process is the worker. Run the generate +
     # upload to completion in-process; a daemon thread would die when
     # the command returns, aborting the job mid-flight (issue #17).
-    O.finish(O.call(create_techsupport, c, name=name, block=True), c)
+    O.finish(O.call(create_techsupport, c, name=name, include=include, block=True), c)
+
+
+@ts_app.command("upload")
+def techsupport_upload(
+    file: Annotated[str, typer.Argument(
+        help="Tech-support filename on the device (as shown by "
+             "'show system tech-support status').",
+    )],
+    name: Annotated[Optional[str], typer.Option(
+        "--name",
+        help="Bundle name for the dnftp filename (default: derived from FILE).",
+    )] = None,
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Upload an existing on-device tech-support file to dnftp (managed creds)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    O.finish(O.call(upload_techsupport, c, file=file, name=name), c)
 
 
 @ts_app.command("show")

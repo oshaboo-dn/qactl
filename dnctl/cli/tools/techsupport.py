@@ -66,6 +66,22 @@ from dnctl.cli.vendors import CAP_TECHSUPPORT, requires
 # silently truncated or never actually happened.
 _TS_MIN_BYTES = 1_000_000
 
+# Info-type tokens DNOS accepts on ``request system tech-support <name>
+# include <<info_types>>``.
+_TS_INCLUDE_TYPES = ("basic", "core-dumps", "journal-files")
+
+# DNOS bakes the on-device tech-support filename as
+# ``ts_<name>_HH_MM_SS_DD-MM-YYYY.tar``; used to derive a bundle name
+# when adopting an existing device file (upload_techsupport).
+_TS_DEVICE_FILENAME_RE = re.compile(
+    r"^ts_(?P<name>.+)_\d{2}_\d{2}_\d{2}_\d{2}-\d{2}-\d{4}\.tar$"
+)
+
+# Charset allowed for the on-device source filename passed verbatim into
+# ``request file upload tech-support <file>`` — no whitespace, no shell
+# metacharacters, no path separators.
+_TS_DEVICE_FILE_ARG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 # Completion signal printed by ``show system tech-support status`` once the
 # async tech-support generation finishes.
 _TS_DONE_RE = re.compile(
@@ -583,11 +599,41 @@ def _ts_poll_and_upload_worker(
         }, _ts_job_envelope(job))
 
 
+def _normalise_include(
+    include: Optional[List[str]],
+) -> Tuple[List[str], Optional[str]]:
+    """Flatten + validate ``include`` info-types.
+
+    Accepts a repeated list, comma-separated entries, or a single string;
+    dedupes preserving order. Returns ``(tokens, None)`` on success or
+    ``([], error)`` when a token isn't one of :data:`_TS_INCLUDE_TYPES`.
+    """
+    if not include:
+        return [], None
+    if isinstance(include, str):
+        include = [include]
+    tokens: List[str] = []
+    for item in include:
+        for tok in str(item).split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            if tok not in _TS_INCLUDE_TYPES:
+                return [], (
+                    f"invalid include info-type {tok!r}; choose from: "
+                    f"{', '.join(_TS_INCLUDE_TYPES)}."
+                )
+            if tok not in tokens:
+                tokens.append(tok)
+    return tokens, None
+
+
 @requires(CAP_TECHSUPPORT)
 def create_techsupport(
     name: str,
     device: Optional[str] = None,
     host: Optional[str] = None,
+    include: Optional[List[str]] = None,
     vrf: str = DNFTP_VRF,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
@@ -681,6 +727,13 @@ def create_techsupport(
             ``[A-Za-z0-9._-]{1,40}``; must be non-empty after sanitisation.
         device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
         host: Raw hostname/IP (alternative to device).
+        include: Extra DNOS info-types to bundle, passed through as
+            ``request system tech-support <name> include <types...>``.
+            Each entry is one of ``basic`` (all textual log files),
+            ``core-dumps`` (processes' binary core dump files),
+            ``journal-files`` (active NCC Base-OS journal files);
+            comma-separated entries are accepted too. Default: none
+            (DNOS default collection).
         vrf: DNOS VRF used to reach the backup host. Default ``mgmt0``.
         user: SSH username on the device (default dnroot).
         password: SSH password on the device (default dnroot).
@@ -717,6 +770,12 @@ def create_techsupport(
         )
     clean_name = ts_store.sanitise_name(name)
 
+    include_tokens, err = _normalise_include(include)
+    if err:
+        return error_response(
+            err, device=device, host=host, next_action=CREATE_TS_NEXT_ACTION,
+        )
+
     err = _int_in("poll_interval_s", poll_interval_s, _TS_POLL_MIN_S, _TS_POLL_MAX_S)
     if err:
         return error_response(
@@ -737,6 +796,8 @@ def create_techsupport(
         )
 
     kickoff_cmd = f"request system tech-support {clean_name}"
+    if include_tokens:
+        kickoff_cmd += " include " + " ".join(include_tokens)
     kickoff_commands: List[Tuple[str, Optional[str]]] = [
         ("set cli-no-confirm", None),
         (kickoff_cmd, None),
@@ -766,7 +827,8 @@ def create_techsupport(
 
     request = {
         "device": device, "host": host, "user": user,
-        "name": clean_name, "vrf": vrf, "local_filename": local_name,
+        "name": clean_name, "include": include_tokens, "vrf": vrf,
+        "local_filename": local_name,
         "poll_interval_s": poll_interval_s, "max_wait_s": max_wait_s,
     }
 
@@ -902,6 +964,193 @@ def create_techsupport(
     ]
     log_request("create_techsupport", request, envelope)
     return envelope
+
+
+@requires(CAP_TECHSUPPORT)
+def upload_techsupport(
+    file: str,
+    device: Optional[str] = None,
+    host: Optional[str] = None,
+    name: Optional[str] = None,
+    vrf: str = DNFTP_VRF,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASSWORD,
+    timeout: int = 600,
+) -> Dict[str, Any]:
+    """Upload an EXISTING on-device tech-support file to ``dnftp`` (SYNC).
+
+    For tech-supports generated outside qactl (e.g. a raw ``request
+    system tech-support ... include core-dumps`` typed on the device):
+    adopts the file into the managed store by running ``request file
+    upload tech-support <file> dn@dnftp:...`` with the dnftp password
+    fed at the interactive prompt — the credential never appears on the
+    device command line (no CLI-accounting / device-log leak), unlike a
+    hand-built ``sftp://dn:<pw>@dnftp/...`` URL. After the upload the
+    landed file is stat'ed on ``dnftp`` (min 1 MB enforced), same as
+    ``create_techsupport``.
+
+    Blocking: returns once the device-side transfer finishes (or
+    ``timeout`` expires waiting for the CLI prompt). No job registry
+    involvement — this is a single foreground command, not a poll job.
+
+    Args:
+        file: Tech-support filename on the device, exactly as shown by
+            ``show system tech-support status`` (e.g.
+            ``ts_bgpd-cores_12_30_00_02-07-2026.tar``). Bare filename
+            only — DNOS resolves it inside ``/techsupport``.
+        device: Device alias (cl, sa, kira, slava-1, slava-2, ariel-cl).
+        host: Raw hostname/IP (alternative to device).
+        name: Bundle name for the dnftp destination filename
+            ``<device>__<UTC-ts>__<name>.tar``. Default: derived from
+            ``file`` (the ``<name>`` DNOS baked into
+            ``ts_<name>_HH_MM_SS_DD-MM-YYYY.tar``); required when the
+            filename doesn't match that shape.
+        vrf: DNOS VRF used to reach dnftp. Default ``mgmt0``.
+        user: SSH username on the device (default dnroot).
+        password: SSH password on the device (default dnroot).
+        timeout: Seconds to wait for the CLI prompt after issuing the
+            upload (the transfer runs within this window). Default 600 —
+            tech-support tars run to GBs.
+    """
+    device_key = device or host or ""
+    err = ts_store.validate_device(device_key)
+    if err:
+        return error_response(err, device=device, host=host)
+
+    if not isinstance(file, str) or not _TS_DEVICE_FILE_ARG_RE.match(file or ""):
+        return error_response(
+            "file must be a bare device-side filename "
+            "([A-Za-z0-9._-], no spaces or path separators) as shown by "
+            "`show system tech-support status`.",
+            device=device, host=host,
+        )
+
+    if name is None:
+        m = _TS_DEVICE_FILENAME_RE.match(file)
+        derived = ts_store.sanitise_name(m.group("name")) if m else None
+        if not derived:
+            return error_response(
+                f"Could not derive a bundle name from {file!r} (expected "
+                f"ts_<name>_HH_MM_SS_DD-MM-YYYY.tar). Pass an explicit "
+                f"bundle name (--name on the CLI, name= over MCP).",
+                device=device, host=host,
+            )
+        clean_name = derived
+    else:
+        err = ts_store.validate_name(name)
+        if err:
+            return error_response(err, device=device, host=host)
+        clean_name = ts_store.sanitise_name(name)
+
+    if not DNFTP_PASSWORD:
+        return error_response(
+            "No dnftp password configured — the device-side upload prompts "
+            "for it interactively. Set DNCTL_DNFTP_PASSWORD (or "
+            "[dnftp].password in the config).",
+            device=device, host=host,
+            next_action="Run `qactl setup` to configure dnftp credentials.",
+        )
+
+    try:
+        local_name = ts_store.make_filename(device_key, clean_name)
+    except ValueError as exc:
+        return error_response(str(exc), device=device, host=host)
+
+    upload_cmd = build_upload_command(
+        kind="tech-support",
+        local_name=file,
+        remote_path=ts_store.remote_path(local_name),
+        vrf=vrf,
+    )
+    request = {
+        "device": device, "host": host, "user": user,
+        "file": file, "name": clean_name, "vrf": vrf,
+        "local_filename": local_name,
+    }
+    response = make_response(
+        device=device, host=host, command=upload_cmd,
+        name=clean_name, device_filename=file, local_filename=local_name,
+        ts_path=ts_store.remote_url(local_name),
+    )
+
+    try:
+        up = run_sequence_pw(
+            transport_registry,
+            device=device, host=host, user=user, password=password,
+            commands=[(upload_cmd, DNFTP_PASSWORD)],
+            timeout=timeout,
+        )
+    except ConnectError as exc:
+        response.update(
+            status="connect_error",
+            errors=[str(exc)],
+            next_actions=[
+                "Verify the device is reachable and credentials are correct.",
+            ],
+        )
+        log_request("upload_techsupport", request, response)
+        return response
+    except Exception as exc:  # noqa: BLE001 - surface transport failures cleanly
+        response.update(status="error", errors=[str(exc)])
+        log_request("upload_techsupport", request, response)
+        return response
+
+    if up.host:
+        response["host"] = up.host
+    response["device"] = up.device or device
+    scrubbed = scrub_password(up.output, DNFTP_PASSWORD)
+    response["stdout"] = scrubbed
+    log_invocation(
+        up.device or device, up.host,
+        upload_cmd, scrubbed,
+        up.head_prompt_line, up.tail_prompt,
+        steps=scrub_steps(up.steps, DNFTP_PASSWORD),
+    )
+
+    if not up.hit_prompt:
+        response["status"] = "timeout"
+        response["errors"].append(
+            f"Timed out waiting for CLI prompt after {timeout}s on upload — "
+            f"a large transfer may still be running on the device; check "
+            f"whether {local_name!r} lands at {ts_store.TS_DIR} on "
+            f"{ts_store.TS_HOST}."
+        )
+        log_request("upload_techsupport", request, response)
+        return response
+
+    is_err, err_lines = detect_error(scrubbed)
+    if is_err:
+        response["status"] = "error"
+        response["errors"].extend(err_lines[-5:])
+        response["next_actions"].append(
+            f"Verify {file!r} exists on the device "
+            "(`show system tech-support status`)."
+        )
+        log_request("upload_techsupport", request, response)
+        return response
+
+    stat = ts_store.stat_ts(local_name)
+    if stat is None:
+        response["status"] = "error"
+        response["errors"].append(
+            f"Upload completed without error but {local_name!r} is not "
+            f"present on {ts_store.TS_HOST}:{ts_store.TS_DIR} (SFTP stat "
+            f"returned no file)."
+        )
+        log_request("upload_techsupport", request, response)
+        return response
+    if stat.size_bytes < _TS_MIN_BYTES:
+        response["status"] = "error"
+        response["errors"].append(
+            f"Uploaded file {local_name!r} is suspiciously small "
+            f"({stat.size_bytes} bytes). Treating as a failed transfer."
+        )
+        log_request("upload_techsupport", request, response)
+        return response
+
+    response["size_bytes"] = stat.size_bytes
+    log_request("upload_techsupport", request, response)
+    return response
 
 
 def get_techsupport_job(
@@ -1092,5 +1341,6 @@ def list_techsupports(
 def register(mcp) -> None:
     """Wire this module's tools onto a FastMCP instance."""
     mcp.tool()(create_techsupport)
+    mcp.tool()(upload_techsupport)
     mcp.tool()(get_techsupport_job)
     mcp.tool()(list_techsupports)
