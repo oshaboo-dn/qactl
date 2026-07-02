@@ -265,6 +265,11 @@ Device credentials/registry come from `qactl setup` (dnctl's resolver);
 Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
 `qactl <group> --help` for the full surface.
 
+Transient SSH connect failures (timeout / banner / reset — e.g. DNOS sshd
+rate-limiting back-to-back calls) are retried automatically: 3 attempts,
+2s/5s backoff. Tune with `QACTL_CONNECT_RETRIES` (total attempts, `1` =
+fail fast) and `QACTL_CONNECT_BACKOFF` (comma-separated seconds).
+
 ### Per-device daily journal
 
 Every `qactl cli`/`nc`/`gnmi`/`rc` command keyed to a device also tees its

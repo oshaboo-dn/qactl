@@ -17,6 +17,7 @@ First command on every freshly-opened channel is
 from __future__ import annotations
 
 import os
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -239,6 +240,17 @@ DEFAULT_BANNER_WAIT = 2.0
 # Override per-environment with ``DNCTL_CLI_PROMPT_TIMEOUT`` (seconds), and
 # the per-drain window with ``DNCTL_CLI_BANNER_WAIT``.
 DEFAULT_PROMPT_TIMEOUT = 15.0
+# Connect retry: every CLI invocation is a fresh process (the transport
+# registry can't help across invocations), and DNOS sshd rate-limits rapid
+# successive connections — back-to-back qactl calls see ~1-in-8 connect
+# timeouts. Retry the whole candidate sweep on *transient* failures only
+# (timeouts / banner / reset); deterministic failures (rejected creds,
+# unknown device, DNS) still fail on the first attempt.
+# ``QACTL_CONNECT_RETRIES`` = total attempts (1 = fail fast, today's old
+# behaviour); ``QACTL_CONNECT_BACKOFF`` = comma-separated sleeps between
+# attempts, last value repeating (default "2,5").
+DEFAULT_CONNECT_ATTEMPTS = 3
+DEFAULT_CONNECT_BACKOFF = (2.0, 5.0)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -256,6 +268,57 @@ def _env_float(name: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return val if val > 0 else default
+
+
+def _connect_attempts() -> int:
+    """Total connect attempts from ``QACTL_CONNECT_RETRIES`` (min 1)."""
+    raw = os.environ.get("QACTL_CONNECT_RETRIES")
+    if raw is None:
+        return DEFAULT_CONNECT_ATTEMPTS
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_CONNECT_ATTEMPTS
+    return val if val >= 1 else DEFAULT_CONNECT_ATTEMPTS
+
+
+def _connect_backoff() -> Tuple[float, ...]:
+    """Sleep schedule from ``QACTL_CONNECT_BACKOFF`` (comma-separated s)."""
+    raw = os.environ.get("QACTL_CONNECT_BACKOFF")
+    if not raw:
+        return DEFAULT_CONNECT_BACKOFF
+    try:
+        vals = tuple(float(p) for p in raw.split(","))
+    except (TypeError, ValueError):
+        return DEFAULT_CONNECT_BACKOFF
+    if not vals or any(v < 0 for v in vals):
+        return DEFAULT_CONNECT_BACKOFF
+    return vals
+
+
+def _is_transient_connect_error(exc: Exception) -> bool:
+    """True when a connect failure is worth retrying.
+
+    sshd rate-limiting shows up as a TCP connect timeout, a banner
+    timeout/EOF, or a reset — all transient. Rejected credentials,
+    unknown devices and DNS misses are deterministic: retrying them only
+    delays the real error. paramiko wraps banner and auth timeouts in
+    generic exception types, so part of this is message-sniffing.
+    """
+    if isinstance(exc, UnknownDeviceError):
+        return False
+    if isinstance(exc, socket.gaierror):
+        return False
+    if isinstance(exc, paramiko.AuthenticationException):
+        # An auth *timeout* is transport slowness; a rejected credential
+        # is final.
+        return "time" in str(exc).lower()
+    if isinstance(exc, (TimeoutError, socket.timeout, EOFError, ConnectionResetError)):
+        return True
+    if isinstance(exc, paramiko.SSHException):
+        msg = str(exc).lower()
+        return "banner" in msg or "timed out" in msg or "timeout" in msg
+    return False
 
 
 class ConnectError(RuntimeError):
@@ -464,7 +527,12 @@ def _open_transport(
     password: str,
     connect_timeout: int,
 ) -> Transport:
-    """Open TCP+auth only. No channel, no CLI state."""
+    """Open TCP+auth only. No channel, no CLI state.
+
+    Transient failures (see :func:`_is_transient_connect_error`) retry the
+    whole candidate sweep — for dual-NCC devices each retry probes *both*
+    NCCs again, so an active-NCC flip mid-retry still lands.
+    """
     if device:
         candidates = DEVICE_HOSTS.get(device)
         if not candidates:
@@ -475,16 +543,24 @@ def _open_transport(
         assert host
         candidates = [host]
 
+    attempts = _connect_attempts()
+    backoff = _connect_backoff()
     last_err: Optional[Exception] = None
     client: Optional[paramiko.SSHClient] = None
     chosen_host = ""
-    for cand in candidates:
-        try:
-            client = _try_connect_host(cand, user, password, connect_timeout)
-            chosen_host = cand
+    for attempt in range(attempts):
+        transient = False
+        for cand in candidates:
+            try:
+                client = _try_connect_host(cand, user, password, connect_timeout)
+                chosen_host = cand
+                break
+            except Exception as exc:
+                last_err = exc
+                transient = transient or _is_transient_connect_error(exc)
+        if client is not None or not transient or attempt == attempts - 1:
             break
-        except Exception as exc:
-            last_err = exc
+        time.sleep(backoff[min(attempt, len(backoff) - 1)])
     if client is None:
         raise ConnectError(
             f"Could not connect to {device or host}: {last_err}"
