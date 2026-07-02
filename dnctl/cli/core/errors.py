@@ -136,6 +136,27 @@ RUN_NCM_CLI_NEXT_ACTION = (
     "the mode the previous one entered. The session always backs out via "
     "'end' + 'exit' to DNOS, even on error. Works on a GI-mode chassis."
 )
+CORE_LIST_NEXT_ACTION = (
+    "`qactl cli core list -d <dev>` wraps `show file core list`. Verify the "
+    "device is reachable and the password is correct; an empty `cores` list "
+    "on status ok means the box simply has no core dumps."
+)
+CORE_BT_NEXT_ACTION = (
+    "`qactl cli core bt <full-name> -d <dev> --yes` extracts a core bundle "
+    "and runs gdb on the device. Check (1) <full-name> is exactly as "
+    "printed by `qactl cli core list` (<container>/core-....tar); (2) the "
+    "bundle still exists under /core/core_dumps/containers/; (3) rerun "
+    "with --keep and inspect the workdir manually if a step keeps failing."
+)
+CORE_BT_UNSUPPORTED_NEXT_ACTION = (
+    "Only routing_engine cores are supported so far (bundle layouts differ "
+    "per container). Manual recipe for other containers: tar -xf the bundle "
+    "from /core/core_dumps/containers/<container>/ into a workdir, lz4 -d "
+    "the core, read the crashed binary from process.info.<cpid> "
+    "(fullpath= line), then run `gdb -batch -iex 'set debuginfod enabled "
+    "off' -ex bt <binary> <core>` inside the matching container via "
+    "`qactl cli shell --container <name>`."
+)
 KILL_NCC_NEXT_ACTION = (
     "Check the daemon name is one of bgpd/zebra/fibmgrd and that the "
     "device password is correct; rerun to confirm the daemon was "

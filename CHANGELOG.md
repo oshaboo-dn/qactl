@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Core-dump surface**: `qactl cli core list` (parsed `show file core
+  list`, wrapped rows merged) and `qactl cli core bt <full-name>` — one
+  command from "box restarted" to the exact assert: extracts the bundle
+  into a device scratch workdir, reads the crashed binary from the
+  bundle's `process.info` (never from the tar name — a core may be named
+  after a thread), runs `gdb -batch -ex bt` with debuginfod disabled,
+  greps the bundled stderr log for the assert `file:line`, and cleans up
+  (`--keep` to retain; `--all-threads` for `thread apply all bt`). v1
+  extracts `routing_engine` bundles only; other containers return the
+  manual recipe. Mutating (writes device scratch) — gated by `--yes`
+  (MCP: `confirm=true`, else dry-run). MCP tools: `list_cores` /
+  `get_core_backtrace`. Proven live on OHADZS-NCP1 against the
+  SW-279187 bgpd SIGABRT cores. (#65)
 - **Always-on per-device daily journal.** Every `qactl cli`/`nc`/`gnmi`/`rc`
   command keyed to a device now tees its full raw output — under a
   `ts | device | cmd | status` header, fenced for markdown — to

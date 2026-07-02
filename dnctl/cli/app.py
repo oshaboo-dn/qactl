@@ -16,6 +16,7 @@ import typer
 from dnctl.core import confirm, options as O
 from dnctl.cli.tools.backup import backup_device, list_backups, read_backup, restore_device
 from dnctl.cli.tools.clear import clear as clear_tool
+from dnctl.cli.tools.cores import get_core_backtrace, list_cores
 from dnctl.cli.tools.devices import list_devices, manage_device
 from dnctl.cli.tools.discovery import (
     cli_config_crawler,
@@ -75,6 +76,7 @@ tarload_app = typer.Typer(no_args_is_help=True, help="Stage upgrade image tars (
 backup_app = typer.Typer(no_args_is_help=True, help="Config backups (create / list / read / restore).")
 restart_app = typer.Typer(no_args_is_help=True, help="Restart system / node / container / process.")
 monitor_app = typer.Typer(no_args_is_help=True, help="Event collector (system-events → dedupe → Slack).")
+core_app = typer.Typer(no_args_is_help=True, help="Core dumps (list bundles / extract a backtrace).")
 app.add_typer(template_app, name="template")
 app.add_typer(device_app, name="device")
 app.add_typer(ts_app, name="techsupport")
@@ -82,6 +84,7 @@ app.add_typer(tarload_app, name="tar-load")
 app.add_typer(backup_app, name="backup")
 app.add_typer(restart_app, name="restart")
 app.add_typer(monitor_app, name="monitor")
+app.add_typer(core_app, name="core")
 
 
 # --- reads / discovery -----------------------------------------------------
@@ -375,6 +378,46 @@ def monitor_reset_cmd(
     if not confirm.ensure(f"monitor reset {target}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(monitor_reset, c, devices=device), c)
+
+
+@core_app.command("list")
+def core_list(
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
+):
+    """List core-dump bundles on the device (`show file core list`, parsed)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    O.finish(O.call(list_cores, c), c)
+
+
+@core_app.command("bt")
+def core_bt(
+    full_name: Annotated[str, typer.Argument(help="Full bundle name as printed by `core list`, e.g. routing_engine/core-bgpd.cpid-199103.sig-6.2026-07-02.11-46-37.tar.")],
+    all_threads: Annotated[bool, typer.Option("--all-threads", help="Also run 'thread apply all bt' (full dump in stdout).")] = False,
+    keep: Annotated[bool, typer.Option("--keep", help="Keep the scratch workdir on the device for manual digging.")] = False,
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
+):
+    """Extract a core bundle's backtrace via gdb on the device (writes device scratch — needs --yes).
+
+    v1 supports routing_engine cores only (bgpd & friends). Extracts the
+    tar into a scratch workdir, reads the crashed binary from the bundle's
+    process.info, runs `gdb -batch -ex bt` (debuginfod disabled), greps
+    the bundled stderr log for the assert line, then removes the workdir
+    (--keep leaves it).
+    """
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    if not confirm.ensure(f"core bt {full_name} on {c.device or c.host}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(get_core_backtrace, c, full_name=full_name,
+               all_threads=all_threads, keep=keep, confirm=True),
+        c,
+    )
 
 
 @app.command()
