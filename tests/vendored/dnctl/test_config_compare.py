@@ -57,10 +57,13 @@ def test_compare_command_stages_and_rolls_back(monkeypatch):
     edit.edit_config_compare(
         ["protocols bgp neighbor 1.1.1.1 peer-as 65001"], device="cl",
     )
-    # configure -> stmt -> show config compare -> rollback 0; never commits.
+    # configure -> stmt -> top -> show config compare -> rollback 0; never
+    # commits. The 'top' context reset guards against enter-level statements
+    # poisoning the rest of the batch (issue #63).
     assert captured["steps"] == [
         "configure",
         "protocols bgp neighbor 1.1.1.1 peer-as 65001",
+        "top",
         "show config compare",
         "rollback 0",
     ]

@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 from dnctl.cli.core.commit_sequence import parse_commit_output
 from dnctl.cli.core.configure_commit import build_configure_commit_steps, drive_configure_commit
 from dnctl.cli.core.edit_helpers import (
+    CONTEXT_RESET,
     abort_shared_candidate,
     build_edit_config_commands,
     detect_rejected_statements,
@@ -173,7 +174,12 @@ def edit_config(
     Flow on one channel:
 
         1. ``configure``
-        2. each entry of ``statements`` (in order, one per step)
+        2. each entry of ``statements`` (in order, one per step), each
+           followed by ``top`` — a statement ending at an enter-level node
+           (e.g. a bare ``... address-family ipv4-unicast``) drops the
+           session into that sub-mode, where the next absolute-path
+           statement would misparse; ``top`` resets to config root and is
+           a no-op when already there
         3. ``commit and-exit`` + ``log "<log>"`` if ``log`` was given —
            this atomically commits and leaves configure mode, so the
            channel is on firm ground at teardown.
@@ -397,7 +403,8 @@ def edit_config_check(
     Flow on one channel:
 
         1. ``configure``
-        2. each entry of ``statements`` (in order, one per step)
+        2. each entry of ``statements`` (in order, one per step), each
+           followed by a ``top`` context reset (see :func:`edit_config`)
         3. ``commit check`` + ``log "<log>"`` if ``log`` was given +
            ``no-warning`` — validates the candidate without applying it.
            ``no-warning`` auto-accepts DNOS's "another user committed
@@ -572,7 +579,8 @@ def edit_config_compare(
     Flow on one channel:
 
         1. ``configure``
-        2. each entry of ``statements`` (in order, one per step)
+        2. each entry of ``statements`` (in order, one per step), each
+           followed by a ``top`` context reset (see :func:`edit_config`)
         3. ``show config compare`` — the candidate-vs-running diff
         4. ``rollback 0`` — drop the staged statements from the shared
            candidate so the next operator doesn't inherit them.
@@ -599,7 +607,8 @@ def edit_config_compare(
 
     body = [s.strip() for s in statements]
     steps = [("configure", None)]
-    steps += [(s, None) for s in body]
+    for s in body:
+        steps += [(s, None), (CONTEXT_RESET, None)]
     steps += [(_COMPARE_CMD, None), ("rollback 0", None)]
     command = " ; ".join(cmd for cmd, _ in steps)
 

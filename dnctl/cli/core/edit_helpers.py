@@ -36,6 +36,13 @@ from dnctl.cli.core.registry import transport_registry
 from dnctl.cli.core.session import StepCapture, run_sequence
 
 
+# Context reset sent after every statement. A statement that ends at an
+# enter-level node (e.g. a bare ``... address-family ipv4-unicast``) drops
+# the session into that sub-mode, so the next absolute-path statement would
+# misparse (``ERROR: Unknown word: 'protocols'.``). ``top`` returns to the
+# config root and is a silent no-op when already there.
+CONTEXT_RESET = "top"
+
 _EDIT_CONFIG_LOG_MAX = 200
 _EDIT_CONFIG_STMT_MAX = 1000
 _EDIT_CONFIG_STMTS_MAX = 200
@@ -105,6 +112,10 @@ def build_edit_config_commands(
     The commit-line is returned separately so the envelope can surface it
     on its own — DNOS operators recognise the commit shape at a glance.
     The joined command string is what ``response["command"]`` advertises.
+
+    Every statement is followed by a ``top`` context reset so a statement
+    ending at an enter-level node can't leave the session inside a sub-mode
+    where the following absolute-path statements misparse (issue #63).
     """
     log_suffix = f' log "{log_norm}"' if log_norm else ""
     if deploy:
@@ -118,8 +129,12 @@ def build_edit_config_commands(
     # DNOS spelling is ``rollback 0`` (JunOS-style); there is no
     # standalone ``abort`` command in configure mode.
     trailing = [("rollback 0", None)] if not deploy else []
+    body: List[str] = []
+    for s in statements:
+        body.append(s.strip())
+        body.append(CONTEXT_RESET)
     steps, joined = build_configure_commit_steps(
-        body_statements=[s.strip() for s in statements],
+        body_statements=body,
         commit_line=commit_line,
         trailing_commands=trailing,
     )
@@ -128,7 +143,7 @@ def build_edit_config_commands(
 
 # Scaffolding commands wrapped around the user's statements by
 # build_configure_commit_steps; never a config statement to validate.
-_SCAFFOLD_COMMANDS = {"configure", "rollback 0", "set cli-no-confirm"}
+_SCAFFOLD_COMMANDS = {"configure", "rollback 0", "set cli-no-confirm", CONTEXT_RESET}
 
 
 def detect_rejected_statements(
