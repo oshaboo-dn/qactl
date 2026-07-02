@@ -14,6 +14,10 @@ Jenkins:
     JENKINS_API_TOKEN     required   Jenkins API token
     JENKINS_URL           optional   default https://jenkins.dev.drivenets.net
 
+Arista EOS (eAPI; host is always given per command):
+    ARISTA_USER           optional   default admin
+    ARISTA_PASSWORD       optional   default empty
+
 Each resolver raises :class:`CredentialError` (a ``ValueError``) listing
 the missing variables; the CLI turns that into a ``bad_argument``
 envelope with a ``next_actions`` hint instead of a traceback.
@@ -96,3 +100,41 @@ class JenkinsConfig:
                 f"(optional JENKINS_URL, default {JENKINS_DEFAULT_URL})."
             )
         return cls(url=url, user=user, token=token)
+
+
+ARISTA_DEFAULT_USER = "admin"
+
+
+@dataclass
+class AristaConfig:
+    host: str
+    user: str
+    password: str
+    port: int = 443
+    http: bool = False
+
+    @classmethod
+    def resolve(
+        cls,
+        host: str,
+        *,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        port: Optional[int] = None,
+        http: bool = False,
+    ) -> "AristaConfig":
+        host = (host or "").strip()
+        if not host:
+            raise CredentialError("An Arista host (name or IP) is required.")
+        user = (user or os.environ.get("ARISTA_USER") or ARISTA_DEFAULT_USER).strip()
+        # Empty is allowed — lab switches may run passwordless local auth;
+        # a wrong/absent password surfaces as an eAPI 401, not here.
+        password = password if password is not None else os.environ.get("ARISTA_PASSWORD", "")
+        if port is None:
+            port = 80 if http else 443
+        return cls(host=host, user=user, password=password, port=int(port), http=http)
+
+    @property
+    def url(self) -> str:
+        scheme = "http" if self.http else "https"
+        return f"{scheme}://{self.host}:{self.port}/command-api"

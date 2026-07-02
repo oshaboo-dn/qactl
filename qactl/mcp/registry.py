@@ -36,7 +36,7 @@ from typing import Callable, Dict, List, Optional, Set
 
 # --- group sets ------------------------------------------------------------
 
-NATIVE_GROUPS = ("jira", "confluence", "jenkins")
+NATIVE_GROUPS = ("jira", "confluence", "jenkins", "arista")
 DNCTL_GROUPS = ("cli", "nc", "gnmi", "rc")
 IXIA_GROUPS = ("ixia",)
 ALL_GROUPS = NATIVE_GROUPS + DNCTL_GROUPS + IXIA_GROUPS

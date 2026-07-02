@@ -3,9 +3,10 @@
 `qactl` is a thin front dispatcher that routes the first token to the
 right domain:
 
-    cli / nc / gnmi / rc / setup   -> vendored dnctl    (DNOS devices)
-    ixia                           -> vendored ixiactl  (IxNetwork)
-    jira / confluence / jenkins    -> native argparse    (Atlassian / Jenkins)
+    cli / nc / gnmi / rc / setup     -> vendored dnctl    (DNOS devices)
+    ixia                             -> vendored ixiactl  (IxNetwork)
+    jira / confluence / jenkins /
+    arista                           -> native argparse   (Atlassian / Jenkins / EOS)
 
 The DNOS and Ixia groups are delegated to the existing dnctl / ixiactl
 entrypoints unchanged, so their full command surface, help, behaviour,
@@ -22,12 +23,13 @@ from typing import List, Optional
 
 from qactl import __version__
 from qactl.core.common import global_parent
+from qactl.arista import cli as arista_cli
 from qactl.confluence import cli as confluence_cli
 from qactl.jenkins import cli as jenkins_cli
 from qactl.jira import cli as jira_cli
 
 
-NATIVE_GROUPS = {"jira", "confluence", "jenkins"}
+NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista"}
 DNCTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
 MCP_GROUP = "mcp"
@@ -55,6 +57,9 @@ Atlassian + CI (native):
   confluence    Confluence comments / attachments
   jenkins       Jenkins builds: trigger / inspect / stop
 
+Arista EOS switches (native, read-only over eAPI):
+  arista        interfaces / lldp / config / version
+
 MCP front (same tools, over stdio):
   mcp           run a local stdio MCP server: `qactl mcp <group>` / `qactl mcp all`
 
@@ -72,13 +77,14 @@ def build_native_parser() -> argparse.ArgumentParser:
     """argparse tree for the natively-implemented groups."""
     parser = argparse.ArgumentParser(
         prog="qactl",
-        description="qactl native groups: jira, confluence, jenkins.",
+        description="qactl native groups: jira, confluence, jenkins, arista.",
     )
     sub = parser.add_subparsers(dest="group", required=True)
     parent = global_parent()
     jira_cli.register(sub, parent)
     confluence_cli.register(sub, parent)
     jenkins_cli.register(sub, parent)
+    arista_cli.register(sub, parent)
     return parser
 
 

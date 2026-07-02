@@ -18,11 +18,12 @@ executable.
 | `jira` | Jira watchers / attachments / comments / transitions / status | native |
 | `confluence` | Confluence comments / attachments | native |
 | `jenkins` | Jenkins builds: trigger / inspect / stop | native |
+| `arista` | Arista EOS switches: interfaces / lldp / config / version (read-only, eAPI) | native |
 
 `qactl` is a thin dispatcher: the `cli/nc/gnmi/rc/setup` and `ixia`
 groups delegate to the bundled `dnctl` / `ixiactl` entrypoints unchanged
 (full surface, help, and behaviour preserved), while `jira` /
-`confluence` / `jenkins` are implemented natively. All groups share the
+`confluence` / `jenkins` / `arista` are implemented natively. All groups share the
 same contract, and the same envelope-returning tool functions back both
 the CLI and the MCP front.
 
@@ -58,7 +59,7 @@ are no per-request HTTP headers. Destructive MCP tools require a
 ### What's on MCP vs CLI-only
 
 Agent-driven surfaces are exposed over MCP: all of `jira`, `confluence`,
-`jenkins`, `gnmi`, `rc`, `ixia`, plus nearly all of `cli` and `nc`. This
+`jenkins`, `arista`, `gnmi`, `rc`, `ixia`, plus nearly all of `cli` and `nc`. This
 includes tech-support (`create_techsupport` is fire-and-forget — the `.tar`
 lands on remote `dnftp`, never locally), the cheap read-only / job-poll
 tools, and device + NETCONF **backup/restore** (backups are
@@ -135,9 +136,17 @@ export JENKINS_API_TOKEN="<token>"
 export JENKINS_URL="https://jenkins.dev.drivenets.net"        # optional
 ```
 
+**Arista EOS** (optional — defaults to `admin` with an empty password):
+
+```bash
+export ARISTA_USER="admin"
+export ARISTA_PASSWORD="<password>"
+```
+
 Any of these can be overridden per-command (`--email`/`--token`/`--base-url`
-for Atlassian; `--user`/`--token`/`--url` for Jenkins) but the environment
-is the default. The repo ships no `.env` and no baked-in tokens.
+for Atlassian; `--user`/`--token`/`--url` for Jenkins; `--user`/`--password`
+for Arista) but the environment is the default. The repo ships no `.env`
+and no baked-in tokens.
 
 ## Subcommands
 
@@ -188,6 +197,25 @@ Cheetah trigger knobs map to Jenkins parameters: `--sanitizer`
 `--nightly`, `--qa-version`, `--inherit-from <build#>`, `--extra-params
 '<json>'`. Branch slashes (`feature/foo`) are URL-encoded for you.
 
+### `qactl arista`
+
+Read-only queries against Arista EOS switches over eAPI (JSON-RPC over
+HTTPS; enable with `management api http-commands` on the switch). Host is
+positional; credentials default to `$ARISTA_USER` / `$ARISTA_PASSWORD`
+(`--port` / `--http` select the eAPI endpoint).
+
+| Command | Description | Gate |
+|---|---|---|
+| `interfaces <host>` | `show interfaces status` + derived `free_candidates` (link notconnect/disabled) | |
+| `lldp <host>` | LLDP neighbors — map local ports to fabric/DUT peers | |
+| `config <host> [--interface IFACE]...` | running config: whole box, or per-interface sections | |
+| `version <host>` | model / EOS version / serial — the connectivity sanity check | |
+
+The free-port workflow: `interfaces` proposes `free_candidates`, then
+`lldp` cross-checks that a candidate has no neighbor before you cable it.
+Config apply (with `--check` / `--yes` gating) is future work — this
+group is deliberately read-only for now.
+
 ## Acceptance smoke test
 
 ```bash
@@ -205,6 +233,11 @@ qactl jenkins whoami --json | jq .result
 qactl jenkins list feature/foo --json | jq '.result.builds'
 qactl jenkins trigger feature/foo                  # must REFUSE (no --yes)
 qactl jenkins trigger feature/foo --yes            # queues the build
+
+# Arista (read-only)
+qactl arista version arista410 --json | jq .result.version
+qactl arista interfaces arista410 --json | jq .result.free_candidates
+qactl arista lldp arista410 --json | jq '.result.neighbors'
 ```
 
 ## DNOS devices & Ixia
@@ -254,6 +287,7 @@ qactl/
     jira/        client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jira ...
     confluence/  client.py (REST) + tools.py (envelopes) + cli.py  -> qactl confluence ...
     jenkins/     client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jenkins ...
+    arista/      client.py (eAPI) + tools.py (envelopes) + cli.py  -> qactl arista ...
     mcp/         registry.py (group->tool surface map) + server.py -> qactl mcp ...
     __main__.py  dispatcher: native groups, mcp front, delegation to dnctl / ixiactl
   dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup (+ MCP tools)
