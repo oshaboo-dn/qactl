@@ -25,6 +25,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional
 
 from dnctl.core import devices as _dn_devices
+from dnctl.core.credentials import resolve_device_credentials
 
 from dnctl.cli.core import backup_store
 from dnctl.cli.core.envelope import make_response
@@ -280,6 +281,13 @@ def _add_device(
     """
     if not sn:
         return fail("sn is required for operation='add'.")
+
+    # Pre-stored creds (`setup --device <NAME>`) must work for the
+    # registration probe even though the device isn't in the registry
+    # yet (#79): key the lookup on the chosen name and the SSH host.
+    user, password = resolve_device_credentials(
+        key_name, user, password, host=sn,
+    )
 
     try:
         probe: DeviceProbe = probe_device(
@@ -547,6 +555,9 @@ def _refresh_device(
     # otherwise the map write below forks a ghost canonical entry and the
     # drift check compares the chassis name against the wrong key.
     name = _dn_devices.resolve_canonical(name) or name
+    # The probes below go out host-only (by SN), so resolve the device's
+    # per-device creds against its registry name up front (#79).
+    user, password = resolve_device_credentials(name, user, password)
     raw_sns = entry.get("expected_sns") if isinstance(entry, dict) else None
     sns: List[str] = (
         [s for s in raw_sns if isinstance(s, str) and s]
@@ -681,6 +692,8 @@ def _name_check_device(
             in_sync=False, synced=False,
         )
     canonical = _dn_devices.resolve_canonical(name) or name
+    # Same host-only probe as refresh: resolve per-device creds by name.
+    user, password = resolve_device_credentials(canonical, user, password)
     raw_sns = entry.get("expected_sns") if isinstance(entry, dict) else None
     sns: List[str] = (
         [s for s in raw_sns if isinstance(s, str) and s]

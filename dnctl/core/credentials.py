@@ -19,8 +19,10 @@ There is no separate NETCONF account or auth-failure fallback: every
 protocol surface authenticates with the one ``DEFAULT_USER`` /
 ``DEFAULT_PASSWORD`` pair (plus ``SSH_KEY`` when configured).
 
-Registry devices can override that global account per box or per
-vendor — see :func:`resolve_device_credentials`. Vendor boxes (cisco /
+Devices can override that global account per box or per vendor — see
+:func:`resolve_device_credentials`. Per-box creds work for hosts that
+aren't registered yet too (``device add`` probes, ``--host``
+overrides). Vendor boxes (cisco /
 juniper / arista) don't speak the DNOS ``[auth]`` account, so their
 creds come from ``[devices."<name>"]`` in the config file (written by
 ``dnctl setup --device``) or ``<VENDOR>_USER`` / ``<VENDOR>_PASSWORD``
@@ -59,36 +61,63 @@ VENDOR_ENV: dict = {
 
 
 def resolve_device_credentials(
-    device: Optional[str], user: str, password: str
+    device: Optional[str], user: str, password: str,
+    host: Optional[str] = None,
 ) -> Tuple[str, str]:
-    """Effective SSH creds for a registry-device call, resolved per field:
+    """Effective SSH creds for a device call, resolved per field:
 
         explicit flag (anything != the global default)
         > per-device   [devices."<canonical>"] user/password
         > per-vendor   <VENDOR>_USER / <VENDOR>_PASSWORD env
         > global       DEFAULT_USER / DEFAULT_PASSWORD
 
-    Explicit ``--user`` / ``--password`` always pass through untouched:
-    layering only kicks in when the caller left *both* at the global
-    default (tool signatures pass DEFAULT_USER / DEFAULT_PASSWORD when no
-    flag was given). Host-only calls and unknown devices pass through —
-    there is no registry entry to key the lookup on.
+    An explicit ``--password`` always passes both fields through
+    untouched (tool signatures pass DEFAULT_USER / DEFAULT_PASSWORD when
+    no flag was given). An explicit ``--user`` with a *default* password
+    still consults the ``[devices."<name>"]`` store: the stored password
+    is borrowed when it belongs to that same account (stored ``user``
+    matches or is absent) — never cross-wired to a different one (#79).
+
+    The lookup is keyed on ``device`` first, then ``host``, and needs no
+    registry entry: pre-stored creds (``setup --device``) must work for
+    hosts that aren't registered yet, e.g. the ``device add`` probe and
+    ``--host`` overrides (#79). Per-vendor env creds still require a
+    registry entry (that's where the vendor is recorded).
     """
-    if not device or user != DEFAULT_USER or password != DEFAULT_PASSWORD:
+    if password != DEFAULT_PASSWORD:
+        return user, password
+    candidates = [c for c in (device, host) if c]
+    if not candidates:
         return user, password
     # Lazy imports: keep module import light and cycle-free.
     from dnctl.core import config as _config
     from dnctl.core import devices as _devices
 
-    entry = _devices.get_device_entry(device)
-    if not isinstance(entry, dict):
-        return user, password
-    canonical = _devices.resolve_canonical(device) or device
-    per_device = _config.device_config(canonical)
-    if not per_device and canonical != device:
-        per_device = _config.device_config(device)
+    per_device: dict = {}
+    for candidate in candidates:
+        canonical = _devices.resolve_canonical(candidate) or candidate
+        per_device = _config.device_config(canonical)
+        if not per_device and canonical != candidate:
+            per_device = _config.device_config(candidate)
+        if per_device:
+            break
 
-    vendor = (entry.get("vendor") or "").strip().lower()
+    if user != DEFAULT_USER:
+        stored_user = per_device.get("user")
+        stored_password = per_device.get("password")
+        if stored_password is not None and stored_user in (None, "", user):
+            return user, stored_password
+        return user, password
+
+    entry = None
+    for candidate in candidates:
+        entry = _devices.get_device_entry(candidate)
+        if isinstance(entry, dict):
+            break
+    vendor = (
+        (entry.get("vendor") or "").strip().lower()
+        if isinstance(entry, dict) else ""
+    )
     env_user_key, env_password_key = VENDOR_ENV.get(vendor, (None, None))
     env_user = os.environ.get(env_user_key) if env_user_key else None
     env_password = os.environ.get(env_password_key) if env_password_key else None

@@ -507,10 +507,13 @@ class TransportRegistry:
         if not device and not host:
             raise ValueError("Must provide device or host")
         # Registry devices may carry per-device / per-vendor creds (vendor
-        # boxes don't speak the global [auth] account). No-op when the
-        # caller passed explicit --user/--password. Idempotent, so callers
+        # boxes don't speak the global [auth] account); host-only calls
+        # resolve against [devices."<host>"] too (#79). No-op when the
+        # caller passed an explicit --password. Idempotent, so callers
         # that already resolved (run_once) are unaffected.
-        user, password = _creds.resolve_device_credentials(device, user, password)
+        user, password = _creds.resolve_device_credentials(
+            device, user, password, host=host,
+        )
         key = (device or host or "", user)
         # Per-key lock serialises concurrent first-openers so we only auth once.
         with self._key_lock(key):
@@ -839,7 +842,9 @@ def run_once(
         raise ValueError(f"invalid mode: {mode!r}")
     # Resolve creds up front so shell_exec's second password prompt uses
     # the same effective password the transport authenticated with.
-    user, password = _creds.resolve_device_credentials(device, user, password)
+    user, password = _creds.resolve_device_credentials(
+        device, user, password, host=host,
+    )
     # Resolve the vendor dialect for this device (DNOS for unknown /
     # host-only). DNOS's dialect reproduces the legacy defaults, so the
     # DNOS path is unchanged. Lazy import keeps the module import graph
@@ -934,7 +939,9 @@ def run_ncm_cli(
         raise ValueError("ncm_commands must be non-empty")
     # Same up-front cred resolution as run_once — the NCM shell entry
     # re-prompts for the password the transport authenticated with.
-    user, password = _creds.resolve_device_credentials(device, user, password)
+    user, password = _creds.resolve_device_credentials(
+        device, user, password, host=host,
+    )
     joined = " ; ".join(ncm_commands)
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):
