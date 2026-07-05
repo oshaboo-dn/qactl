@@ -239,6 +239,7 @@ def connect(
     hostkey_verify: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     device_map_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
 ) -> ConnectResult:
     """Open a NETCONF session with automatic host resolution and SN verification.
 
@@ -290,18 +291,24 @@ def connect(
     # cached IP can point at a different box that still answers NETCONF.
     mgmt0_verified = False
     mgmt0_warnings: List[str] = []
-    try:
-        from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
-        verification = verify_device_mgmt0(device, map_file=map_file)
-        mgmt0_verified = verification.verified
-        mgmt0_warnings = list(verification.warnings)
-        if verification.address:
-            resolved_host = verification.address
-    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+    if verify_mgmt0:
+        try:
+            from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
+            verification = verify_device_mgmt0(device, map_file=map_file)
+            mgmt0_verified = verification.verified
+            mgmt0_warnings = list(verification.warnings)
+            if verification.address:
+                resolved_host = verification.address
+        except Exception as exc:  # noqa: BLE001 - verification is best-effort
+            mgmt0_warnings.append(
+                f"mgmt0 CLI pre-verification errored "
+                f"({type(exc).__name__}: {exc}); proceeding with cached "
+                f"mgmt0={resolved_host!r} UNVERIFIED."
+            )
+    else:
         mgmt0_warnings.append(
-            f"mgmt0 CLI pre-verification errored "
-            f"({type(exc).__name__}: {exc}); proceeding with cached "
-            f"mgmt0={resolved_host!r} UNVERIFIED."
+            "mgmt0 pre-verification skipped by --no-verify-mgmt0; "
+            "using the cached address as-is."
         )
 
     expected_sns = _get_expected_sns(device, map_file)
@@ -364,6 +371,7 @@ def _connect_device(
     password: Optional[str],
     no_verify: bool,
     timeout: int,
+    verify_mgmt0: bool = True,
 ) -> ConnectResult:
     """Thin wrapper around connect() — translates MCP's no_verify convention."""
     return connect(
@@ -374,4 +382,5 @@ def _connect_device(
         password=password,
         hostkey_verify=not no_verify,
         timeout=timeout,
+        verify_mgmt0=verify_mgmt0,
     )

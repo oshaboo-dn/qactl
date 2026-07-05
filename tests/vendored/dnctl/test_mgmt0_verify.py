@@ -262,6 +262,83 @@ def test_gnmi_resolve_host_skips_verification_for_raw_host(monkeypatch):
 
 # --- rc mount_add bakes the verified address into the ODL mount --------------
 
+# --- --no-verify-mgmt0 escape hatch ------------------------------------------
+
+def _forbid_verifier(monkeypatch):
+    def never(device, **kw):
+        raise AssertionError("verify_device_mgmt0 must not run with verify_mgmt0=False")
+    monkeypatch.setattr(mgmt0_verify, "verify_device_mgmt0", never)
+
+
+def test_nc_connect_skips_verification_when_disabled(device_map, monkeypatch):
+    from dnctl.nc.core import session as ncsession
+
+    _forbid_verifier(monkeypatch)
+    monkeypatch.setattr(
+        ncsession, "_raw_connect",
+        lambda host, port, user, password, hostkey_verify, timeout: _FakeMgr(),
+    )
+    monkeypatch.setattr(
+        ncsession, "get_serial_numbers", lambda mgr, role: ["SN-CL-0"],
+    )
+
+    cr = ncsession.connect(
+        device="cl", device_map_file=device_map, verify_mgmt0=False,
+    )
+    assert cr.host == "10.0.0.1"
+    assert cr.mgmt0_verified is False
+    assert any("skipped" in w for w in cr.mgmt0_warnings)
+
+
+def test_gnmi_resolve_host_skips_verification_when_disabled(device_map, monkeypatch):
+    from dnctl.gnmi.core import session as gsession
+
+    _forbid_verifier(monkeypatch)
+    resolved = gsession.resolve_host(device="cl", host=None, verify_mgmt0=False)
+    assert resolved.host == "10.0.0.1"
+    assert resolved.mgmt0_verified is False
+    assert any("skipped" in w for w in resolved.warnings)
+
+
+def test_rc_mount_add_skips_verification_when_disabled(device_map, monkeypatch):
+    from dnctl.rc.tools import mount as rcmount
+
+    _forbid_verifier(monkeypatch)
+    monkeypatch.setattr(
+        rcmount, "get_endpoint",
+        lambda name: {"kind": "odl", "base_url": "http://odl:8181", "auth": {}},
+    )
+    monkeypatch.setattr(rcmount, "get_device", lambda d: {"mgmt0": "10.0.0.1"})
+    put_hosts = []
+    monkeypatch.setattr(
+        rcmount, "put_mount",
+        lambda **kw: put_hosts.append(kw["host"]) or (201, "created"),
+    )
+    monkeypatch.setattr(
+        rcmount, "wait_until_connected",
+        lambda **kw: {"connection-status": "connected"},
+    )
+
+    env = rcmount.restconf_mount_add("cl", persist=False, verify_mgmt0=False)
+    assert put_hosts == ["10.0.0.1"]
+    assert any("skipped" in w for w in env["warnings"])
+
+
+def test_ctx_flag_forwards_verify_mgmt0_to_tools():
+    from dnctl.core import options as O
+
+    seen = {}
+
+    def tool(device=None, verify_mgmt0=True, **_kw):
+        seen["verify_mgmt0"] = verify_mgmt0
+        return {"status": "ok"}
+
+    O.call(tool, O.build_ctx(device="cl", no_verify_mgmt0=True))
+    assert seen["verify_mgmt0"] is False
+    O.call(tool, O.build_ctx(device="cl"))
+    assert seen["verify_mgmt0"] is True
+
+
 def test_rc_mount_add_uses_live_mgmt0(device_map, monkeypatch):
     from dnctl.rc.tools import mount as rcmount
 

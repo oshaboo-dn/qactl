@@ -23,6 +23,7 @@ def gnmi_ping(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> Dict[str, Any]:
     """Cheap reachability check: open gRPC + run Capabilities.
@@ -59,6 +60,7 @@ def gnmi_ping(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+            verify_mgmt0=verify_mgmt0,
         )
     except Exception as e:
         return error_envelope(
@@ -107,6 +109,7 @@ def gnmi_capabilities(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     name_contains: Optional[str] = None,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> Dict[str, Any]:
@@ -135,6 +138,7 @@ def gnmi_capabilities(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+            verify_mgmt0=verify_mgmt0,
         )
     except Exception as e:
         return error_envelope(

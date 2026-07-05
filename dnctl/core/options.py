@@ -33,6 +33,7 @@ Password = Annotated[Optional[str], typer.Option("--password", help="Login passw
 Port = Annotated[Optional[int], typer.Option("--port", help="Protocol port (NETCONF 830, gNMI 50051, ...).")]
 Timeout = Annotated[Optional[int], typer.Option("--timeout", help="Per-call timeout in seconds.")]
 NoVerify = Annotated[bool, typer.Option("--no-verify/--verify", help="Skip TLS/host-key verification (default: on).")]
+NoVerifyMgmt0 = Annotated[bool, typer.Option("--no-verify-mgmt0/--verify-mgmt0", help="Skip the live mgmt0 pre-check against the chassis (default: verify).")]
 Json = Annotated[bool, typer.Option("--json", help="Emit the raw structured payload (jq-friendly).")]
 Yes = Annotated[bool, typer.Option("--yes", "-y", help="Confirm a destructive op; required when non-interactive.")]
 Log = Annotated[Optional[str], typer.Option("--log", help="Append the full raw command output (with a timestamp/device/cmd header) to this file, in addition to normal output. Append mode — repeated calls accumulate; usable as standalone QA evidence.")]
@@ -49,10 +50,12 @@ def build_ctx(
     as_json: bool = False,
     yes: bool = False,
     log: Optional[str] = None,
+    no_verify_mgmt0: bool = False,
 ) -> Ctx:
     return Ctx(
         device=device, host=host, user=user, password=password,
         port=port, timeout=timeout, no_verify=no_verify,
+        no_verify_mgmt0=no_verify_mgmt0,
         json=as_json, yes=yes, log=log,
     )
 
@@ -88,6 +91,7 @@ def call(fn: Callable[..., Any], c: Ctx, **extra: Any) -> Any:
         "timeout": c.timeout,
         "timeout_s": c.timeout,
         "no_verify": c.no_verify,
+        "verify_mgmt0": not c.no_verify_mgmt0,
     }
     merged = {**conn, **extra}
     params = inspect.signature(fn).parameters

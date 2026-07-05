@@ -28,12 +28,13 @@ def netconf_capabilities(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Return NETCONF server capabilities as hello XML."""
     sid = _session_id()
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "capabilities", device=device)
             caps = [str(c) for c in cr.mgr.server_capabilities]
             hello_xml = render_hello_xml(caps)
@@ -54,13 +55,14 @@ def netconf_ping(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = 30,
 ) -> Dict[str, Any]:
     """Lightweight connectivity and auth check. Connects and immediately disconnects."""
     sid = _session_id()
     t0 = time.monotonic()
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             latency_ms = round((time.monotonic() - t0) * 1000)
             return _base_result(
                 "ping", cr, sid,

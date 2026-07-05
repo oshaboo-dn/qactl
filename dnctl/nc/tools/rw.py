@@ -43,6 +43,7 @@ def netconf_get(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Read config or operational data from a device.
@@ -93,7 +94,7 @@ def netconf_get(
     warnings: List[str] = []
 
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "show", device=device)
             m = cr.mgr
 
@@ -149,6 +150,7 @@ def netconf_edit(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Atomic edit: edit-config candidate + commit.
@@ -181,7 +183,7 @@ def netconf_edit(
     return edit_from_xml(
         host=host, device=device, xml=xml, op=op, comment=comment,
         port=port, user=user, password=password,
-        no_verify=no_verify, timeout=timeout,
+        no_verify=no_verify, verify_mgmt0=verify_mgmt0, timeout=timeout,
     )
 
 

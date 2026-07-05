@@ -85,6 +85,7 @@ def _change_operation(
     user: Optional[str],
     password: Optional[str],
     no_verify: bool,
+    verify_mgmt0: bool = True,
     timeout: int,
     **_kwargs: Any,
 ) -> Dict[str, Any]:
@@ -98,7 +99,7 @@ def _change_operation(
     verification: Optional[Dict[str, Any]] = None
 
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, action, device=device)
 
             m = cr.mgr
@@ -157,6 +158,7 @@ def edit_from_xml(
     user: Optional[str],
     password: Optional[str],
     no_verify: bool,
+    verify_mgmt0: bool = True,
     timeout: int,
     xml_source: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -184,6 +186,7 @@ def edit_from_xml(
     try:
         with _connect_device(
             host, device, port, user, password, no_verify, timeout,
+            verify_mgmt0,
         ) as cr:
             log_path = _begin(cr, sid, action_label, device=device)
             m = cr.mgr

@@ -35,6 +35,7 @@ def netconf_apply(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Apply multiple XML payload files via edit-config + commit.
@@ -58,6 +59,7 @@ def netconf_apply(
         user=user,
         password=password,
         no_verify=no_verify,
+        verify_mgmt0=verify_mgmt0,
         timeout=timeout,
     )
 
@@ -71,12 +73,13 @@ def netconf_rollback(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Load a previous commit into candidate by rollback index, then optionally commit."""
     sid = _session_id()
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "rollback", device=device)
 
             m = cr.mgr
@@ -109,12 +112,13 @@ def netconf_discard_changes(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Discard pending candidate changes (safety net after failed edits)."""
     sid = _session_id()
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "discard-changes", device=device)
             discard_xml = discard_changes(cr.mgr)
             _log_action(log_path, "action", action="discard-changes", result="ok")

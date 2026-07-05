@@ -22,6 +22,7 @@ class Ctx:
     port: Optional[int] = None
     timeout: Optional[int] = None
     no_verify: bool = True
+    no_verify_mgmt0: bool = False
     json: bool = False
     yes: bool = False
     log: Optional[str] = None

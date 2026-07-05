@@ -70,10 +70,12 @@ def get(
     datatype: Datatype = "all",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Single-path gNMI Get."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(gnmi_get, c, path=path, tls_mode=tls_mode, encoding=encoding, datatype=datatype), c)
 
 
@@ -86,10 +88,12 @@ def get_many(
     datatype: Datatype = "all",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Multiple gNMI Gets against one device (paced, or one_call)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(gnmi_get_many, c, paths=paths, one_call=one_call, tls_mode=tls_mode, encoding=encoding, datatype=datatype), c)
 
 
@@ -104,7 +108,8 @@ def set(
     encoding: Encoding = "json",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Atomic gNMI Set — update / replace / delete in one RPC (DESTRUCTIVE — needs --yes).
 
@@ -116,7 +121,8 @@ def set(
         gnmi set system/.../leaf true -y
         gnmi set --update a/b=1 --replace c/d='{"x":1}' --delete e/f -y
     """
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     deletes = list(delete or [])
     try:
         upd = [{"path": p, "val": v} for p, v in (_parse_assign(s) for s in (update or []))]
@@ -158,10 +164,12 @@ def enumerate_keys(
     tls_mode: TlsMode = "insecure",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Discover which list keys exist at a parent path."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(gnmi_enumerate_keys, c, list_path=list_path, tls_mode=tls_mode), c)
 
 
@@ -178,7 +186,8 @@ def subscribe(
     encoding: Encoding = "json",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Bounded gNMI Subscribe (STREAM) — push-native event capture.
 
@@ -193,7 +202,8 @@ def subscribe(
         gnmi subscribe interfaces/interface/state/oper-status --duration 60 --json
         gnmi subscribe components/.../temperature --mode sample --sample-interval 5
     """
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     eff_mode = "on_change" if on_change else mode
     O.finish(
         O.call(
@@ -212,10 +222,12 @@ def capabilities(
     tls_mode: TlsMode = "insecure",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """gNMI Capabilities (advertised models / encodings)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(gnmi_capabilities, c, name_contains=name_contains, tls_mode=tls_mode), c)
 
 
@@ -224,10 +236,12 @@ def ping(
     tls_mode: TlsMode = "insecure",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Liveness check (open a gNMI channel)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(gnmi_ping, c, tls_mode=tls_mode), c)
 
 

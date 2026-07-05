@@ -47,10 +47,12 @@ def get(
     out_file: Annotated[Optional[str], typer.Option("--out-file", help="Also write the full result XML to this path.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Read config/operational data with a subtree-filter XML."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     body = O.read_body(xml, file, c)
     O.finish(O.call(netconf_get, c, xml=body, oper=oper, source=source, out_file=out_file), c)
 
@@ -63,10 +65,12 @@ def edit(
     comment: Annotated[Optional[str], typer.Option("--comment", help="Commit comment.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Atomic edit-config + commit (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     if not confirm.ensure(f"netconf edit (op={op}) on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     body = O.read_body(xml, file, c)
@@ -79,10 +83,12 @@ def apply(
     operation_type: Annotated[str, typer.Option("--operation-type", help="edit | ...")] = "edit",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Apply payload file(s) as one edit-config + commit (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     if not confirm.ensure(f"netconf apply {files} on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(netconf_apply, c, payload_files=files, operation_type=operation_type), c)
@@ -95,10 +101,12 @@ def diff(
     subtree: Annotated[Optional[str], typer.Option("--subtree", help="Limit diff to a subtree filter XML.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Diff running config against a backup (or candidate)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_diff, c, filename=filename, bucket=bucket, subtree=subtree), c)
 
 
@@ -108,10 +116,12 @@ def rollback(
     no_commit: Annotated[bool, typer.Option("--no-commit", help="Stage the rollback without committing.")] = False,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Roll the candidate back to a checkpoint (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     if not confirm.ensure(f"netconf rollback {index} on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(netconf_rollback, c, index=index, commit_after=not no_commit), c)
@@ -121,10 +131,12 @@ def rollback(
 def discard(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Discard candidate changes (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     if not confirm.ensure(f"netconf discard-changes on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(netconf_discard_changes, c), c)
@@ -137,10 +149,12 @@ def backup(
     source: Annotated[str, typer.Option("--source", help="Datastore to snapshot (default: running).")] = "running",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Snapshot a device's config to the backup store."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_backup, c, description=description, bucket=bucket, source=source), c)
 
 
@@ -173,10 +187,12 @@ def restore(
     mode: Annotated[str, typer.Option("--mode", help="merge | override | none (default: merge). 'override' maps to NETCONF replace.")] = "merge",
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Restore a backup onto a device (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     if not c.device:
         O.finish({"status": "error", "errors": ["--device is required for nc restore"]}, c)
     # Speak the cli group's vocabulary ("override") but hand the NETCONF
@@ -191,10 +207,12 @@ def restore(
 def capabilities(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """List the device's advertised NETCONF capabilities."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_capabilities, c), c)
 
 
@@ -205,10 +223,12 @@ def schema(
     out_file: Annotated[Optional[str], typer.Option("--out-file", help="Write the .yang to this path.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Fetch a YANG schema by name (<get-schema>)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_get_schema, c, identifier=identifier, version=version, out_file=out_file), c)
 
 
@@ -217,10 +237,12 @@ def yang_library(
     name_contains: Annotated[Optional[str], typer.Option("--name-contains", help="Filter modules by name.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """List the device's YANG library modules."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_yang_library, c, name_contains=name_contains), c)
 
 
@@ -240,10 +262,12 @@ def logs(
 def ping(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
-    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    no_verify: O.NoVerify = True, no_verify_mgmt0: O.NoVerifyMgmt0 = False,
+    as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Liveness check (open a NETCONF session)."""
-    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
+                    no_verify_mgmt0=no_verify_mgmt0)
     O.finish(O.call(netconf_ping, c), c)
 
 

@@ -47,6 +47,7 @@ def netconf_yang_library(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """List YANG modules advertised by the device (ietf-yang-library).
@@ -76,7 +77,7 @@ def netconf_yang_library(
     """
     sid = _session_id()
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "yang-library", device=device)
             modules = get_yang_library(cr.mgr)
             if name_contains:
@@ -108,6 +109,7 @@ def netconf_get_schema(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Fetch a YANG module source from the device via <get-schema> (RFC 6022).
@@ -160,7 +162,7 @@ def netconf_get_schema(
 
     warnings: List[str] = []
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "get-schema", device=device)
             source = get_schema_source(cr.mgr, identifier=identifier, version=version)
             _log_action(
@@ -216,6 +218,7 @@ def netconf_refresh_yang(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Probe the device's DNOS build and bulk-cache its YANG modules.

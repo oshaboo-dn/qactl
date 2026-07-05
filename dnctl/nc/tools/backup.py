@@ -54,6 +54,7 @@ def netconf_backup(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Backup full device config as a single .tar.gz on dnftp.
@@ -115,7 +116,7 @@ def netconf_backup(
     arc_root = filename[: -len(".tar.gz")]
 
     try:
-        with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+        with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
             log_path = _begin(cr, sid, "backup", device=device)
             result_xml = get_config(cr.mgr, source=source, dn_only=True)
             sections = split_config_to_sections(result_xml)
@@ -172,6 +173,7 @@ def netconf_restore(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Restore a backup .tar.gz from dnftp into the device's candidate datastore.
@@ -277,7 +279,7 @@ def netconf_restore(
             sections = load_restore_sections(sections_dir)
             section_results: List[Dict[str, Any]] = []
 
-            with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+            with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
                 log_path = _begin(cr, sid, "restore", device=device)
                 _log_action(
                     log_path, "action", action="download",
@@ -429,6 +431,7 @@ def netconf_diff(
     user: Optional[str] = None,
     password: Optional[str] = None,
     no_verify: bool = True,
+    verify_mgmt0: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Compare running config against a backup on dnftp or against inline XML.
@@ -494,7 +497,7 @@ def netconf_diff(
                     expected_arc_root=stat.basename,
                 )
 
-            with _connect_device(host, device, port, user, password, no_verify, timeout) as cr:
+            with _connect_device(host, device, port, user, password, no_verify, timeout, verify_mgmt0) as cr:
                 log_path = _begin(cr, sid, "diff", device=device)
                 if stat is not None:
                     _log_action(

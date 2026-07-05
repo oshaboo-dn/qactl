@@ -96,6 +96,7 @@ def _do_get(
     cert_file: Optional[str],
     key_file: Optional[str],
     ca_file: Optional[str],
+    verify_mgmt0: bool = True,
 ) -> Dict[str, Any]:
     """Internal: issue ONE gNMI Get for one or more paths and return a
     normalised dict ``{result, error, slept_s, latency_ms}``.
@@ -110,6 +111,7 @@ def _do_get(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
         )
     except Exception as e:
         out["error"] = ("connect_error", f"resolve/setup failed: {e}")
@@ -147,6 +149,7 @@ def gnmi_get(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     encoding: str = "json",
     datatype: str = "all",
     timeout_s: int = DEFAULT_TIMEOUT_S,
@@ -200,6 +203,7 @@ def gnmi_get(
         user=user, password=password,
         tls_mode=tls_mode,
         cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
     )
 
     env = make_envelope(
@@ -248,6 +252,7 @@ def gnmi_get_many(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     encoding: str = "json",
     datatype: str = "all",
     one_call: bool = False,
@@ -290,6 +295,7 @@ def gnmi_get_many(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
         )
         env = make_envelope(
             kind="get_many",
@@ -326,6 +332,7 @@ def gnmi_get_many(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
         )
         total_slept += sub["slept_s"]
         total_latency += sub["latency_ms"]
@@ -430,6 +437,7 @@ def gnmi_enumerate_keys(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> Dict[str, Any]:
     """Discover the list keys present at a parent path.
@@ -474,6 +482,7 @@ def gnmi_enumerate_keys(
         user=user, password=password,
         tls_mode=tls_mode,
         cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
     )
 
     env = make_envelope(
@@ -566,6 +575,7 @@ def gnmi_set(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
     encoding: str = "json",
     confirm: bool = False,
     timeout_s: int = DEFAULT_TIMEOUT_S,
@@ -657,6 +667,7 @@ def gnmi_set(
             user=user, password=password,
             tls_mode=tls_mode,
             cert_file=cert_file, key_file=key_file, ca_file=ca_file,
+        verify_mgmt0=verify_mgmt0,
         )
     except Exception as e:
         return error_envelope(

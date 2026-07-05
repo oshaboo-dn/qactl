@@ -195,13 +195,15 @@ def mount_add(
     endpoint: Annotated[str, typer.Option("--endpoint", help="Endpoint alias.")] = "odl-lab1",
     mount_name: Mount = None,
     netconf_port: Annotated[int, typer.Option("--netconf-port", help="Device NETCONF port.")] = 830,
+    no_verify_mgmt0: O.NoVerifyMgmt0 = False,
     as_json: O.Json = False, yes: O.Yes = False,
 ):
     """Create an ODL device mount (DESTRUCTIVE — needs --yes)."""
-    c = O.build_ctx(as_json=as_json, yes=yes)
+    c = O.build_ctx(as_json=as_json, yes=yes, no_verify_mgmt0=no_verify_mgmt0)
     if not confirm.ensure(f"restconf mount add {device} on {endpoint}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
-    kw = {"device": device, "endpoint": endpoint, "netconf_port": netconf_port}
+    kw = {"device": device, "endpoint": endpoint, "netconf_port": netconf_port,
+          "verify_mgmt0": not no_verify_mgmt0}
     if mount_name:
         kw["mount_name"] = mount_name
     O.finish(restconf_mount_add(**kw), c)

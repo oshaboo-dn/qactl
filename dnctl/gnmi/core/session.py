@@ -55,13 +55,17 @@ class Resolved:
     warnings: List[str] = field(default_factory=list)
 
 
-def resolve_host(device: Optional[str], host: Optional[str]) -> Resolved:
+def resolve_host(
+    device: Optional[str], host: Optional[str], verify_mgmt0: bool = True,
+) -> Resolved:
     """Resolve a device alias to mgmt0; or pass a host through verbatim.
 
     For device= the cached mgmt0 is verified against the chassis's live
     mgmt0 via the cli group (issue #71): on mismatch the map is refreshed
     and the live address is returned; when the chassis can't be CLI-probed
     the cached address is used with an UNVERIFIED warning on ``Resolved``.
+    ``verify_mgmt0=False`` (the ``--no-verify-mgmt0`` flag) skips the
+    pre-check and uses the cached address as-is.
     """
     if host and not device:
         return Resolved(host=host, port=DEFAULT_PORT)
@@ -76,18 +80,24 @@ def resolve_host(device: Optional[str], host: Optional[str]) -> Resolved:
     mgmt0 = _devices.resolve_mgmt0(device)
     mgmt0_verified = False
     warnings: List[str] = []
-    try:
-        from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
-        verification = verify_device_mgmt0(device)
-        mgmt0_verified = verification.verified
-        warnings = list(verification.warnings)
-        if verification.address:
-            mgmt0 = verification.address
-    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+    if verify_mgmt0:
+        try:
+            from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
+            verification = verify_device_mgmt0(device)
+            mgmt0_verified = verification.verified
+            warnings = list(verification.warnings)
+            if verification.address:
+                mgmt0 = verification.address
+        except Exception as exc:  # noqa: BLE001 - verification is best-effort
+            warnings.append(
+                f"mgmt0 CLI pre-verification errored "
+                f"({type(exc).__name__}: {exc}); proceeding with cached "
+                f"mgmt0={mgmt0!r} UNVERIFIED."
+            )
+    else:
         warnings.append(
-            f"mgmt0 CLI pre-verification errored "
-            f"({type(exc).__name__}: {exc}); proceeding with cached "
-            f"mgmt0={mgmt0!r} UNVERIFIED."
+            "mgmt0 pre-verification skipped by --no-verify-mgmt0; "
+            "using the cached address as-is."
         )
     if not mgmt0:
         raise ValueError(
@@ -152,6 +162,7 @@ def open_client(
     cert_file: Optional[str] = None,
     key_file: Optional[str] = None,
     ca_file: Optional[str] = None,
+    verify_mgmt0: bool = True,
 ) -> tuple[gNMIclient, Resolved, str]:
     """Open a gNMIclient with the single lab account.
 
@@ -159,7 +170,7 @@ def open_client(
     for ``client.__enter__()`` / ``__exit__`` since some paths need to
     inspect attributes before opening the channel.
     """
-    resolved = resolve_host(device, host)
+    resolved = resolve_host(device, host, verify_mgmt0=verify_mgmt0)
     target = (resolved.host, port or resolved.port)
     final_user = user if user is not None else DEFAULT_USER
     final_pw = password if password is not None else DEFAULT_PASSWORD
