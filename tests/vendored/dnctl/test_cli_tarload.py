@@ -20,6 +20,7 @@ No device traffic: ``run_sequence`` / ``run_once`` are monkeypatched.
 
 import inspect
 import json
+import os
 import types
 
 import pytest
@@ -383,12 +384,12 @@ def _capture_tar_load(monkeypatch):
     captured: dict = {}
 
     def _stub(jenkins_url=None, pre_check=True, components=None,
-              confirm=False, block=False, device=None, host=None,
-              user=None, password=None, **kw):
+              confirm=False, block=False, detach=False, device=None,
+              host=None, user=None, password=None, **kw):
         captured.update(
             jenkins_url=jenkins_url, pre_check=pre_check,
             components=components, confirm=confirm, block=block,
-            device=device,
+            detach=detach, device=device,
         )
         return {"status": "ok", "state": "done", "job_id": "dev-907-aaa",
                 "device": device}
@@ -462,3 +463,263 @@ def test_component_help_lists_values():
     assert r.exit_code == 0
     assert "--component" in r.stdout
     assert "-c" in r.stdout
+
+
+# --------------------------------------------------------------------------
+# --no-wait: detached worker, live persisted state, cross-process device
+# guard, orphan detection (issue #76)
+# --------------------------------------------------------------------------
+
+_GI_TAR = "http://minio/pkg/drivenets_gi_26.2.0.610_dev.dev_v26_2_1565.tar"
+
+
+def _mock_kickoff_network(monkeypatch):
+    """Mock the Jenkins fetches + `show system` probe so a confirm=True
+    kickoff reaches the guard / registration without any network."""
+    urls = {"gi_DNOS_artifact.txt": _DNOS_TAR, "gi_GI_artifact.txt": _GI_TAR}
+
+    def _fetch(base, name, fetch_timeout):
+        return urls.get(name), None
+
+    monkeypatch.setattr(tarload, "_fetch_jenkins_artifact", _fetch)
+
+    def _probe(reg, **kw):
+        assert kw.get("command") == tarload._SHOW_SYSTEM_CMD
+        return types.SimpleNamespace(
+            output="Version: DNOS [26.2.0.610]", hit_prompt=True,
+            head_prompt_line="HOST#", tail_prompt="HOST#",
+            host="HOST1", device="dev", steps=[],
+        )
+
+    monkeypatch.setattr(tarload, "run_once", _probe)
+
+
+def _clean_sequence(commands_seen=None):
+    """A run_sequence stand-in that answers every command cleanly and
+    drives the stop_predicate exactly like the real one."""
+    def _fake(reg, **kw):
+        steps = [_step(c, "Package loaded.") for c in kw["commands"]]
+        sp = kw.get("stop_predicate")
+        for s in steps:
+            if sp is not None and sp(s):
+                break
+        if commands_seen is not None:
+            commands_seen.extend(kw["commands"])
+        return _result(steps)
+    return _fake
+
+
+def test_detach_param_exists_default_false():
+    params = inspect.signature(tarload.request_system_tar_load).parameters
+    assert "detach" in params
+    assert params["detach"].default is False
+
+
+def test_pid_alive_basics():
+    import subprocess
+    assert tarload._pid_alive(os.getpid()) is True
+    assert tarload._pid_alive(None) is False
+    assert tarload._pid_alive(-1) is False
+    assert tarload._pid_alive(0) is False
+    assert tarload._pid_alive(True) is False
+    p = subprocess.Popen(["true"])
+    p.wait()  # reaped → the pid no longer exists
+    assert tarload._pid_alive(p.pid) is False
+
+
+def test_detach_kickoff_returns_immediately(monkeypatch):
+    _mock_kickoff_network(monkeypatch)
+    monkeypatch.setattr(tarload.os, "fork", lambda: 4242)
+    monkeypatch.setattr(
+        tarload, "run_sequence",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("parent must not run the load sequence")),
+    )
+
+    env = tarload.request_system_tar_load(
+        jenkins_url=_VALID_URL, device="dev", confirm=True,
+        detach=True, pre_check=False, notify_slack="",
+    )
+
+    # Successful kickoff exits 0 under the CLI contract; the job itself
+    # is still loading and carries the detached worker's pid.
+    assert env["status"] == "ok"
+    assert env["state"] == "loading"
+    assert env["worker_pid"] == 4242
+    assert env["eta_s"] > 0
+    assert any("tar-load show" in a for a in env["next_actions"])
+    # The parent persisted the kickoff snapshot so `show` resolves the
+    # job_id even before the child's first save.
+    persisted = job_store.load(env["job_id"])
+    assert persisted is not None
+    assert persisted["state"] == "loading"
+    assert persisted["worker_pid"] == 4242
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+def test_detach_real_fork_runs_load_to_done(monkeypatch):
+    _mock_kickoff_network(monkeypatch)
+    monkeypatch.setattr(tarload, "run_sequence", _clean_sequence())
+
+    env = tarload.request_system_tar_load(
+        jenkins_url=_VALID_URL, device="dev", confirm=True,
+        detach=True, pre_check=False, notify_slack="",
+    )
+    assert env["state"] == "loading"
+    pid = env["worker_pid"]
+    assert isinstance(pid, int) and pid > 0
+
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+
+    # Simulate a fresh process for `show`: the in-memory registry is
+    # stale in the kickoff process (the child owned the job).
+    tarload._TARLOAD_REGISTRY._jobs.clear()
+    tarload._TARLOAD_REGISTRY._active.clear()
+    got = tarload.get_tar_load_job(job_id=env["job_id"])
+    assert got["state"] == "done"
+    assert got["status"] == "ok"
+    statuses = {s["command"]: s["status"] for s in got["steps"]}
+    assert statuses[f"request system target-stack load {_DNOS_TAR}"] == "ok"
+    assert statuses[f"request system target-stack load {_GI_TAR}"] == "ok"
+
+
+def test_worker_persists_live_progress(monkeypatch):
+    # A separate process polling `tar-load show` mid-flight must see the
+    # in-flight state and the per-component steps completed so far.
+    commands = [_LOAD_A, _LOAD_B]
+    observed = []
+
+    def _fake_sequence(reg, **kw):
+        sp = kw["stop_predicate"]
+        for cmd in kw["commands"]:
+            sp(_step(cmd, "Package loaded."))
+            persisted = job_store.load("dev-7-abcdef")
+            observed.append(
+                (persisted["state"], len(persisted["steps"]),
+                 persisted["worker_pid"]),
+            )
+        return _result([_step(c, "Package loaded.") for c in kw["commands"]])
+
+    monkeypatch.setattr(tarload, "run_sequence", _fake_sequence)
+    job = _job()
+    tarload._tar_load_worker(job, "pw", commands)
+
+    me = os.getpid()
+    assert observed == [("loading", 1, me), ("loading", 2, me)]
+    final = job_store.load(job.job_id)
+    assert final["state"] == "done"
+    assert len(final["steps"]) == 2
+
+
+def test_kickoff_refuses_when_other_process_load_alive(monkeypatch):
+    _mock_kickoff_network(monkeypatch)
+    monkeypatch.setattr(
+        tarload, "run_sequence",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("guard must fire before the load sequence")),
+    )
+    monkeypatch.setattr(tarload, "_pid_alive", lambda pid: True)
+    job_store.save({
+        "job_id": "dev-1565-live", "device": "dev", "state": "loading",
+        "worker_pid": 99999, "started_utc": "2026-07-05T12:00:00Z",
+    })
+
+    env = tarload.request_system_tar_load(
+        jenkins_url=_VALID_URL, device="dev", confirm=True,
+        pre_check=False, notify_slack="",
+    )
+
+    assert env["status"] == "error"
+    joined = " ".join(env["errors"])
+    assert "another process" in joined and "dev-1565-live" in joined
+    # the live job was not disturbed
+    assert job_store.load("dev-1565-live")["state"] == "loading"
+
+
+def test_kickoff_flips_stale_load_and_proceeds(monkeypatch):
+    # A persisted "loading" job whose worker died must not block new
+    # kickoffs forever — it is flipped to error and the load proceeds.
+    _mock_kickoff_network(monkeypatch)
+    monkeypatch.setattr(tarload, "run_sequence", _clean_sequence())
+    monkeypatch.setattr(tarload, "_pid_alive", lambda pid: False)
+    job_store.save({
+        "job_id": "dev-1500-dead", "device": "dev", "state": "loading",
+        "worker_pid": 99999, "started_utc": "2026-07-05T11:00:00Z",
+    })
+
+    env = tarload.request_system_tar_load(
+        jenkins_url=_VALID_URL, device="dev", confirm=True,
+        pre_check=False, notify_slack="", block=True,
+    )
+
+    assert env["state"] == "done"
+    stale = job_store.load("dev-1500-dead")
+    assert stale["state"] == "error"
+    assert any("no longer running" in e for e in stale["errors"])
+
+
+def test_show_flags_orphaned_job(monkeypatch):
+    monkeypatch.setattr(tarload, "_pid_alive", lambda pid: False)
+    job_store.save({
+        "job_id": "dev-1565-orphan", "device": "dev", "state": "loading",
+        "status": "running", "worker_pid": 99999,
+    })
+
+    got = tarload.get_tar_load_job(job_id="dev-1565-orphan")
+
+    assert got["state"] == "error"
+    assert got["status"] == "error"
+    assert any("no longer running" in e for e in got["errors"])
+    # the flip is persisted so the device guard won't refuse new loads
+    assert job_store.load("dev-1565-orphan")["state"] == "error"
+
+
+def test_pre_check_kickoff_honours_cross_process_guard(monkeypatch):
+    def _probe(reg, **kw):
+        return types.SimpleNamespace(
+            output="Version: DNOS [26.2.0.610]", hit_prompt=True,
+            head_prompt_line="HOST#", tail_prompt="HOST#",
+            host="HOST1", device="dev", steps=[],
+        )
+
+    monkeypatch.setattr(tarload, "run_once", _probe)
+    monkeypatch.setattr(tarload, "_pid_alive", lambda pid: True)
+    job_store.save({
+        "job_id": "dev-1565-live", "device": "dev", "state": "loading",
+        "worker_pid": 99999,
+    })
+
+    env = tarload.request_system_pre_check(device="dev", notify_slack="")
+    assert env["status"] == "error"
+    assert "another process" in " ".join(env["errors"])
+
+
+def test_no_wait_flag_forwards_detach(monkeypatch):
+    captured = _capture_tar_load(monkeypatch)
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "--no-wait", "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured["detach"] is True
+    assert captured["block"] is False
+
+
+def test_default_stays_blocking(monkeypatch):
+    captured = _capture_tar_load(monkeypatch)
+    r = runner.invoke(
+        app,
+        ["cli", "tar-load", "start", _VALID_URL, "-d", "dev",
+         "--yes", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured["detach"] is False
+    assert captured["block"] is True
+
+
+def test_no_wait_in_help():
+    r = runner.invoke(app, ["cli", "tar-load", "start", "--help"])
+    assert r.exit_code == 0
+    assert "--no-wait" in r.stdout

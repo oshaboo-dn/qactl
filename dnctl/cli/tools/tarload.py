@@ -41,6 +41,7 @@ device pulls directly from minio. That's a different grammar from
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -393,6 +394,12 @@ class TarLoadJob(BaseJob):
     step_timeout: int = 0
     pre_check_poll_interval_s: int = 0
     pre_check_max_wait_s: int = 0
+    # PID of the process driving the worker (the CLI process itself under
+    # ``block=True``, the forked child under ``detach=True``, the MCP
+    # server under the thread model). Persisted with the envelope so a
+    # *different* process can tell a live job from one whose worker died
+    # mid-flight (issue #76).
+    worker_pid: Optional[int] = None
     # Per-step transcript built once the worker finishes the load
     # sequence. Each entry is ``{"command", "status", "errors", "stdout"}``.
     steps: List[Dict[str, Any]] = field(default_factory=list)
@@ -435,6 +442,8 @@ def _tarload_job_envelope(job: TarLoadJob) -> Dict[str, Any]:
         "errors": list(job.errors),
         "next_actions": list(job.next_actions),
     }
+    if job.worker_pid is not None:
+        env["worker_pid"] = job.worker_pid
     if job.pre_check:
         env["pre_check"] = dict(job.pre_check)
     if job.completed_utc:
@@ -449,6 +458,114 @@ def _tarload_job_envelope(job: TarLoadJob) -> Dict[str, Any]:
     else:
         env["status"] = job.state  # error | timeout
     return env
+
+
+def _pid_alive(pid: Any) -> bool:
+    """Best-effort liveness check for a persisted ``worker_pid``.
+
+    PIDs recycle, so a hit is only probable-alive — combined with the
+    24 h envelope TTL and the non-terminal-state precondition at every
+    call site, a false positive needs a recycled pid landing on the
+    same box within a day of an interrupted load.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _mark_orphaned(envelope: Dict[str, Any]) -> Dict[str, Any]:
+    """Flip a persisted non-terminal envelope whose worker process died
+    to a terminal ``error`` and re-persist it (issue #76).
+
+    Without this, a killed ``--no-wait`` worker (or a blocking CLI run
+    killed by a shell timeout) leaves the on-disk job saying "loading"
+    forever — and the device guard would refuse new kickoffs.
+    """
+    pid = envelope.get("worker_pid")
+    envelope["state"] = "error"
+    envelope["status"] = "error"
+    envelope.setdefault("errors", []).append(
+        f"tar-load worker process (pid {pid if pid else 'unknown'}) is no "
+        "longer running — the job was interrupted mid-flight. A device-side "
+        "download that already started keeps running on the box; cross-check "
+        f"'{_SHOW_STACK_CMD}' before re-issuing."
+    )
+    envelope.setdefault("next_actions", []).append(
+        "Verify what actually landed with 'show system stack', then "
+        "re-issue the load for missing components: "
+        "tar-load start <jenkins_url> [-c <component>] --yes"
+    )
+    job_store.save(envelope)
+    return envelope
+
+
+def _persisted_active_conflict(device_key: str) -> Optional[Dict[str, Any]]:
+    """Cross-process device guard: return the persisted envelope of a
+    tar-load another process is still driving on ``device_key``, else
+    ``None``.
+
+    The in-memory ``active_for_device`` guard only covers one process;
+    a detached ``--no-wait`` worker (or a concurrent blocking CLI run)
+    lives in its own. DNOS accepts only ONE target-stack load at a time
+    (issue #76), so kickoffs must also honour the persisted live state.
+    A non-terminal envelope whose worker pid is dead — or is *this*
+    process without an in-memory claim (callers check that first) — is
+    stale: it is flipped to error and does not block the new kickoff.
+    """
+    envelope = job_store.latest_for_device(device_key)
+    if not envelope or envelope.get("state") not in ("loading", "precheck"):
+        return None
+    pid = envelope.get("worker_pid")
+    if pid != os.getpid() and _pid_alive(pid):
+        return envelope
+    _mark_orphaned(envelope)
+    return None
+
+
+def _spawn_detached_worker(
+    job: TarLoadJob, password: str, commands: List[str],
+) -> int:
+    """Fork a session-detached child that runs the worker to completion;
+    returns the child pid (parent side — the child never returns).
+
+    The child owns the whole load: it persists live progress via
+    ``job_store`` (kickoff, each step, precheck transition, terminal) so
+    ``tar-load show`` from any later process can poll it. It detaches
+    from the caller's session/TTY (``setsid`` + fds → /dev/null) so an
+    agent shell timeout killing the parent can't take the load down
+    with it (issue #76). Device-side commands stay strictly serial —
+    this only detaches the LOCAL driver.
+    """
+    pid = os.fork()
+    if pid > 0:
+        return pid
+    # --- child: never returns ------------------------------------------
+    exit_code = 0
+    try:
+        os.setsid()
+        devnull = os.open(os.devnull, os.O_RDWR)
+        os.dup2(devnull, 0)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        # Inherited paramiko transports carry reader threads that do not
+        # survive a fork — abandon the pool (without closing: the socket
+        # fds are shared with the parent) and reconnect fresh.
+        transport_registry.reset_after_fork()
+        _tar_load_worker(job, password, list(commands))
+    except BaseException:  # noqa: BLE001 — nothing may escape past os._exit
+        exit_code = 1
+    finally:
+        os._exit(exit_code)
+    return 0  # unreachable; keeps the signature honest for type checkers
 
 
 # Status values DNOS uses while pre-check is still running. Anything outside
@@ -554,6 +671,7 @@ def request_system_tar_load(
     pre_check_max_wait_s: int = _DEFAULT_PRECHECK_WAIT_S,
     notify_slack: str = "@oshaboo",
     block: bool = False,
+    detach: bool = False,
 ) -> Dict[str, Any]:
     """Stage upgrade tarballs on a device from a cheetah Jenkins build;
     returns IMMEDIATELY (unless ``block=True``).
@@ -767,6 +885,22 @@ def request_system_tar_load(
             the on-device load mid-download — issue #17). When ``True``
             the terminal envelope is also persisted to disk so a later
             ``tar-load show <job_id>`` resolves it.
+        detach: Fork the worker into a session-detached child process
+            and return the kickoff envelope immediately (the CLI
+            ``--no-wait`` front — issue #76). Takes precedence over
+            ``block``. The child persists live progress to disk
+            (kickoff, per step, precheck transition, terminal), so
+            ``tar-load show <job_id>`` / ``show -d <device>`` from any
+            later process reports it; the returned envelope carries
+            ``worker_pid``. Only the LOCAL driver is detached — the
+            on-device component loads stay strictly serial
+            (base_os → dnos → gi, each to completion), because DNOS
+            accepts a single target-stack load at a time. POSIX-only
+            (``os.fork``). Built for the one-shot CLI front (the
+            process exits right after kickoff); a long-lived server
+            should keep using the default thread model — after a fork
+            its in-memory view of the job goes stale and the disk
+            envelope is the only truth.
 
     Returns:
         Kickoff envelope:
@@ -1087,6 +1221,29 @@ def request_system_tar_load(
             device=device, host=host,
             next_action=f"get_tar_load_job(job_id={active.job_id!r})",
         )
+    # The in-memory guard only sees this process; a detached --no-wait
+    # worker (or a concurrent blocking CLI run) lives in another one.
+    # DNOS accepts a single target-stack load at a time (issue #76).
+    conflict = _persisted_active_conflict(device_key)
+    if conflict is not None:
+        return error_response(
+            f"A tar-load is already running on {device_key!r} in another "
+            f"process (job_id={conflict.get('job_id')}, "
+            f"state={conflict.get('state')}, "
+            f"worker_pid={conflict.get('worker_pid')}, "
+            f"started_utc={conflict.get('started_utc')}). DNOS accepts "
+            "only one target-stack load at a time — wait for it to "
+            "finish before starting a new one.",
+            device=device, host=host,
+            next_action=f"get_tar_load_job(job_id={conflict.get('job_id')!r})",
+        )
+    if detach and not hasattr(os, "fork"):
+        return error_response(
+            "detach (--no-wait) requires a POSIX platform (os.fork is "
+            "unavailable here); re-run without --no-wait.",
+            device=device, host=host,
+            next_action=REQUEST_TAR_LOAD_NEXT_ACTION,
+        )
 
     # --- register the job + spawn the worker ----------------------------
     started = datetime.now(timezone.utc)
@@ -1124,6 +1281,35 @@ def request_system_tar_load(
     # Persist the kickoff request shape for the audit log; the worker
     # logs the final envelope from inside the thread.
     request["job_id"] = job_id
+
+    # detach=True (the CLI --no-wait front): hand the whole load to a
+    # session-detached child process and return the kickoff envelope
+    # NOW. The child re-persists live progress as it goes; the parent
+    # persists this pre-worker snapshot first so a `tar-load show`
+    # racing the child's first save still resolves the job_id.
+    if detach:
+        job.worker_pid = _spawn_detached_worker(job, password, list(commands))
+        job_store.save(_tarload_job_envelope(job))
+        envelope = _tarload_job_envelope(job)
+        # The kickoff itself succeeded — exit 0 under the CLI contract.
+        # The job's own progress lives in state/steps via `show`.
+        envelope["status"] = "ok"
+        eta_s = (
+            _TARLOAD_ETA_WITH_PRECHECK_S if effective_pre_check
+            else _TARLOAD_ETA_WITHOUT_PRECHECK_S
+        )
+        envelope["eta_s"] = eta_s
+        envelope["next_actions"] = [
+            f"Tar-load detached on {device_key} ({device_mode}): worker "
+            f"pid {job.worker_pid} keeps driving the on-device loads "
+            f"strictly serially. Typical ETA ~{eta_s // 60} min (hard "
+            f"caps: step_timeout={step_timeout}s/load, "
+            f"pre_check_max_wait_s={pre_check_max_wait_s}s). Poll with "
+            f"'tar-load show {job_id}' (or 'tar-load show -d "
+            f"{device_key}')."
+        ]
+        log_request(tool, request, envelope)
+        return envelope
 
     worker = threading.Thread(
         target=_tar_load_worker,
@@ -1281,6 +1467,14 @@ def _tar_load_worker(
         "jenkins_url": job.jenkins_url,
     }
 
+    # Persist the live envelope from the very start (not just the
+    # terminal one) so a *different* process — `tar-load show` polling a
+    # detached --no-wait worker, or a second kickoff's device guard —
+    # can see the in-flight state (issue #76). worker_pid lets readers
+    # tell a live job from one whose worker died.
+    job.worker_pid = os.getpid()
+    job_store.save(_tarload_job_envelope(job))
+
     # The first command (when present) is just session setup
     # (``set cli-no-confirm``); we don't show it as a "step" to the
     # agent. Same for an error in it, which would be very surprising —
@@ -1290,7 +1484,28 @@ def _tar_load_worker(
     # command is also cosmetically a "step" we surface, but its output
     # is allowed to be empty (no prior task) — only treat truly broken
     # DNOS outputs as an abort signal.
+    def _record_progress(step) -> None:
+        """Append a provisional per-step envelope + persist, so `show`
+        from another process reports per-component progress mid-flight
+        (issue #76). The post-sequence rebuild below replaces
+        ``job.steps`` wholesale with the authoritative view."""
+        if step.command in (_NO_CONFIRM_CMD, _PRECHECK_SHOW_CMD):
+            return
+        is_err, err_lines = detect_error(step.output)
+        if is_err and _ALREADY_REGISTERED_RE.search(step.output or ""):
+            status, errors = "already_staged", []
+        elif is_err:
+            status, errors = "error", err_lines[-5:]
+        else:
+            status, errors = "ok", []
+        job.steps.append({
+            "command": step.command, "status": status,
+            "errors": errors, "stdout": step.output,
+        })
+        job_store.save(_tarload_job_envelope(job))
+
     def _stop_on_dnos_error(step) -> bool:
+        _record_progress(step)
         if step.command == _NO_CONFIRM_CMD:
             return False
         is_err, _ = detect_error(step.output)
@@ -1449,6 +1664,7 @@ def _tar_load_worker(
         # Transition state for the agent's progress view: we're done
         # uploading and now waiting on pre-check.
         job.state = "precheck"
+        job_store.save(_tarload_job_envelope(job))
         pre_env = _poll_tar_pre_check(
             tool=tool, device=job.device, host=job.host,
             user=job.user, password=password,
@@ -1546,6 +1762,16 @@ def get_tar_load_job(
             # When both job_id and device were given, only honour the
             # cached hit if it actually belongs to that device.
             if not (job_id and device) or pdev == device:
+                # Live envelopes (loading/precheck) are persisted by the
+                # worker as it goes (issue #76). If the worker process
+                # behind one is gone, the job died mid-flight — say so
+                # instead of reporting "loading" forever. (`pid ==
+                # os.getpid()` can't be a live worker here: an in-process
+                # worker would have hit the in-memory registry above.)
+                if persisted.get("state") in ("loading", "precheck"):
+                    pid = persisted.get("worker_pid")
+                    if pid == os.getpid() or not _pid_alive(pid):
+                        persisted = _mark_orphaned(persisted)
                 log_request(
                     "get_tar_load_job",
                     {"job_id": job_id, "device": device},
@@ -1795,6 +2021,20 @@ def request_system_pre_check(
             "it, or wait for it to finish before starting a new one.",
             device=device, host=host,
             next_action=f"get_tar_load_job(job_id={active.job_id!r})",
+        )
+    # Cross-process guard: a detached --no-wait tar-load worker (or a
+    # concurrent blocking CLI run) lives in another process (issue #76).
+    conflict = _persisted_active_conflict(device_key)
+    if conflict is not None:
+        return error_response(
+            f"A tar-load/pre-check is already running on {device_key!r} "
+            f"in another process (job_id={conflict.get('job_id')}, "
+            f"state={conflict.get('state')}, "
+            f"worker_pid={conflict.get('worker_pid')}, "
+            f"started_utc={conflict.get('started_utc')}). Wait for it to "
+            "finish before starting a new one.",
+            device=device, host=host,
+            next_action=f"get_tar_load_job(job_id={conflict.get('job_id')!r})",
         )
 
     started = datetime.now(timezone.utc)

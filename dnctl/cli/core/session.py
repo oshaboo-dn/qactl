@@ -470,6 +470,23 @@ class TransportRegistry:
         self._reaper = threading.Thread(target=self._reap_loop, daemon=True)
         self._reaper.start()
 
+    def reset_after_fork(self) -> None:
+        """Forget every inherited transport after an ``os.fork()``.
+
+        Cached paramiko transports carry reader threads that do not
+        survive a fork, so the child must abandon them (NOT close them
+        — the underlying socket fds are shared with the parent, and a
+        close would send an SSH disconnect on the parent's connection)
+        and open fresh ones. Locks are re-created in case another
+        thread held one at fork time, and the reaper thread — which is
+        not inherited — is restarted.
+        """
+        self._transports = {}
+        self._key_locks = {}
+        self._registry_lock = threading.Lock()
+        self._reaper = threading.Thread(target=self._reap_loop, daemon=True)
+        self._reaper.start()
+
     def _key_lock(self, key: Tuple[str, str]) -> threading.Lock:
         with self._registry_lock:
             lock = self._key_locks.get(key)

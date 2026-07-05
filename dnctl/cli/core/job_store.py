@@ -11,8 +11,11 @@ breaks: the process exits the instant the command returns, so the
 in-memory registry is gone and a later ``qactl cli tar-load show <id>``
 finds nothing (issue #17). To make ``show`` resolvable across separate
 CLI invocations, the CLI runs the worker synchronously (see ``block`` in
-:mod:`dnctl.cli.tools.tarload`) and persists the *terminal* job envelope
-here as a small JSON file keyed by ``job_id``.
+:mod:`dnctl.cli.tools.tarload`) and persists the job envelope here as a
+small JSON file keyed by ``job_id``. Since issue #76 the tar-load worker
+persists *live* envelopes too (kickoff, per step, precheck transition),
+each carrying a ``worker_pid``, so a detached ``--no-wait`` load can be
+polled — and told apart from a dead one — by any later process.
 
 This is a pure local-filesystem cache of the envelope dict — it never
 touches the device and stores no secrets (the envelope itself carries

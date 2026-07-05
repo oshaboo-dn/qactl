@@ -829,6 +829,16 @@ def tar_load_start(
             "loaded (in baseos->dnos->gi order) and each is required."
         ),
     )] = None,
+    no_wait: Annotated[bool, typer.Option(
+        "--no-wait",
+        help=(
+            "Kick off the load and return immediately with the job "
+            "handle; a session-detached local worker keeps driving the "
+            "on-device loads strictly serially (survives shell "
+            "timeouts). Poll with 'tar-load show <job_id>' or "
+            "'tar-load show -d <device>'."
+        ),
+    )] = False,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
@@ -839,6 +849,9 @@ def tar_load_start(
         raise typer.Exit(confirm.REFUSAL_EXIT)
     # block=True: the CLI process is the worker. Run the load to
     # completion in-line and return the terminal envelope (issue #17).
+    # --no-wait flips that to detach=True: the worker forks into a
+    # session-detached child that persists live progress, and the
+    # kickoff envelope returns immediately (issue #76).
     # confirm=True: the --yes gate above already confirmed; the tool's
     # own confirm gate would otherwise short-circuit to a dry-run.
     # components: None (no -c given) keeps the load-all default; a
@@ -848,7 +861,7 @@ def tar_load_start(
             request_system_tar_load, c,
             jenkins_url=jenkins_url, pre_check=not no_pre_check,
             components=component or None,
-            confirm=True, block=True,
+            confirm=True, block=not no_wait, detach=no_wait,
         ),
         c,
     )
