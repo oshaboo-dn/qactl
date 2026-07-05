@@ -10,6 +10,8 @@ Usage::
 
     dnctl setup                    # interactive wizard
     dnctl setup --password ...     # non-interactive: set only what's passed
+    dnctl setup --password -       # secret-safe: read the password from stdin
+                                   # (pipe), or a hidden prompt on a TTY
     dnctl setup --device jun-rt02 --user ... --password ...
                                    # per-device creds ([devices."<name>"])
     dnctl setup --show             # print resolved sources (secrets redacted)
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Dict, List, Optional, Tuple
 
 import typer
@@ -50,7 +53,12 @@ _SECTION_ORDER = ["auth", "dnftp", "local"]
 
 
 def _toml_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
 
 
 def _emit_toml(data: Dict[str, Dict[str, object]]) -> str:
@@ -119,6 +127,38 @@ def _write_config(values: Dict[str, Dict[str, object]]) -> str:
     os.chmod(path, 0o600)
     _config.load_config.cache_clear()
     return str(path)
+
+
+def _resolve_secret(
+    value: Optional[str], label: str, stdin_state: Dict[str, str],
+) -> Optional[str]:
+    """Expand a secret flag passed as ``-`` so it never lands on argv.
+
+    On a TTY the value is taken from a hidden prompt; otherwise it is read
+    from stdin (one trailing newline stripped). Only one flag per invocation
+    can consume stdin, and an empty stdin read is an error — clearing a key
+    stays explicit (``--password ""``).
+    """
+    if value != "-":
+        return value
+    if sys.stdin.isatty():
+        return typer.prompt(label, hide_input=True)
+    if stdin_state:
+        typer.echo(
+            f"only one secret flag can read stdin ('-'); "
+            f"both {stdin_state['owner']} and {label} asked for it."
+        )
+        raise typer.Exit(code=2)
+    stdin_state["owner"] = label
+    data = sys.stdin.read()
+    if data.endswith("\n"):
+        data = data[:-1]
+        if data.endswith("\r"):
+            data = data[:-1]
+    if not data:
+        typer.echo(f"{label}: '-' given but stdin was empty.")
+        raise typer.Exit(code=2)
+    return data
 
 
 def _redact(value: Optional[str], is_secret: bool) -> Optional[str]:
@@ -245,16 +285,16 @@ def setup(
     path: bool = typer.Option(False, "--path", help="Print the config-file path and exit."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output (with --show)."),
     user: Optional[str] = typer.Option(None, "--user", help="SSH / API user."),
-    password: Optional[str] = typer.Option(None, "--password", help="Password."),
+    password: Optional[str] = typer.Option(None, "--password", help="Password ('-' reads stdin, or a hidden prompt on a TTY)."),
     device: Optional[str] = typer.Option(None, "--device", help="Scope --user/--password to this registry device ([devices.\"<name>\"]) instead of the global [auth]. Empty value clears the key."),
     ssh_key: Optional[str] = typer.Option(None, "--ssh-key", help="SSH private-key path."),
     dnftp_host: Optional[str] = typer.Option(None, "--dnftp-host", help="dnftp host."),
     dnftp_user: Optional[str] = typer.Option(None, "--dnftp-user", help="dnftp user."),
-    dnftp_password: Optional[str] = typer.Option(None, "--dnftp-password", help="dnftp password."),
+    dnftp_password: Optional[str] = typer.Option(None, "--dnftp-password", help="dnftp password ('-' reads stdin, or a hidden prompt on a TTY)."),
     dnftp_vrf: Optional[str] = typer.Option(None, "--dnftp-vrf", help="dnftp VRF."),
     local_sftp_host: Optional[str] = typer.Option(None, "--local-sftp-host", help="Local SFTP host the device uploads to (blank = auto FQDN)."),
     local_sftp_user: Optional[str] = typer.Option(None, "--local-sftp-user", help="Local SFTP user (blank = current OS user)."),
-    local_sftp_password: Optional[str] = typer.Option(None, "--local-sftp-password", help="Local SFTP password for config backups."),
+    local_sftp_password: Optional[str] = typer.Option(None, "--local-sftp-password", help="Local SFTP password for config backups ('-' reads stdin, or a hidden prompt on a TTY)."),
     local_sftp_vrf: Optional[str] = typer.Option(None, "--local-sftp-vrf", help="Local SFTP VRF."),
     local_sftp_port: Optional[str] = typer.Option(None, "--local-sftp-port", help="Local SFTP/SSH port the device connects to."),
 ) -> None:
@@ -268,6 +308,13 @@ def setup(
     if check_local_sftp:
         _check_local_sftp(as_json)
         return
+
+    stdin_state: Dict[str, str] = {}
+    password = _resolve_secret(password, "Password", stdin_state)
+    dnftp_password = _resolve_secret(dnftp_password, "dnftp password", stdin_state)
+    local_sftp_password = _resolve_secret(
+        local_sftp_password, "Local SFTP password", stdin_state,
+    )
 
     if device:
         # Per-device creds (vendor boxes etc.) — see dnctl.core.credentials.

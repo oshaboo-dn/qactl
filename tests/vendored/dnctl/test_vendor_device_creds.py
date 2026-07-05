@@ -177,6 +177,72 @@ def test_setup_cli_device_flag(lab, tmp_path):
     assert result.exit_code == 2
 
 
+def _setup_runner():
+    from typer.testing import CliRunner
+    import typer
+
+    app = typer.Typer()
+    app.command()(setup_cmd.setup)
+    return app, CliRunner()
+
+
+def test_setup_password_dash_reads_stdin(lab):
+    # Acceptance for #78: printf '%s' "$PW" | qactl setup ... --password -
+    app, runner = _setup_runner()
+    result = runner.invoke(
+        app, ["--device", "jun-rt02", "--user", "u", "--password", "-"],
+        input="s3cret",
+    )
+    assert result.exit_code == 0, result.output
+    assert config.load_config()["devices"]["jun-rt02"] == {"user": "u", "password": "s3cret"}
+    assert "s3cret" not in result.output
+
+
+def test_setup_password_dash_strips_one_trailing_newline(lab):
+    # echo adds a newline; only that one is stripped, inner ones survive.
+    app, runner = _setup_runner()
+    result = runner.invoke(app, ["--password", "-"], input="pw with\nnewline\n")
+    assert result.exit_code == 0, result.output
+    assert config.load_config()["auth"]["password"] == "pw with\nnewline"
+
+
+def test_setup_password_dash_empty_stdin_is_error(lab):
+    app, runner = _setup_runner()
+    result = runner.invoke(app, ["--device", "jun-rt02", "--password", "-"], input="")
+    assert result.exit_code == 2
+    assert "stdin was empty" in result.output
+    assert "devices" not in config.load_config()
+
+
+def test_setup_only_one_dash_may_read_stdin(lab):
+    app, runner = _setup_runner()
+    result = runner.invoke(
+        app, ["--password", "-", "--dnftp-password", "-"], input="pw",
+    )
+    assert result.exit_code == 2
+    assert "only one secret flag" in result.output
+
+
+def test_resolve_secret_prompts_hidden_on_tty(monkeypatch):
+    class FakeTTY:
+        def isatty(self):
+            return True
+
+    prompts = {}
+
+    def fake_prompt(label, **kwargs):
+        prompts.update(kwargs, label=label)
+        return "typed-pw"
+
+    monkeypatch.setattr(setup_cmd.sys, "stdin", FakeTTY())
+    monkeypatch.setattr(setup_cmd.typer, "prompt", fake_prompt)
+    assert setup_cmd._resolve_secret("-", "Password", {}) == "typed-pw"
+    assert prompts == {"label": "Password", "hide_input": True}
+    # Non-dash values pass through untouched (no prompt, no stdin).
+    assert setup_cmd._resolve_secret("inline", "Password", {}) == "inline"
+    assert setup_cmd._resolve_secret(None, "Password", {}) is None
+
+
 def test_connect_error_hints_vendor_creds(lab, monkeypatch):
     import paramiko
     from dnctl.cli.core import session

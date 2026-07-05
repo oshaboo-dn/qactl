@@ -148,8 +148,12 @@ juniper / arista boxes): the global `[auth]` account is DNOS-only, so
 store per-device creds once —
 
 ```bash
-qactl setup --device jun-rt02 --user <user> --password <pw>
+printf '%s' "$PW" | qactl setup --device jun-rt02 --user <user> --password -
 ```
+
+(`--password -` reads the secret from stdin — or a hidden prompt on a
+TTY — so it never lands on argv or in shell history; an inline value
+still works.)
 
 — or export per-vendor env creds (`CISCO_USER`/`CISCO_PASSWORD`,
 `JUNIPER_USER`/`JUNIPER_PASSWORD`, `ARISTA_USER`/`ARISTA_PASSWORD`).
