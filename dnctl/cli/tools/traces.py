@@ -1,7 +1,8 @@
 """Trace-log MCP tools (``list_traces`` / ``get_trace``).
 
-DNOS writes per-subsystem trace logs under ``/core/traces/`` (NCC) and
-``/core/traces/datapath/`` (NCP). These two tools list and read them via
+DNOS writes per-subsystem trace logs under ``/core/traces/routing_engine/``
+(NCC) and per-subsystem dirs under ``/core/traces/`` (NCP: ``datapath``,
+``dnos-agent``, ``gi-agent``, ...). These two tools list and read them via
 ``run start shell``, with the same time-window / grep / tail filters as
 the accounting tools — except trace timestamps are device-LOCAL, not UTC.
 The MCP probes the device's TZ once per device (``date +%z``, cached in
@@ -38,6 +39,10 @@ from dnctl.cli.vendors import CAP_LOGS, requires
 
 
 _TRACES_DEFAULT_DIR = "/core/traces/routing_engine"
+# NCPs have no routing_engine dir; their traces live in per-subsystem dirs
+# directly under /core/traces/ (datapath, dnos-agent, gi-agent, gi-manager,
+# node-manager, ...). Non-preset ncp calls root here and list recursively.
+_TRACES_NCP_ROOT = "/core/traces"
 _TRACES_MAX_BYTES = 500_000
 _TRACES_TAIL_DEFAULT = 500
 _TRACES_TAIL_MAX = 50_000
@@ -80,6 +85,9 @@ _TRACE_TARGET_NAMES = tuple(_TRACE_TARGETS.keys())
 _TRACE_NAME_RE = re.compile(r"^[A-Za-z0-9._:\-]+$")
 _TRACE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._:\-]+$")
 _TZ_OFFSET_RE = re.compile(r"^([+\-])(\d{2})(\d{2})$")
+# stderr from a failed listing pipeline (``ls: cannot access ...: No such
+# file or directory``, ``find: ...``); list lines always start with a date.
+_TRACES_LIST_ERR_RE = re.compile(r"^(ls|find|awk|sort|grep|head):\s")
 
 
 # Device-TZ cache. Populated lazily on the first trace-tool call that needs
@@ -167,7 +175,11 @@ def _resolve_trace_target(
         shell_entry, err = _build_shell_entry(ncc, ncp, container)
         if err:
             return None, None, None, err
-        return shell_entry, _TRACES_DEFAULT_DIR, None, None
+        # NCPs don't have /core/traces/routing_engine (issue #81); root at
+        # /core/traces so the per-subsystem dirs (datapath, dnos-agent, ...)
+        # are reachable. NCC-side contexts keep the routing_engine default.
+        base_dir = _TRACES_NCP_ROOT if ncp is not None else _TRACES_DEFAULT_DIR
+        return shell_entry, base_dir, None, None
 
     meta = _TRACE_TARGETS.get(target)
     if meta is None:
@@ -204,11 +216,33 @@ def _resolve_trace_target(
     )
 
 
+def _split_trace_subpath(
+    name: str, base_dir: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fold the directory part of a subdir-relative ``name`` (as listed by
+    the recursive ncp listing, e.g. ``datapath/wb_agent.bfd``) into
+    ``base_dir``. Returns ``(base_dir, basename, error)``. Every path
+    component must match the trace-name whitelist and must not be ``.`` /
+    ``..`` — the name can only ever descend below ``base_dir``.
+    """
+    parts = name.strip().split("/")
+    for p in parts:
+        if p in ("", ".", "..") or not _TRACE_COMPONENT_RE.fullmatch(p):
+            return None, None, (
+                "name may include subdirectories relative to the trace root "
+                "(e.g. 'datapath/wb_agent.bfd'); each path component must "
+                "match [A-Za-z0-9._:-]+ and must not be '.' or '..'. "
+                "Use list_traces to discover valid names."
+            )
+    return "/".join([base_dir] + parts[:-1]), parts[-1], None
+
+
 def _build_trace_list(
     component: Optional[str],
     include_rotated: bool,
     max_entries: int,
     base_dir: str,
+    recursive: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Build the ``ls | awk | sort | grep | head`` pipeline for list_traces.
 
@@ -217,6 +251,12 @@ def _build_trace_list(
     is rendered in **device-local** time (no ``TZ=UTC`` prefix) and carries
     the offset so the timestamp matches what's printed inside the trace
     lines themselves and what's encoded into rotated ``.gz`` filenames.
+
+    With ``recursive=True`` (non-preset ncp targets, issue #81) the lead
+    stage is a ``find`` over ``base_dir`` instead of ``ls``, so per-subsystem
+    subdirectories are walked and ``<name>`` becomes a base_dir-relative
+    path like ``datapath/wb_agent.bfd`` — feed it back to ``get_trace``
+    as-is.
     """
     if component is not None:
         if not isinstance(component, str) or not component.strip():
@@ -233,12 +273,22 @@ def _build_trace_list(
     # the filename slides to $9. Everything after the awk hand-off is
     # whole-line text again, so the include / exclude greps below don't
     # care about column positions.
-    parts: List[str] = [
-        f"ls -laL --time-style='+%Y-%m-%d %H:%M:%S %z' "
-        f"{shlex.quote(base_dir)}/",
-        "awk '$1 ~ /^-/ {printf \"%s %s %s %s %s\\n\", $6, $7, $8, $5, $9}'",
-        "sort -r",
-    ]
+    if recursive:
+        # find's %TS carries fractional seconds; the awk stage trims the
+        # time token to HH:MM:SS so the line shape matches the ls variant.
+        parts: List[str] = [
+            f"find {shlex.quote(base_dir)}/ -mindepth 1 -maxdepth 2 -type f "
+            "-printf '%TY-%Tm-%Td %TH:%TM:%TS %Tz %s %P\\n'",
+            "awk '{ $2 = substr($2, 1, 8); print }'",
+            "sort -r",
+        ]
+    else:
+        parts = [
+            f"ls -laL --time-style='+%Y-%m-%d %H:%M:%S %z' "
+            f"{shlex.quote(base_dir)}/",
+            "awk '$1 ~ /^-/ {printf \"%s %s %s %s %s\\n\", $6, $7, $8, $5, $9}'",
+            "sort -r",
+        ]
     if not include_rotated:
         parts.append("grep -v -F -- '.gz'")
     if component is not None:
@@ -556,12 +606,17 @@ def list_traces(
         list_traces(target="bgp", device="cl")
         list_traces(target="wb_agent", device="cl", ncp="1")
         list_traces(device="cl", component="rib-manager")  # no preset
+        list_traces(device="cl", ncp="7")  # all NCP trace dirs, recursive
 
-    When no preset is given, ``list_traces`` falls back to the default
-    ``/core/traces/routing_engine/`` directory and the free-form
-    ``ncc`` / ``ncp`` / ``container`` shell-entry args. Note: without a
-    preset the directory is still hardcoded to routing_engine — targeting
-    a different container won't find its traces. See TODO.md.
+    When no preset is given, ``list_traces`` uses the free-form
+    ``ncc`` / ``ncp`` / ``container`` shell-entry args. NCC-side contexts
+    (default / ``ncc`` / ``container``) list the default
+    ``/core/traces/routing_engine/`` directory. ``ncp`` contexts have no
+    routing_engine dir — their traces live in per-subsystem dirs under
+    ``/core/traces/`` (``datapath``, ``dnos-agent``, ``gi-agent``,
+    ``gi-manager``, ``node-manager``, ...) — so the listing walks
+    ``/core/traces/`` recursively and emits relative paths like
+    ``datapath/wb_agent.bfd``; feed those to ``get_trace`` as-is.
 
     The tool runs (inside ``run start shell ...``):
 
@@ -571,6 +626,10 @@ def list_traces(
           [| grep -v -F -- '.gz']
           [| grep -F -- <component>]
           | head -n <max_entries>
+
+    (non-preset ``ncp`` swaps the ``ls | awk`` lead for
+    ``find /core/traces/ -mindepth 1 -maxdepth 2 -type f -printf ...``
+    over the subsystem dirs; the line shape is identical.)
 
     Each stdout line is
     ``<YYYY-MM-DD HH:MM:SS +ZZZZ> <size-bytes> <filename>``, sorted
@@ -619,17 +678,34 @@ def list_traces(
         )
     linux_cmd, err = _build_trace_list(
         component, include_rotated, max_entries, base_dir,
+        recursive=(target is None and ncp is not None),
     )
     if err:
         return error_response(
             err, device=device, host=host,
             next_action=LIST_TRACES_NEXT_ACTION,
         )
-    return run_linux_on_device(
+    response = run_linux_on_device(
         "list_traces", device, host, user, password,
         linux_cmd, timeout, LIST_TRACES_NEXT_ACTION,
         shell_entry=shell_entry,
     )
+    # A failed listing (e.g. the trace dir doesn't exist in this context)
+    # surfaces as ls/find stderr in the transcript, which the DNOS error
+    # patterns don't catch — promote it to a real error so the exit code
+    # is non-zero (issue #81).
+    if response.get("status") == "ok":
+        bad = [
+            ln.strip() for ln in (response.get("stdout") or "").splitlines()
+            if _TRACES_LIST_ERR_RE.match(ln.strip())
+        ]
+        if bad:
+            response["status"] = "error"
+            response.setdefault("errors", []).extend(bad[-5:])
+            response.setdefault("next_actions", []).append(
+                LIST_TRACES_NEXT_ACTION,
+            )
+    return response
 
 
 @requires(CAP_LOGS)
@@ -698,6 +774,9 @@ def get_trace(
         # No preset; explicit base name.
         get_trace(device="cl", name="rib-manager_traces", tail_lines=20)
 
+        # NCP-side, no preset: subdir-relative name from list_traces.
+        get_trace(device="cl", ncp="7", name="datapath/wb_agent.bfd")
+
         # Triage: per-archive match counts, no content. Useful before
         # pulling 90 KB of repeated WARNINGs.
         get_trace(target="bgp", device="cl", grep="leaked", count_only=True)
@@ -765,7 +844,9 @@ def get_trace(
         name: Basename within the resolved directory. REQUIRED when
             ``target`` is not set; optional (defaults to the preset's
             current file) when ``target`` is set. Must match
-            ``[A-Za-z0-9._:-]+`` — no slashes, no ``..``. Pass a
+            ``[A-Za-z0-9._:-]+`` per path component — a subdir-relative
+            path as listed by the recursive ncp listing (e.g.
+            ``datapath/wb_agent.bfd``) is accepted; ``..`` is not. Pass a
             ``<base>-<ts>.gz`` to read just that one archive (engages
             single-file mode automatically).
         tail_lines: Keep the last N matching lines after other filters
@@ -818,6 +899,17 @@ def get_trace(
                 next_action=GET_TRACE_NEXT_ACTION,
             )
         name = primary
+
+    # The recursive ncp listing emits base_dir-relative paths like
+    # ``datapath/wb_agent.bfd`` (issue #81) — fold the directory part into
+    # base_dir so the single/multi readers keep working on a bare basename.
+    if "/" in name:
+        base_dir, name, err = _split_trace_subpath(name, base_dir)
+        if err:
+            return error_response(
+                err, device=device, host=host,
+                next_action=GET_TRACE_NEXT_ACTION,
+            )
 
     since_local: Optional[str] = None
     until_local: Optional[str] = None

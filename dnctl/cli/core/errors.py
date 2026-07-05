@@ -203,7 +203,10 @@ GET_SYSTEM_EVENTS_NEXT_ACTION = (
 LIST_TRACES_NEXT_ACTION = (
     "Verify the target (ncc/ncp/container) exists, and narrow with "
     "--component if the directory is large. Use `qactl cli traces` first; "
-    "then feed a filename to `qactl cli trace <name>`."
+    "then feed a filename to `qactl cli trace <name>`. NCC traces live in "
+    "/core/traces/routing_engine/; NCP traces in per-subsystem dirs under "
+    "/core/traces/ (datapath, dnos-agent, ...) — `traces --ncp <id>` lists "
+    "them with subdir-relative names."
 )
 GET_TRACE_NEXT_ACTION = (
     "Verify the name matches a file listed by `qactl cli traces` (same "
