@@ -10,6 +10,8 @@ Usage::
 
     dnctl setup                    # interactive wizard
     dnctl setup --password ...     # non-interactive: set only what's passed
+    dnctl setup --device jun-rt02 --user ... --password ...
+                                   # per-device creds ([devices."<name>"])
     dnctl setup --show             # print resolved sources (secrets redacted)
     dnctl setup --check-local-sftp # verify the local backup/restore SFTP endpoint
     dnctl setup --path             # print the config-file path
@@ -51,28 +53,61 @@ def _toml_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _emit_toml(data: Dict[str, Dict[str, str]]) -> str:
+def _emit_toml(data: Dict[str, Dict[str, object]]) -> str:
+    """Serialise the two-level config: scalar keys plus one nesting level
+    of sub-tables (``[devices."<name>"]``) whose bodies are flat."""
     lines: List[str] = []
     sections = [s for s in _SECTION_ORDER if data.get(s)]
     sections += [s for s in data if s not in _SECTION_ORDER and data.get(s)]
     for sec in sections:
-        lines.append(f"[{sec}]")
-        for key, val in data[sec].items():
-            lines.append(f'{key} = "{_toml_escape(val)}"')
-        lines.append("")
+        scalars = {k: v for k, v in data[sec].items() if not isinstance(v, dict)}
+        tables = {k: v for k, v in data[sec].items() if isinstance(v, dict)}
+        if scalars or not tables:
+            lines.append(f"[{sec}]")
+            for key, val in scalars.items():
+                lines.append(f'{key} = "{_toml_escape(str(val))}"')
+            lines.append("")
+        for name, body in tables.items():
+            lines.append(f'[{sec}."{_toml_escape(name)}"]')
+            for key, val in body.items():
+                lines.append(f'{key} = "{_toml_escape(str(val))}"')
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _write_config(values: Dict[str, Dict[str, str]]) -> str:
-    """Merge ``values`` into the existing config file and write it 0600."""
-    merged: Dict[str, Dict[str, str]] = {}
+def _write_config(values: Dict[str, Dict[str, object]]) -> str:
+    """Merge ``values`` into the existing config file and write it 0600.
+
+    An empty-string value deletes the key (and an emptied sub-table is
+    dropped), matching the interactive wizard's "blank clears" contract.
+    """
+    merged: Dict[str, Dict[str, object]] = {}
     for sec, body in _config.load_config().items():
         if isinstance(body, dict):
-            merged[sec] = {k: str(v) for k, v in body.items()}
+            merged[sec] = {
+                k: (
+                    {ik: str(iv) for ik, iv in v.items()}
+                    if isinstance(v, dict)
+                    else str(v)
+                )
+                for k, v in body.items()
+            }
     for sec, body in values.items():
         merged.setdefault(sec, {})
         for k, v in body.items():
-            if v == "":
+            if isinstance(v, dict):
+                inner = merged[sec].get(k)
+                if not isinstance(inner, dict):
+                    inner = {}
+                merged[sec][k] = inner
+                for ik, iv in v.items():
+                    if iv == "":
+                        inner.pop(ik, None)
+                    else:
+                        inner[ik] = iv
+                if not inner:
+                    merged[sec].pop(k, None)
+            elif v == "":
                 merged[sec].pop(k, None)
             else:
                 merged[sec][k] = v
@@ -105,6 +140,20 @@ def _show(as_json: bool) -> None:
             "source": source,
             "value": _redact(value, is_secret),
         })
+    devices_cfg = _config.load_config().get("devices")
+    if isinstance(devices_cfg, dict):
+        for name in sorted(devices_cfg):
+            body = devices_cfg[name]
+            if not isinstance(body, dict):
+                continue
+            for key in sorted(body):
+                setting = f'[devices."{name}"].{key}'
+                rows.append({
+                    "setting": setting,
+                    "env": "-",
+                    "source": f"config:{setting}",
+                    "value": _redact(str(body[key]), key == "password"),
+                })
     if as_json:
         typer.echo(json.dumps(
             {"config_path": str(_config.config_path()), "settings": rows},
@@ -197,6 +246,7 @@ def setup(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output (with --show)."),
     user: Optional[str] = typer.Option(None, "--user", help="SSH / API user."),
     password: Optional[str] = typer.Option(None, "--password", help="Password."),
+    device: Optional[str] = typer.Option(None, "--device", help="Scope --user/--password to this registry device ([devices.\"<name>\"]) instead of the global [auth]. Empty value clears the key."),
     ssh_key: Optional[str] = typer.Option(None, "--ssh-key", help="SSH private-key path."),
     dnftp_host: Optional[str] = typer.Option(None, "--dnftp-host", help="dnftp host."),
     dnftp_user: Optional[str] = typer.Option(None, "--dnftp-user", help="dnftp user."),
@@ -217,6 +267,29 @@ def setup(
         return
     if check_local_sftp:
         _check_local_sftp(as_json)
+        return
+
+    if device:
+        # Per-device creds (vendor boxes etc.) — see dnctl.core.credentials.
+        dev_vals: Dict[str, str] = {}
+        if user is not None:
+            dev_vals["user"] = user
+        if password is not None:
+            dev_vals["password"] = password
+        if not dev_vals:
+            typer.echo("--device needs --user and/or --password (empty value clears).")
+            raise typer.Exit(code=2)
+        from dnctl.core import devices as _devices
+
+        canonical = _devices.resolve_canonical(device)
+        if canonical is None:
+            typer.echo(
+                f"note: '{device}' is not in the device registry — storing "
+                f"creds under that name anyway (check for a typo)."
+            )
+            canonical = device
+        written = _write_config({"devices": {canonical: dev_vals}})
+        typer.echo(f"Wrote {written} ([devices.\"{canonical}\"])")
         return
 
     flag_map = {

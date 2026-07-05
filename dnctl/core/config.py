@@ -37,6 +37,10 @@ Config file shape::
     user = "me"               # optional; defaults to the OS user
     password = "..."          # this account's password, fed to the device
     vrf = "mgmt0"
+
+    [devices."jun-rt02"]      # per-device SSH creds (vendor boxes etc.);
+    user = "labuser"          # written by ``dnctl setup --device jun-rt02``
+    password = "..."          # keyed by the canonical registry alias
 """
 
 from __future__ import annotations
@@ -83,6 +87,21 @@ def config_value(section: str, key: str) -> Optional[str]:
         if val is not None:
             return str(val)
     return None
+
+
+def device_config(name: str) -> Dict[str, str]:
+    """Per-device overrides from the ``[devices."<name>"]`` table.
+
+    Returns ``{}`` when the table (or the device) is absent. Values are
+    stringified; key interpretation (``user`` / ``password`` today) is
+    owned by :mod:`dnctl.core.credentials`.
+    """
+    devices = load_config().get("devices")
+    if isinstance(devices, dict):
+        entry = devices.get(name)
+        if isinstance(entry, dict):
+            return {k: str(v) for k, v in entry.items() if v is not None}
+    return {}
 
 
 def resolve(

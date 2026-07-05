@@ -489,6 +489,11 @@ class TransportRegistry:
         """Return a live transport for the key, opening one if needed."""
         if not device and not host:
             raise ValueError("Must provide device or host")
+        # Registry devices may carry per-device / per-vendor creds (vendor
+        # boxes don't speak the global [auth] account). No-op when the
+        # caller passed explicit --user/--password. Idempotent, so callers
+        # that already resolved (run_once) are unaffected.
+        user, password = _creds.resolve_device_credentials(device, user, password)
         key = (device or host or "", user)
         # Per-key lock serialises concurrent first-openers so we only auth once.
         with self._key_lock(key):
@@ -639,8 +644,21 @@ def _open_transport(
             break
         time.sleep(backoff[min(attempt, len(backoff) - 1)])
     if client is None:
+        msg = f"Could not connect to {device or host}: {last_err}"
+        if device and isinstance(last_err, paramiko.AuthenticationException):
+            from dnctl.core import devices as _dn_devices
+
+            entry = _dn_devices.get_device_entry(device) or {}
+            vendor = (str(entry.get("vendor") or "")).strip().lower()
+            if vendor in _creds.VENDOR_ENV:
+                env_user_key, env_password_key = _creds.VENDOR_ENV[vendor]
+                msg += (
+                    f" ({vendor} device — store creds once with "
+                    f"`setup --device {device} --user ... --password ...` "
+                    f"or export {env_user_key} / {env_password_key})"
+                )
         raise ConnectError(
-            f"Could not connect to {device or host}: {last_err}",
+            msg,
             transient=(
                 last_err is not None
                 and _is_transient_connect_error(last_err)
@@ -802,6 +820,9 @@ def run_once(
     """
     if mode not in ("command", "help", "config_help", "shell_exec"):
         raise ValueError(f"invalid mode: {mode!r}")
+    # Resolve creds up front so shell_exec's second password prompt uses
+    # the same effective password the transport authenticated with.
+    user, password = _creds.resolve_device_credentials(device, user, password)
     # Resolve the vendor dialect for this device (DNOS for unknown /
     # host-only). DNOS's dialect reproduces the legacy defaults, so the
     # DNOS path is unchanged. Lazy import keeps the module import graph
@@ -894,6 +915,9 @@ def run_ncm_cli(
     """
     if not ncm_commands:
         raise ValueError("ncm_commands must be non-empty")
+    # Same up-front cred resolution as run_once — the NCM shell entry
+    # re-prompts for the password the transport authenticated with.
+    user, password = _creds.resolve_device_credentials(device, user, password)
     joined = " ; ".join(ncm_commands)
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):

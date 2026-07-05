@@ -143,6 +143,20 @@ export ARISTA_USER="admin"
 export ARISTA_PASSWORD="<password>"
 ```
 
+**Registry vendor devices** (`qactl cli show -d <dev>` against cisco /
+juniper / arista boxes): the global `[auth]` account is DNOS-only, so
+store per-device creds once —
+
+```bash
+qactl setup --device jun-rt02 --user <user> --password <pw>
+```
+
+— or export per-vendor env creds (`CISCO_USER`/`CISCO_PASSWORD`,
+`JUNIPER_USER`/`JUNIPER_PASSWORD`, `ARISTA_USER`/`ARISTA_PASSWORD`).
+Resolution per call: explicit `--user`/`--password` > per-device
+(`[devices."<name>"]` in dnctl's `config.toml`) > per-vendor env >
+global `[auth]`.
+
 Any of these can be overridden per-command (`--email`/`--token`/`--base-url`
 for Atlassian; `--user`/`--token`/`--url` for Jenkins; `--user`/`--password`
 for Arista) but the environment is the default. The repo ships no `.env`
