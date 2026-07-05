@@ -90,6 +90,95 @@ def test_journal_write_failure_never_raises(tmp_path, monkeypatch):
     O._append_journal({"status": "ok", "device": "cl", "command": "show", "stdout": "z\n"}, Ctx(device="cl"))
 
 
+def test_journal_gnmi_get_labelled_and_body_persisted(tmp_path, monkeypatch):
+    # gnmi envelopes carry no `command`/`stdout`; the journal must derive
+    # the label from kind+request and persist the envelope as the body (#83).
+    root = _journal_root(tmp_path, monkeypatch)
+    env = {
+        "status": "ok", "device": "cl", "host": "10.0.0.1", "port": 50051,
+        "tls_mode": "insecure", "kind": "get",
+        "request": {"path": "/drivenets-top/system/ncps", "encoding": "json"},
+        "result": {"notification": [{"update": [{"path": "system", "val": {"x": 1}}]}]},
+        "warnings": [], "errors": [], "next_actions": [],
+    }
+    O._append_journal(env, Ctx(device="cl"))
+    text = _today_file(root, "cl").read_text()
+    assert "cmd='gnmi get /drivenets-top/system/ncps'" in text
+    assert "/drivenets-top/system/ncps" in text
+    assert '"notification"' in text  # response envelope persisted
+
+
+def test_journal_gnmi_set_labelled_with_paths(tmp_path, monkeypatch):
+    root = _journal_root(tmp_path, monkeypatch)
+    env = {
+        "status": "error", "device": "cl", "host": "10.0.0.1", "port": 50051,
+        "tls_mode": "insecure", "kind": "set",
+        "request": {
+            "update": [{"path": "/a/b", "val": {"x": 1}}],
+            "replace": [], "delete": ["/c/d"], "confirm": True,
+        },
+        "result": None, "warnings": [],
+        "errors": ["RpcError: boom"], "next_actions": [],
+    }
+    O._append_journal(env, Ctx(device="cl"))
+    text = _today_file(root, "cl").read_text()
+    assert "cmd='gnmi set /a/b (+1 more)'" in text
+    assert "status=error" in text
+    assert "RpcError: boom" in text  # error persisted in body
+
+
+def test_journal_rc_write_labelled_and_body_persisted(tmp_path, monkeypatch):
+    root = _journal_root(tmp_path, monkeypatch)
+    url = "http://odl:8181/restconf/config/net/node/CL/yang-ext:mount/drivenets-top/system"
+    env = {
+        "status": "ok", "device": "Hybrid-CL", "endpoint": "odl-lab1",
+        "base_url": "http://odl:8181/restconf", "kind": "put",
+        "request": {"method": "PUT", "segments": ["drivenets-top", "system"],
+                    "url": url, "payload": {"system": {"name": "x"}}},
+        "result": {"http_status": 200, "url": url, "response": ""},
+        "warnings": [], "errors": [], "next_actions": [],
+    }
+    O._append_journal(env, Ctx(device="Hybrid-CL"))
+    text = _today_file(root, "Hybrid-CL").read_text()
+    assert f"cmd='rc put {url}'" in text
+    assert '"http_status": 200' in text
+    assert '"payload"' in text  # request body persisted
+
+
+def test_journal_nc_edit_error_labelled_and_body_persisted(tmp_path, monkeypatch):
+    # nc edit results have no result_xml; the payload + device rpc-error
+    # must land in the body (#83).
+    root = _journal_root(tmp_path, monkeypatch)
+    env = {
+        "action": "edit", "host": "10.0.0.1", "port": 830, "user": "u",
+        "session_id": "s1", "timestamp": "t", "device": "cl",
+        "status": "edit_error", "op": "replace",
+        "device_error": "Unknown element 'foo'",
+        "applied_xml": "<network-services><foo/></network-services>",
+    }
+    O._append_journal(env, Ctx(device="cl"))
+    text = _today_file(root, "cl").read_text()
+    assert "cmd='nc edit op=replace'" in text
+    assert "status=edit_error" in text
+    assert "Unknown element" in text
+    assert "network-services" in text
+
+
+def test_journal_nc_read_keeps_result_xml_and_gets_label(tmp_path, monkeypatch):
+    root = _journal_root(tmp_path, monkeypatch)
+    env = {
+        "action": "show", "host": "10.0.0.1", "port": 830, "user": "u",
+        "session_id": "s1", "timestamp": "t", "device": "cl",
+        "status": "ok", "kind": "get-config",
+        "filter_xml": "<drivenets-top/>",
+        "result_xml": "<rpc-reply><data/></rpc-reply>",
+    }
+    O._append_journal(env, Ctx(device="cl"))
+    text = _today_file(root, "cl").read_text()
+    assert "cmd='nc show (get-config)'" in text
+    assert "<rpc-reply><data/></rpc-reply>" in text
+
+
 def test_finish_writes_journal(tmp_path, monkeypatch):
     root = _journal_root(tmp_path, monkeypatch)
     result = {"status": "ok", "device": "cl", "command": "show ver", "stdout": "VERSION\n"}

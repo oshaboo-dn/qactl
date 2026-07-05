@@ -108,12 +108,78 @@ def call(fn: Callable[..., Any], c: Ctx, **extra: Any) -> Any:
     return fn(**kwargs)
 
 
+def _summarize_paths(paths: Any) -> str:
+    """First path plus a count, so multi-path ops stay one-line labels."""
+    if not isinstance(paths, list) or not paths:
+        return ""
+    first = str(paths[0])
+    return first if len(paths) == 1 else f"{first} (+{len(paths) - 1} more)"
+
+
+def _derive_command(env: dict) -> str:
+    """Best-effort operation label for envelopes without a raw ``command``.
+
+    The nc / gnmi / rc envelopes never carry a device CLI command string,
+    so entries used to land as ``cmd=''``. Each family is recognised by
+    structural keys its envelope builder always emits (rc:
+    ``endpoint``+``base_url``; gnmi: ``tls_mode``; nc: ``action``+
+    ``session_id``) and labelled with the operation and its target path.
+    Unrecognised shapes return ''.
+    """
+    kind = env.get("kind") or ""
+    request = env.get("request") if isinstance(env.get("request"), dict) else {}
+    if "endpoint" in env and "base_url" in env:
+        target = request.get("url") or ""
+        if not target and isinstance(request.get("segments"), list):
+            target = "/" + "/".join(str(s) for s in request["segments"])
+        return " ".join(p for p in ("rc", kind, target) if p)
+    if "tls_mode" in env:
+        if kind == "set":
+            paths = [
+                e.get("path")
+                for key in ("update", "replace")
+                for e in (request.get(key) or [])
+                if isinstance(e, dict) and e.get("path")
+            ]
+            paths += [p for p in (request.get("delete") or []) if p]
+            target = _summarize_paths(paths)
+        else:
+            target = (
+                request.get("path")
+                or request.get("list_path")
+                or _summarize_paths(request.get("paths"))
+            )
+        return " ".join(p for p in ("gnmi", kind, target) if p)
+    if "action" in env and "session_id" in env:
+        label = f"nc {env['action']}"
+        if kind and kind != env["action"]:
+            label += f" ({kind})"
+        op = env.get("op")
+        if op and op != "merge":
+            label += f" op={op}"
+        return label
+    return ""
+
+
+def _fallback_body(env: dict) -> str:
+    """Lossless JSON dump of the envelope, for tools with no raw text
+    payload (gnmi / rc / nc edits) — the request and response are the
+    evidence, so persist all of it."""
+    try:
+        return _json.dumps(env, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+
+
 def _evidence_fields(result: Any, c: Ctx) -> tuple[str, str, str, str]:
     """Pull the (device, command, status, body) we record for a call.
 
     ``body`` is the verbatim raw text payload (``stdout``, or
-    ``result_xml`` for config reads) regardless of ``--json``; the rest
-    fall back to the context when the envelope omits them.
+    ``result_xml`` for config reads) regardless of ``--json``; envelopes
+    with no raw text payload (gnmi / rc / nc edits) are dumped whole as
+    JSON so the request + response survive as evidence. ``command`` falls
+    back to a derived operation label (see :func:`_derive_command`); the
+    rest fall back to the context when the envelope omits them.
     """
     body = ""
     device = c.device or c.host or ""
@@ -125,8 +191,10 @@ def _evidence_fields(result: Any, c: Ctx) -> tuple[str, str, str, str]:
             if isinstance(v, str) and v:
                 body = v
                 break
+        if not body:
+            body = _fallback_body(result)
         device = result.get("device") or result.get("host") or device
-        command = result.get("command") or ""
+        command = result.get("command") or _derive_command(result)
         status = str(result.get("status") or "")
     return device, command, status, body
 
