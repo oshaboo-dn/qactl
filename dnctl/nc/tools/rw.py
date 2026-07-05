@@ -175,6 +175,15 @@ def netconf_edit(
     Any commit failure triggers ``discard-changes`` so the device is left
     clean.
 
+    DNOS limitation: after wrapping, the payload's top element is always a
+    direct child of ``drivenets-top`` (a section such as
+    ``network-services``), and the DNOS delete resolver cannot handle
+    ``nc:operation="remove"``/``"delete"`` there — it fails with
+    ``Unknown element '<section_with_underscores>'``. To remove a subtree
+    or leaf, annotate that element inline (see below) and keep the default
+    ``op="merge"``; the device accepts the annotation on any deeper
+    element.
+
     For mixed payloads (e.g. merge some leaves while deleting others),
     leave ``op="merge"`` and annotate individual sub-elements inline with
     ``nc:operation="delete"`` / ``"remove"`` / ``"replace"``. The

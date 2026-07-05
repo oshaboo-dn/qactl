@@ -62,7 +62,7 @@ def get(
 def edit(
     xml: Body = None,
     file: File = None,
-    op: Annotated[str, typer.Option("--op", help="merge | replace | remove | delete | create.")] = "merge",
+    op: Annotated[str, typer.Option("--op", help="merge | replace | remove | delete | create. Applied to the payload's top element; DNOS rejects remove/delete there — annotate the target element inline (nc:operation=\"remove\") with the default merge instead.")] = "merge",
     comment: Annotated[Optional[str], typer.Option("--comment", help="Commit comment.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,

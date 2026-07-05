@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from lxml import etree
 from ncclient.operations import RPCError
 
 from .netconf_rpc import (
@@ -47,6 +48,61 @@ def annotate_operation(xml: str, op: str) -> str:
     head = xml[: m.start()]
     tail = xml[m.end():]
     return f"{head}<{tag}{new_attrs}{self_close}>{tail}"
+
+
+def _count_top_elements(payload: str) -> int:
+    """Count top-level elements in an XML fragment (0 if unparseable)."""
+    try:
+        wrapped = etree.fromstring(f"<qactl-frag>{payload}</qactl-frag>".encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return 0
+    return len(wrapped)
+
+
+def prepare_edit_payload(xml: str, op: str) -> str:
+    """Extract the inner payload, then annotate its top element for ``op``.
+
+    Extraction must run *before* annotation: annotating the raw input can
+    put the operation attribute on a wrapper element (``<config>`` /
+    ``<drivenets-top>``) that extraction then strips, silently downgrading
+    remove/delete to a plain merge (#72).
+
+    Non-merge ops annotate exactly one element, so a payload with several
+    top-level sections is rejected — send one section per edit, or use
+    inline ``nc:operation`` annotations with the default merge.
+    """
+    payload = extract_payload_for_edit(xml)
+    if op == "merge":
+        return payload
+    if _count_top_elements(payload) > 1:
+        raise ValueError(
+            f"op={op!r} annotates the single top element of the payload, but "
+            "this payload has multiple top-level sections. Send one section "
+            "per edit, or annotate the target elements inline with "
+            'nc:operation="..." and keep the default op=merge.'
+        )
+    return annotate_operation(payload, op)
+
+
+_UNKNOWN_ELEMENT_RE = re.compile(r"unknown element", re.IGNORECASE)
+
+_SECTION_OP_HINT = (
+    "DNOS rejects nc:operation=\"remove\"/\"delete\" on a top-level section "
+    "element (a direct child of drivenets-top): its delete resolver looks the "
+    "section up by its internal underscore name and fails with \"Unknown "
+    "element\". Annotate the element you actually want removed inline — e.g. "
+    '<vrf xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" '
+    'nc:operation="remove"><vrf-name>NAME</vrf-name></vrf> — and send the '
+    "payload with the default op=merge; deeper annotations are accepted by "
+    "the device."
+)
+
+
+def _op_reject_hint(op: str, device_error: str) -> Optional[str]:
+    """Hint for the DNOS underscore-lookup rejection of top-level remove/delete."""
+    if op in ("remove", "delete") and _UNKNOWN_ELEMENT_RE.search(device_error):
+        return _SECTION_OP_HINT
+    return None
 
 
 def _try_commit(m, log_path, *, enabled: bool = True) -> tuple:
@@ -166,7 +222,11 @@ def edit_from_xml(
 
     The agent provides the full config XML; this helper:
 
-    1. Applies the ``op`` attribute to the top element (no-op for merge).
+    1. Extracts the payload (stripping any ``<config>``/``<drivenets-top>``
+       wrapper), then applies the ``op`` attribute to the remaining top
+       element (no-op for merge). Note DNOS rejects remove/delete on a
+       top-level section element — see :func:`_op_reject_hint`; annotate
+       deeper elements inline with the default merge instead.
     2. Connects, ``require_candidate``, ``edit-config target=candidate``.
     3. ``commit`` -- DNOS validates implicitly. If commit raises, discard
        the candidate and return ``status="commit_error"`` with the
@@ -178,8 +238,11 @@ def edit_from_xml(
     """
     sid = _session_id()
     action_label = "delete" if op == "remove" else "edit"
-    applied_xml = annotate_operation(xml, op)
-    payload = extract_payload_for_edit(applied_xml)
+    try:
+        payload = prepare_edit_payload(xml, op)
+    except ValueError as e:
+        return _error_result(action_label, sid, e)
+    applied_xml = payload
     source_tag = xml_source or "inline"
     payload_bytes = len(payload.encode("utf-8"))
 
@@ -210,15 +273,16 @@ def edit_from_xml(
                     source=source_tag, bytes=payload_bytes,
                 )
                 _log_event(log_path, sid, "end", status="error")
-                return _base_result(
-                    action_label, cr, sid,
-                    {
-                        "status": "edit_error",
-                        "op": op,
-                        "device_error": str(e),
-                        "applied_xml": applied_xml,
-                    },
-                )
+                extra: Dict[str, Any] = {
+                    "status": "edit_error",
+                    "op": op,
+                    "device_error": str(e),
+                    "applied_xml": applied_xml,
+                }
+                hint = _op_reject_hint(op, str(e))
+                if hint:
+                    extra["hint"] = hint
+                return _base_result(action_label, cr, sid, extra)
 
             try:
                 commit_xml = commit(m)
