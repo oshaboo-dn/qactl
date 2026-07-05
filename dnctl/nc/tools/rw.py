@@ -37,6 +37,7 @@ def netconf_get(
     device: Optional[str] = None,
     oper: bool = False,
     source: str = "running",
+    root: str = "auto",
     out_file: Optional[str] = None,
     rpc_file: Optional[str] = None,
     port: int = DEFAULT_PORT,
@@ -51,8 +52,12 @@ def netconf_get(
     The agent supplies the full subtree filter XML (including the
     ``<drivenets-top xmlns="...">...</drivenets-top>`` wrapper). The server
     forwards it unchanged to ``<get-config>`` (default) or ``<get>``
-    (``oper=True``). The filter is not validated or rewritten -- the
-    device is the final authority. Use ``nc schema`` if you need the raw
+    (``oper=True``). A bare filter in a DriveNets namespace is wrapped
+    under ``drivenets-top``; a non-DriveNets top element (OpenConfig,
+    IETF, ...) is sent as-is since those trees are siblings of
+    drivenets-top. Override with ``root``: ``"auto"`` (default) |
+    ``"dn-top"`` | ``"none"``. Otherwise the filter is not validated or
+    rewritten -- the device is the final authority. Use ``nc schema`` if you need the raw
     ``.yang`` source while composing the filter.
 
     Example::
@@ -91,6 +96,12 @@ def netconf_get(
                 ValueError(f"xml= must be well-formed XML (parse error: {e})."),
             )
 
+    if root not in ("auto", "dn-top", "none"):
+        return _error_result(
+            "show", sid,
+            ValueError("root= must be one of: auto, dn-top, none."),
+        )
+
     warnings: List[str] = []
 
     try:
@@ -107,11 +118,11 @@ def netconf_get(
                 kind = "rpc"
                 used_file = str(rpc_path)
             elif oper:
-                result_xml = get(m, subtree=xml)
+                result_xml = get(m, subtree=xml, root=root)
                 kind = "get"
                 used_file = None
             else:
-                result_xml = get_config(m, source=source, subtree=xml)
+                result_xml = get_config(m, source=source, subtree=xml, root=root)
                 kind = "get-config"
                 used_file = None
 

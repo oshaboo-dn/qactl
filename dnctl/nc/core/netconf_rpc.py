@@ -12,6 +12,7 @@ from ncclient.xml_ import to_ele
 from .xml_payload import _strip_dn_top_wrapper
 
 DN_TOP_NS = "http://drivenets.com/ns/yang/dn-top"
+DN_YANG_NS_PREFIX = "http://drivenets.com/ns/yang/"
 DN_SYSTEM_NS = "http://drivenets.com/ns/yang/dn-system"
 DN_SYS_NCC_NS = "http://drivenets.com/ns/yang/dn-sys-ncc"
 DN_INSTALL_NS = "http://drivenets.com/ns/yang/dn-sys-install"
@@ -19,11 +20,41 @@ YANG_LIBRARY_NS = "urn:ietf:params:xml:ns:yang:ietf-yang-library"
 NETCONF_MONITORING_NS = "urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring"
 
 
+def _build_subtree_filter(subtree: str, root: str = "auto") -> str:
+    """Return the subtree-filter criteria to send for a <get>/<get-config>.
+
+    root="dn-top" always wraps under <drivenets-top>; root="none" sends the
+    filter as-is; root="auto" (default) wraps unless the filter's single top
+    element lives in a non-DriveNets namespace — OpenConfig/IETF trees are
+    siblings of drivenets-top, so nesting them under it makes them
+    unreachable. A filter already wrapped in <drivenets-top>, unnamespaced,
+    or not parseable as one element keeps the historical dn-top wrapping.
+    """
+    stripped = subtree.strip()
+    inner = _strip_dn_top_wrapper(stripped)
+    wrapped = f'<drivenets-top xmlns="{DN_TOP_NS}">{inner}</drivenets-top>'
+    if root == "none":
+        return inner
+    if root == "dn-top":
+        return wrapped
+    if inner != stripped:
+        return wrapped
+    try:
+        top = etree.fromstring(inner.encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return wrapped
+    ns = etree.QName(top).namespace
+    if ns is None or ns.startswith(DN_YANG_NS_PREFIX):
+        return wrapped
+    return inner
+
+
 def get_config(
     m: manager.Manager,
     source: str = "running",
     subtree: Optional[str] = None,
     dn_only: bool = False,
+    root: str = "auto",
 ) -> str:
     """Get configuration. subtree is optional (e.g. <system/> or <interfaces/>).
 
@@ -31,14 +62,11 @@ def get_config(
     (excludes OpenConfig and other top-level containers).
     The subtree can be passed with or without the <drivenets-top> wrapper --
     if present, it is stripped and re-wrapped to avoid double-wrapping.
+    ``root`` controls the wrapping (see :func:`_build_subtree_filter`).
     """
     filter_xml = None
     if subtree:
-        inner = _strip_dn_top_wrapper(subtree.strip())
-        filter_xml = (
-            "subtree",
-            f'<drivenets-top xmlns="{DN_TOP_NS}">{inner}</drivenets-top>',
-        )
+        filter_xml = ("subtree", _build_subtree_filter(subtree, root))
     elif dn_only:
         filter_xml = (
             "subtree",
@@ -57,19 +85,18 @@ def get_config(
 def get(
     m: manager.Manager,
     subtree: Optional[str] = None,
+    root: str = "auto",
 ) -> str:
     """NETCONF <get> for operational + config state.
 
-    subtree filters under drivenets-top (e.g. '<system xmlns="..."/>').
-    Without subtree returns all operational state.
+    subtree filters under drivenets-top (e.g. '<system xmlns="..."/>');
+    non-DriveNets top-level trees are sent unwrapped (see
+    :func:`_build_subtree_filter`). Without subtree returns all
+    operational state.
     """
     filter_xml = None
     if subtree:
-        inner = _strip_dn_top_wrapper(subtree.strip())
-        filter_xml = (
-            "subtree",
-            f'<drivenets-top xmlns="{DN_TOP_NS}">{inner}</drivenets-top>',
-        )
+        filter_xml = ("subtree", _build_subtree_filter(subtree, root))
     reply = m.get(filter=filter_xml)
     try:
         out = reply.data_xml

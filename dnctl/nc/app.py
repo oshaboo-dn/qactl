@@ -44,6 +44,7 @@ def get(
     file: File = None,
     oper: Annotated[bool, typer.Option("--oper", help="Use <get> (operational) instead of <get-config>.")] = False,
     source: Annotated[str, typer.Option("--source", help="Datastore for <get-config> (default: running).")] = "running",
+    root: Annotated[str, typer.Option("--root", help="Filter root: auto (wrap dn-* under drivenets-top, send OpenConfig/IETF as-is) | dn-top | none.")] = "auto",
     out_file: Annotated[Optional[str], typer.Option("--out-file", help="Also write the full result XML to this path.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
@@ -54,7 +55,7 @@ def get(
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes,
                     no_verify_mgmt0=no_verify_mgmt0)
     body = O.read_body(xml, file, c)
-    O.finish(O.call(netconf_get, c, xml=body, oper=oper, source=source, out_file=out_file), c)
+    O.finish(O.call(netconf_get, c, xml=body, oper=oper, source=source, root=root, out_file=out_file), c)
 
 
 @app.command()
