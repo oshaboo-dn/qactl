@@ -33,7 +33,7 @@ Password = Annotated[Optional[str], typer.Option("--password", help="Login passw
 Port = Annotated[Optional[int], typer.Option("--port", help="Protocol port (NETCONF 830, gNMI 50051, ...).")]
 Timeout = Annotated[Optional[int], typer.Option("--timeout", help="Per-call timeout in seconds.")]
 NoVerify = Annotated[bool, typer.Option("--no-verify/--verify", help="Skip TLS/host-key verification (default: on).")]
-NoVerifyMgmt0 = Annotated[bool, typer.Option("--no-verify-mgmt0/--verify-mgmt0", help="Skip the live mgmt0 pre-check against the chassis (default: verify).")]
+NoVerifyMgmt0 = Annotated[bool, typer.Option("--no-verify-mgmt0/--verify-mgmt0", help="Skip the live mgmt0 pre-check against the chassis and use the cached address as-is (default: verify; an unverifiable mgmt0 refuses the session).")]
 Json = Annotated[bool, typer.Option("--json", help="Emit the raw structured payload (jq-friendly).")]
 Yes = Annotated[bool, typer.Option("--yes", "-y", help="Confirm a destructive op; required when non-interactive.")]
 Log = Annotated[Optional[str], typer.Option("--log", help="Append the full raw command output (with a timestamp/device/cmd header) to this file, in addition to normal output. Append mode — repeated calls accumulate; usable as standalone QA evidence.")]

@@ -6,7 +6,10 @@ NETCONF (observed on Hybrid-CL: every rpc-reply came back exit 0 while
 the real chassis counted zero NETCONF sessions). The fix asks the chassis
 itself for its CURRENT mgmt0 over the CLI transport (``show interfaces
 management`` via the expected_sns SSH hosts), refreshes the registry on
-mismatch, and carries loud warnings when verification can't run.
+mismatch, and REFUSES the session when verification can't run — the
+probe authenticates with the cli group's own resolved creds (follow-up:
+the first cut probed with empty creds and then proceeded unverified,
+which is exactly the wrong-box failure mode the issue is about).
 
 No device traffic — SSH is faked at the ``run_once`` seam.
 """
@@ -137,6 +140,55 @@ def test_nickname_refreshes_canonical_entry(device_map, monkeypatch):
     assert "hybrid-cl" not in devices  # no ghost canonical forked
 
 
+def test_probe_resolves_creds_like_cli_group(device_map, monkeypatch):
+    """Issue #71 follow-up: the probe must authenticate exactly like
+    ``dnctl cli -d <device>`` — per-device/per-vendor creds resolved on
+    the canonical alias — not with empty/unresolved creds."""
+    seen = {}
+
+    def fake_resolve(device, user, password):
+        seen["resolve_args"] = (device, user, password)
+        return "dev-user", "dev-pass"
+
+    def fake_run(registry, device, host, user, password, command, timeout):
+        seen["ssh_creds"] = (user, password)
+        return SimpleNamespace(output=_mgmt_table("10.0.0.1"))
+
+    monkeypatch.setattr(
+        mgmt0_verify, "resolve_device_credentials", fake_resolve,
+    )
+    monkeypatch.setattr(mgmt0_verify, "run_once", fake_run)
+
+    out = mgmt0_verify.verify_device_mgmt0("hybrid-cl", map_file=device_map)
+    assert out.verified is True
+    # Resolution is keyed on the CANONICAL alias with the cli group's own
+    # defaults, so per-device [devices."cl"] creds layer exactly as they
+    # do for `dnctl cli -d cl`.
+    assert seen["resolve_args"] == (
+        "cl", mgmt0_verify.DEFAULT_USER, mgmt0_verify.DEFAULT_PASSWORD,
+    )
+    assert seen["ssh_creds"] == ("dev-user", "dev-pass")
+
+
+def test_require_verified_passes_through_verified_outcome():
+    out = mgmt0_verify.Mgmt0Verification(
+        device="cl", address="10.0.0.1", cached="10.0.0.1", verified=True,
+    )
+    assert mgmt0_verify.require_verified(out) is out
+
+
+def test_require_verified_raises_with_diagnostics_and_escape_hatch():
+    out = mgmt0_verify.Mgmt0Verification(
+        device="cl", address="10.0.0.1", cached="10.0.0.1", verified=False,
+        warnings=["CLI probe of ['SN-CL-0'] failed (auth)."],
+    )
+    with pytest.raises(mgmt0_verify.Mgmt0UnverifiedError) as ei:
+        mgmt0_verify.require_verified(out)
+    msg = str(ei.value)
+    assert "CLI probe of ['SN-CL-0'] failed" in msg
+    assert "--no-verify-mgmt0" in msg
+
+
 def test_memo_probes_once_within_ttl(device_map, monkeypatch):
     calls = []
     monkeypatch.setattr(mgmt0_verify, "run_once", _fake_run_once("10.0.0.1", calls))
@@ -183,7 +235,10 @@ def test_nc_connect_uses_live_mgmt0(device_map, monkeypatch):
     assert cr.sn_verified is True
 
 
-def test_nc_connect_proceeds_unverified_when_probe_fails(device_map, monkeypatch):
+def test_nc_connect_refuses_unverified_mgmt0(device_map, monkeypatch):
+    """Issue #71 follow-up: verification failure REFUSES the session —
+    warn-and-proceed with the stale cached address was the exact failure
+    mode the issue reported."""
     from dnctl.nc.core import session as ncsession
 
     monkeypatch.setattr(
@@ -194,40 +249,29 @@ def test_nc_connect_proceeds_unverified_when_probe_fails(device_map, monkeypatch
             warnings=["could not verify cached mgmt0='10.0.0.1' ... UNVERIFIED."],
         ),
     )
-    connected = []
-    monkeypatch.setattr(
-        ncsession, "_raw_connect",
-        lambda host, port, user, password, hostkey_verify, timeout:
-            connected.append(host) or _FakeMgr(),
-    )
-    monkeypatch.setattr(
-        ncsession, "get_serial_numbers", lambda mgr, role: ["SN-CL-0"],
-    )
 
-    cr = ncsession.connect(device="cl", device_map_file=device_map)
-    assert connected == ["10.0.0.1"]
-    assert cr.mgmt0_verified is False
-    assert any("UNVERIFIED" in w for w in cr.mgmt0_warnings)
+    def never(*a, **k):
+        raise AssertionError("must not open NETCONF to an unverified address")
+    monkeypatch.setattr(ncsession, "_raw_connect", never)
+
+    with pytest.raises(mgmt0_verify.Mgmt0UnverifiedError) as ei:
+        ncsession.connect(device="cl", device_map_file=device_map)
+    assert "--no-verify-mgmt0" in str(ei.value)
 
 
-def test_nc_connect_survives_verifier_crash(device_map, monkeypatch):
+def test_nc_connect_fails_hard_on_verifier_crash(device_map, monkeypatch):
     from dnctl.nc.core import session as ncsession
 
     def crash(device, **kw):
         raise RuntimeError("paramiko exploded")
     monkeypatch.setattr(mgmt0_verify, "verify_device_mgmt0", crash)
-    monkeypatch.setattr(
-        ncsession, "_raw_connect",
-        lambda host, port, user, password, hostkey_verify, timeout: _FakeMgr(),
-    )
-    monkeypatch.setattr(
-        ncsession, "get_serial_numbers", lambda mgr, role: ["SN-CL-0"],
-    )
 
-    cr = ncsession.connect(device="cl", device_map_file=device_map)
-    assert cr.host == "10.0.0.1"
-    assert cr.mgmt0_verified is False
-    assert any("pre-verification errored" in w for w in cr.mgmt0_warnings)
+    def never(*a, **k):
+        raise AssertionError("must not connect after a verifier crash")
+    monkeypatch.setattr(ncsession, "_raw_connect", never)
+
+    with pytest.raises(RuntimeError, match="paramiko exploded"):
+        ncsession.connect(device="cl", device_map_file=device_map)
 
 
 # --- gnmi resolve_host uses the verified address ----------------------------
@@ -247,6 +291,22 @@ def test_gnmi_resolve_host_uses_live_mgmt0(device_map, monkeypatch):
     assert resolved.host == "10.9.9.9"
     assert resolved.mgmt0_verified is True
     assert resolved.warnings == ["stale mgmt0 refreshed"]
+
+
+def test_gnmi_resolve_host_refuses_unverified_mgmt0(device_map, monkeypatch):
+    from dnctl.gnmi.core import session as gsession
+
+    monkeypatch.setattr(
+        mgmt0_verify, "verify_device_mgmt0",
+        lambda device, **kw: mgmt0_verify.Mgmt0Verification(
+            device="cl", address="10.0.0.1", cached="10.0.0.1",
+            verified=False,
+            warnings=["could not verify cached mgmt0='10.0.0.1' ... UNVERIFIED."],
+        ),
+    )
+    with pytest.raises(mgmt0_verify.Mgmt0UnverifiedError) as ei:
+        gsession.resolve_host(device="cl", host=None)
+    assert "--no-verify-mgmt0" in str(ei.value)
 
 
 def test_gnmi_resolve_host_skips_verification_for_raw_host(monkeypatch):
@@ -337,6 +397,32 @@ def test_ctx_flag_forwards_verify_mgmt0_to_tools():
     assert seen["verify_mgmt0"] is False
     O.call(tool, O.build_ctx(device="cl"))
     assert seen["verify_mgmt0"] is True
+
+
+def test_rc_mount_add_refuses_unverified_mgmt0(device_map, monkeypatch):
+    from dnctl.rc.tools import mount as rcmount
+
+    monkeypatch.setattr(
+        rcmount, "get_endpoint",
+        lambda name: {"kind": "odl", "base_url": "http://odl:8181", "auth": {}},
+    )
+    monkeypatch.setattr(rcmount, "get_device", lambda d: {"mgmt0": "10.0.0.1"})
+    monkeypatch.setattr(
+        mgmt0_verify, "verify_device_mgmt0",
+        lambda device, **kw: mgmt0_verify.Mgmt0Verification(
+            device="cl", address="10.0.0.1", cached="10.0.0.1",
+            verified=False,
+            warnings=["could not verify cached mgmt0='10.0.0.1' ... UNVERIFIED."],
+        ),
+    )
+
+    def never(**kw):
+        raise AssertionError("must not mount an unverified address on ODL")
+    monkeypatch.setattr(rcmount, "put_mount", never)
+
+    env = rcmount.restconf_mount_add("cl", persist=False)
+    assert env["status"] == "error"
+    assert any("--no-verify-mgmt0" in e for e in env["errors"])
 
 
 def test_rc_mount_add_uses_live_mgmt0(device_map, monkeypatch):

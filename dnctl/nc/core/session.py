@@ -249,8 +249,11 @@ def connect(
       2. Verify the cached mgmt0 against the chassis's live mgmt0 via the
          cli group (``show interfaces management`` over the expected_sns
          SSH hosts — issue #71). On mismatch the map is refreshed and the
-         live address is used; when the chassis can't be probed we proceed
-         with the cached address carrying an UNVERIFIED warning.
+         live address is used; when the chassis can't be probed the
+         session is REFUSED (:class:`Mgmt0UnverifiedError`) — connecting
+         to an unverified cached IP is the wrong-box failure mode this
+         check exists for. ``verify_mgmt0=False`` (--no-verify-mgmt0) is
+         the explicit opt-out.
       3. Connect to the (verified) mgmt0 IP.
       4. Verify serial number matches expected_sns from the map.
       5. On TCP / NETCONF failure or SN mismatch: raise
@@ -289,22 +292,23 @@ def connect(
     # Issue #71: ask the chassis itself for its CURRENT mgmt0 (via the cli
     # group's transport pool) before trusting the cached address — a stale
     # cached IP can point at a different box that still answers NETCONF.
+    # Verification failure refuses the session (no warn-and-proceed):
+    # require_verified raises Mgmt0UnverifiedError, and any unexpected
+    # probe crash propagates too. --no-verify-mgmt0 is the opt-out.
     mgmt0_verified = False
     mgmt0_warnings: List[str] = []
     if verify_mgmt0:
-        try:
-            from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
-            verification = verify_device_mgmt0(device, map_file=map_file)
-            mgmt0_verified = verification.verified
-            mgmt0_warnings = list(verification.warnings)
-            if verification.address:
-                resolved_host = verification.address
-        except Exception as exc:  # noqa: BLE001 - verification is best-effort
-            mgmt0_warnings.append(
-                f"mgmt0 CLI pre-verification errored "
-                f"({type(exc).__name__}: {exc}); proceeding with cached "
-                f"mgmt0={resolved_host!r} UNVERIFIED."
-            )
+        from dnctl.cli.core.mgmt0_verify import (
+            require_verified,
+            verify_device_mgmt0,
+        )
+        verification = require_verified(
+            verify_device_mgmt0(device, map_file=map_file)
+        )
+        mgmt0_verified = True
+        mgmt0_warnings = list(verification.warnings)
+        if verification.address:
+            resolved_host = verification.address
     else:
         mgmt0_warnings.append(
             "mgmt0 pre-verification skipped by --no-verify-mgmt0; "

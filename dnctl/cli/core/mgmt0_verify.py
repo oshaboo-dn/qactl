@@ -13,11 +13,15 @@ management`` via the ``expected_sns`` SSH hosts, which resolve
 independently of the cached IP), compares it to the cached value, and on
 mismatch refreshes the map and hands back the live address. nc / gnmi /
 rc call this before opening a session — the cli group still owns every
-SSH interaction; those groups never touch the wire themselves.
+SSH interaction; those groups never touch the wire themselves. The probe
+authenticates exactly like ``dnctl cli -d <device>`` does: creds resolve
+through :func:`~dnctl.core.credentials.resolve_device_credentials`
+(per-device > per-vendor > global) keyed on the canonical alias.
 
-Verification is best-effort by design: when no SN host answers (or none
-is recorded) the caller proceeds with the cached address, carrying a
-loud "UNVERIFIED" warning instead of being blocked.
+Verification is mandatory by default: when the chassis can't confirm the
+address, callers must refuse to proceed (:func:`require_verified`) —
+connecting to an unverified cached IP is the exact failure mode this
+module exists to prevent. ``--no-verify-mgmt0`` is the explicit opt-out.
 """
 
 from __future__ import annotations
@@ -28,9 +32,21 @@ from typing import Dict, List, Optional, Tuple
 
 from dnctl.core import devices as _devices
 from dnctl.core.cli_probe import parse_mgmt0_ipv4
+from dnctl.core.credentials import resolve_device_credentials
 
 from .registry import transport_registry
-from .session import DEFAULT_CMD_TIMEOUT, reload_device_hosts, run_once
+from .session import (
+    DEFAULT_CMD_TIMEOUT,
+    DEFAULT_PASSWORD,
+    DEFAULT_USER,
+    reload_device_hosts,
+    run_once,
+)
+
+
+class Mgmt0UnverifiedError(RuntimeError):
+    """The chassis could not confirm the cached mgmt0 and the caller
+    refuses to connect to it unverified (issue #71)."""
 
 
 @dataclass
@@ -64,8 +80,8 @@ _recent: Dict[Tuple[str, Optional[str]], Tuple[float, Mgmt0Verification]] = {}
 def verify_device_mgmt0(
     device: str,
     *,
-    user: str = "",
-    password: str = "",
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASSWORD,
     timeout: float = DEFAULT_CMD_TIMEOUT,
     map_file: Optional[str] = None,
     ttl: float = 60.0,
@@ -74,14 +90,17 @@ def verify_device_mgmt0(
 
     SSH-probes each ``expected_sns`` host in turn (they resolve via DNS
     independently of the cached IP) and parses ``show interfaces
-    management``. First host that yields a parseable mgmt0 wins.
+    management``. First host that yields a parseable mgmt0 wins. Creds
+    resolve exactly like a ``dnctl cli -d <device>`` call: per-device >
+    per-vendor > global, keyed on the canonical alias (issue #71 — the
+    probe must authenticate with the same creds the cli group uses).
 
     - live == cached: ``verified=True``, nothing written.
     - live != cached: the map's ``mgmt0`` is refreshed to the live value,
       ``address`` becomes the live value, and a warning names both.
     - no SN host answered / none recorded: ``verified=False`` and
       ``address`` stays the cached value with an UNVERIFIED warning —
-      the caller decides whether to proceed.
+      callers should refuse to connect (:func:`require_verified`).
 
     Never raises for reachability/parse problems; only truly unexpected
     errors (e.g. a corrupt map write) surface as warnings too.
@@ -133,9 +152,16 @@ def _verify_uncached(
             f"cannot verify cached mgmt0={cached!r} for '{canonical}' — no "
             f"expected_sns recorded; run `dnctl cli device add {canonical} "
             f"--sn <ssh-host>` so the chassis can be CLI-probed. "
-            f"Proceeding with the cached address UNVERIFIED."
+            f"The cached address is UNVERIFIED."
         )
         return outcome
+
+    # Same cred layering a `dnctl cli -d <device>` session gets (per-device
+    # > per-vendor > global), keyed on the canonical alias. run_once below
+    # is called host-only, so it can't do this lookup itself (issue #71:
+    # the probe used to fall through to empty creds and fail auth while
+    # the cli group authenticated fine).
+    user, password = resolve_device_credentials(canonical, user, password)
 
     failures: List[str] = []
     for candidate in sns:
@@ -162,7 +188,7 @@ def _verify_uncached(
         outcome.warnings.append(
             f"could not verify cached mgmt0={cached!r} for '{canonical}' — "
             f"CLI probe of {sns} failed ({'; '.join(failures)}). "
-            f"Proceeding with the cached address UNVERIFIED."
+            f"The cached address is UNVERIFIED."
         )
         return outcome
 
@@ -192,4 +218,29 @@ def _verify_uncached(
     return outcome
 
 
-__all__ = ["Mgmt0Verification", "verify_device_mgmt0"]
+def require_verified(outcome: Mgmt0Verification) -> Mgmt0Verification:
+    """Fail-hard gate: return ``outcome`` only if the chassis confirmed it.
+
+    An unverified cached mgmt0 is exactly the failure mode issue #71 is
+    about (the IP re-assigned to another box that still answers), so
+    warn-and-proceed is not an option for the northbound groups. Raises
+    :class:`Mgmt0UnverifiedError` carrying the probe's own diagnostics and
+    the two ways out: fix the probe, or opt out explicitly.
+    """
+    if outcome.verified:
+        return outcome
+    detail = " ".join(outcome.warnings) or "the CLI probe produced no result."
+    raise Mgmt0UnverifiedError(
+        f"refusing to connect to unverified mgmt0={outcome.address!r} for "
+        f"'{outcome.device}': {detail} Fix the CLI probe (device creds via "
+        f"`qactl setup` / SN hosts via `dnctl cli device add`) or pass "
+        f"--no-verify-mgmt0 to use the cached address as-is."
+    )
+
+
+__all__ = [
+    "Mgmt0UnverifiedError",
+    "Mgmt0Verification",
+    "require_verified",
+    "verify_device_mgmt0",
+]

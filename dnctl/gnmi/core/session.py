@@ -63,9 +63,10 @@ def resolve_host(
     For device= the cached mgmt0 is verified against the chassis's live
     mgmt0 via the cli group (issue #71): on mismatch the map is refreshed
     and the live address is returned; when the chassis can't be CLI-probed
-    the cached address is used with an UNVERIFIED warning on ``Resolved``.
-    ``verify_mgmt0=False`` (the ``--no-verify-mgmt0`` flag) skips the
-    pre-check and uses the cached address as-is.
+    the call is REFUSED (:class:`Mgmt0UnverifiedError`) rather than
+    proceeding with an unverified cached address. ``verify_mgmt0=False``
+    (the ``--no-verify-mgmt0`` flag) is the explicit opt-out and uses the
+    cached address as-is.
     """
     if host and not device:
         return Resolved(host=host, port=DEFAULT_PORT)
@@ -81,19 +82,15 @@ def resolve_host(
     mgmt0_verified = False
     warnings: List[str] = []
     if verify_mgmt0:
-        try:
-            from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
-            verification = verify_device_mgmt0(device)
-            mgmt0_verified = verification.verified
-            warnings = list(verification.warnings)
-            if verification.address:
-                mgmt0 = verification.address
-        except Exception as exc:  # noqa: BLE001 - verification is best-effort
-            warnings.append(
-                f"mgmt0 CLI pre-verification errored "
-                f"({type(exc).__name__}: {exc}); proceeding with cached "
-                f"mgmt0={mgmt0!r} UNVERIFIED."
-            )
+        from dnctl.cli.core.mgmt0_verify import (
+            require_verified,
+            verify_device_mgmt0,
+        )
+        verification = require_verified(verify_device_mgmt0(device))
+        mgmt0_verified = True
+        warnings = list(verification.warnings)
+        if verification.address:
+            mgmt0 = verification.address
     else:
         warnings.append(
             "mgmt0 pre-verification skipped by --no-verify-mgmt0; "

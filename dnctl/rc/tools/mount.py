@@ -79,21 +79,25 @@ def restconf_mount_add(
 
     # Issue #71: verify the cached mgmt0 against the chassis's live mgmt0
     # (via the cli group) before baking the address into the ODL mount —
-    # a stale cached IP would make ODL manage the wrong box.
+    # a stale cached IP would make ODL manage the wrong box. When the
+    # chassis can't confirm the address the mount is refused (error
+    # envelope), not created unverified; --no-verify-mgmt0 is the opt-out.
     mgmt0_warnings = []
     if verify_mgmt0:
+        from dnctl.cli.core.mgmt0_verify import (
+            Mgmt0UnverifiedError,
+            require_verified,
+            verify_device_mgmt0,
+        )
         try:
-            from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
-            verification = verify_device_mgmt0(device)
-            mgmt0_warnings = list(verification.warnings)
-            if verification.address:
-                host = verification.address
-        except Exception as exc:  # noqa: BLE001 - verification is best-effort
-            mgmt0_warnings.append(
-                f"mgmt0 CLI pre-verification errored "
-                f"({type(exc).__name__}: {exc}); proceeding with cached "
-                f"mgmt0={host!r} UNVERIFIED."
+            verification = require_verified(verify_device_mgmt0(device))
+        except Mgmt0UnverifiedError as exc:
+            return error_envelope(
+                str(exc), kind="mount_add", endpoint=endpoint, device=device,
             )
+        mgmt0_warnings = list(verification.warnings)
+        if verification.address:
+            host = verification.address
     else:
         mgmt0_warnings.append(
             "mgmt0 pre-verification skipped by --no-verify-mgmt0; "
