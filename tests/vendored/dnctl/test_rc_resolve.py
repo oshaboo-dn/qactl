@@ -108,3 +108,36 @@ def test_resolve_ok_and_missing(rc_env):
     hints = " ".join(missing["next_actions"])
     assert "qactl rc mount add" in hints
     assert "restconf_mount_add(" not in hints
+
+
+def test_mount_status_resolves_device_alias(rc_env, monkeypatch):
+    """Issue #73: ``mount status cl`` must query the CL-RC mount, not 'cl'."""
+    registry, eps = rc_env
+    _write_eps(eps, {"CL-RC": {"device": "cl"}})
+
+    from dnctl.rc.tools import mount as mount_tools
+
+    queried = []
+
+    def fake_status(*, node_id, **kw):
+        queried.append(node_id)
+        return {"http_status": 200, "connection-status": "connected"}
+
+    monkeypatch.setattr(mount_tools, "get_node_status", fake_status)
+
+    # positional arg as device alias resolves to the registered mount
+    env = mount_tools.restconf_mount_status(mount_name="cl", endpoint="odl")
+    assert env["status"] == "ok"
+    assert queried == ["CL-RC"]
+
+    # canonical device name resolves too
+    env = mount_tools.restconf_mount_status(mount_name="BIG-CL", endpoint="odl")
+    assert queried[-1] == "CL-RC"
+
+    # an exact mount name is passed through untouched
+    env = mount_tools.restconf_mount_status(mount_name="CL-RC", endpoint="odl")
+    assert queried[-1] == "CL-RC"
+
+    # a name that is neither mount nor alias still goes to ODL as-is
+    env = mount_tools.restconf_mount_status(mount_name="ghost", endpoint="odl")
+    assert queried[-1] == "ghost"

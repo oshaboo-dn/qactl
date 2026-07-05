@@ -224,7 +224,7 @@ def mount_remove(
 
 @mount_app.command("status")
 def mount_status(
-    mount_name: Annotated[Optional[str], typer.Argument(help="Mount name (or use --device).")] = None,
+    mount_name: Annotated[Optional[str], typer.Argument(help="Mount name or device alias (or use --device).")] = None,
     endpoint: Annotated[str, typer.Option("--endpoint", help="Endpoint alias.")] = "odl-lab1",
     device: O.Device = None, as_json: O.Json = False,
 ):

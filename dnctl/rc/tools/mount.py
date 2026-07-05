@@ -184,12 +184,27 @@ def restconf_mount_add(
     return env
 
 
+def _mount_for_device(ep: Dict[str, Any], device_alias: str) -> Optional[str]:
+    """Registered mount name for a device alias on ``ep``, or ``None``."""
+    target = canonical_device(device_alias)
+    for mn, mcfg in (ep.get("mounts") or {}).items():
+        if canonical_device(mcfg.get("device")) == target:
+            return mn
+    return None
+
+
 def restconf_mount_status(
     mount_name: Optional[str] = None,
     device: Optional[str] = None,
     endpoint: str = "odl-lab1",
 ) -> Dict[str, Any]:
-    """Live status of one mount. Pass either ``mount_name`` or ``device``."""
+    """Live status of one mount.
+
+    Pass either ``mount_name`` or ``device``. A ``mount_name`` that is not
+    a registered mount on the endpoint is retried as a device alias, so
+    ``mount status cl`` finds the ``CL-RC`` mount the same way the data
+    verbs resolve ``-d cl`` (issue #73).
+    """
     ep = _require_odl_endpoint(endpoint)
     if not ep:
         return error_envelope(
@@ -198,12 +213,10 @@ def restconf_mount_status(
         )
 
     name = mount_name
+    if name and name not in (ep.get("mounts") or {}):
+        name = _mount_for_device(ep, name) or name
     if not name and device:
-        target = canonical_device(device)
-        for mn, mcfg in (ep.get("mounts") or {}).items():
-            if canonical_device(mcfg.get("device")) == target:
-                name = mn
-                break
+        name = _mount_for_device(ep, device)
     if not name:
         return error_envelope(
             "specify either mount_name or a device that has a registered mount",
