@@ -116,6 +116,7 @@ def _run_raw_on_device(
     stop_on_error: bool = True,
     prompt_timeout: Optional[float] = None,
     banner_wait: Optional[float] = None,
+    answer_confirm: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a raw line sequence on one channel; return the full transcript.
 
@@ -127,6 +128,10 @@ def _run_raw_on_device(
     error (``stop_on_error``); pass ``stop_on_error=False`` to keep going.
     ``prompt_timeout`` / ``banner_wait`` widen the fresh-channel
     prompt-detection budget for a slow/odd box (e.g. DNAAS-LEAF-B13).
+    ``answer_confirm`` (e.g. ``"yes"``) auto-answers interactive
+    ``(yes/no)?`` / ``[y/n]?`` confirms a line raises mid-execution —
+    required for ``request system target-stack load`` and friends, whose
+    confirm otherwise wedges the line until the timeout.
     """
     joined = " ; ".join(lines)
     request = {"device": device, "host": host, "user": user, "command": joined}
@@ -146,6 +151,8 @@ def _run_raw_on_device(
             commands=lines,
             timeout=timeout,
             stop_predicate=stop_predicate,
+            auto_confirm=answer_confirm is not None,
+            confirm_answer=answer_confirm or "yes",
             prompt_timeout=prompt_timeout,
             banner_wait=banner_wait,
         )
@@ -195,10 +202,20 @@ def _run_raw_on_device(
             f"Timed out waiting for the CLI prompt after {timeout}s "
             f"(line {len(result.steps)} of {len(lines)})."
         )
-        response["next_actions"].append(
-            "Retry with a larger --timeout, or --prompt-timeout if the prompt "
-            "itself is slow to appear."
-        )
+        # A line stuck at an interactive (yes/no)? confirm never paints the
+        # prompt — point at --answer-confirm instead of a bigger timeout.
+        from dnctl.cli.core.shell import _CONFIRM_RE
+        last_out = result.steps[-1].output if result.steps else ""
+        if answer_confirm is None and _CONFIRM_RE.search(last_out.rstrip()[-256:]):
+            response["next_actions"].append(
+                "The line is waiting at an interactive (yes/no) confirm; "
+                "re-run with --answer-confirm yes (or no) to auto-answer it."
+            )
+        else:
+            response["next_actions"].append(
+                "Retry with a larger --timeout, or --prompt-timeout if the "
+                "prompt itself is slow to appear."
+            )
         log_request(tool, request, response)
         return response
 

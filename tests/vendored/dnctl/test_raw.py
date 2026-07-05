@@ -6,7 +6,12 @@ device — scripted fakes throughout.
 import pytest
 
 from dnctl.cli.core import runner as core_runner
-from dnctl.cli.core.session import Invocation, StepCapture, _init_channel
+from dnctl.cli.core.session import (
+    Invocation,
+    StepCapture,
+    _init_channel,
+    run_sequence,
+)
 from dnctl.cli.tools import raw as raw_tool
 
 
@@ -66,6 +71,112 @@ def test_nonpositive_arg_falls_through_to_env(monkeypatch):
     ch = FakeChannel(nudges_needed=4)
 
     assert _init_channel(ch, prompt_timeout=0) == PROMPT
+
+
+# --- interactive (yes/no) confirms through run_sequence (issue #82) --------
+
+CONFIRM = "Do you want to continue? (yes/no) [no]? "
+
+
+class ConfirmChannel(FakeChannel):
+    """Box where 'request ...' pauses at a (yes/no) confirm until answered."""
+
+    def __init__(self):
+        super().__init__(nudges_needed=1)
+        self.answers = []
+
+    def send(self, data):
+        if data == "\n":
+            return super().send(data)
+        self.sent.append(data)
+        line = data.strip()
+        if line.startswith("request"):
+            self._buf += (
+                line + "\r\nWarning: Package will be downloaded.\r\n" + CONFIRM
+            ).encode()
+        elif line in ("yes", "no", "y", "n"):
+            self.answers.append(line)
+            self._buf += ("\r\nstaging package\r\n" + self.prompt).encode()
+        else:
+            self._buf += (line + "\r\n" + self.prompt).encode()
+        return len(data)
+
+
+class FakeTransport:
+    def __init__(self, channel):
+        self.client = self
+        self._channel = channel
+        self.host = "10.0.0.1"
+        self.device = "cl"
+        self.key = ("cl",)
+        self.last_used = 0.0
+
+    def invoke_shell(self, **_kw):
+        return self._channel
+
+    def close(self):
+        pass
+
+
+class FakeRegistry:
+    def __init__(self, channel):
+        self._transport = FakeTransport(channel)
+
+    def get(self, **_kw):
+        return self._transport
+
+    def _mark(self, _t, _d):
+        pass
+
+    def drop(self, _key, reason=None):
+        pass
+
+
+def test_sequence_auto_confirm_answers_and_hits_prompt(monkeypatch):
+    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    ch = ConfirmChannel()
+
+    result = run_sequence(
+        FakeRegistry(ch), device="cl", host=None, user="u", password="p",
+        commands=["request system target-stack load http://x/pkg.tar"],
+        timeout=2.0, auto_confirm=True, confirm_answer="yes",
+    )
+
+    assert result.hit_prompt
+    assert ch.answers == ["yes"]
+    assert "staging package" in result.output
+
+
+def test_sequence_confirm_answer_no_is_forwarded(monkeypatch):
+    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    ch = ConfirmChannel()
+
+    result = run_sequence(
+        FakeRegistry(ch), device="cl", host=None, user="u", password="p",
+        commands=["request system target-stack load http://x/pkg.tar"],
+        timeout=2.0, auto_confirm=True, confirm_answer="no",
+    )
+
+    assert result.hit_prompt
+    assert ch.answers == ["no"]
+
+
+def test_sequence_without_auto_confirm_times_out_at_confirm(monkeypatch):
+    # The pre-#82 failure mode: line 1 sits at the confirm, the follow-up
+    # 'yes' line is never sent, and the step times out without the prompt.
+    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    ch = ConfirmChannel()
+
+    result = run_sequence(
+        FakeRegistry(ch), device="cl", host=None, user="u", password="p",
+        commands=["request system target-stack load http://x/pkg.tar", "yes"],
+        timeout=0.5,
+    )
+
+    assert not result.hit_prompt
+    assert ch.answers == []
+    assert len(result.steps) == 1  # 'yes' never sent
+    assert "(yes/no)" in result.steps[0].output
 
 
 # --- runner glue (_run_raw_on_device) -------------------------------------
@@ -176,6 +287,48 @@ def test_runner_timeout_status(fake_sequence):
         5.0, "next-action",
     )
     assert r["status"] == "timeout"
+    # not stuck at a confirm -> the generic budget hint, not --answer-confirm
+    assert not any("--answer-confirm" in a for a in r["next_actions"])
+    assert any("--timeout" in a for a in r["next_actions"])
+
+
+def test_runner_answer_confirm_passthrough(fake_sequence):
+    captured, _state, _make = fake_sequence
+    core_runner._run_raw_on_device(
+        "run_raw", "cl", None, "u", "p", ["request system target-stack load x"],
+        30.0, "next-action", answer_confirm="yes",
+    )
+    assert captured["auto_confirm"] is True
+    assert captured["confirm_answer"] == "yes"
+
+
+def test_runner_default_no_auto_confirm(fake_sequence):
+    captured, _state, _make = fake_sequence
+    core_runner._run_raw_on_device(
+        "run_raw", "cl", None, "u", "p", ["show version"], 30.0, "next-action",
+    )
+    assert captured["auto_confirm"] is False
+
+
+def test_runner_timeout_at_confirm_hints_answer_confirm(fake_sequence):
+    # The issue-#82 transcript shape: the step timed out with the (yes/no)
+    # confirm as the last painted line -> point at --answer-confirm.
+    _captured, state, _make = fake_sequence
+    steps = [StepCapture(
+        "request system target-stack load http://x/pkg.tar", "",
+        "Warning: Package will be downloaded and added to target stack.\n"
+        "Do you want to continue? (yes/no) [no]?\n",
+        "", False,
+    )]
+    state["factory"] = lambda **kw: _make(steps)
+
+    r = core_runner._run_raw_on_device(
+        "run_raw", "cl", None, "u", "p",
+        ["request system target-stack load http://x/pkg.tar", "yes"],
+        120.0, "next-action",
+    )
+    assert r["status"] == "timeout"
+    assert any("--answer-confirm" in a for a in r["next_actions"])
 
 
 # --- tool surface ---------------------------------------------------------
@@ -185,11 +338,12 @@ def captured(monkeypatch):
     calls = {}
 
     def _fake(tool, device, host, user, password, lines, timeout, next_action,
-              stop_on_error=True, prompt_timeout=None, banner_wait=None):
+              stop_on_error=True, answer_confirm=None, prompt_timeout=None,
+              banner_wait=None):
         calls.update(
             tool=tool, device=device, host=host, lines=lines, timeout=timeout,
-            stop_on_error=stop_on_error, prompt_timeout=prompt_timeout,
-            banner_wait=banner_wait,
+            stop_on_error=stop_on_error, answer_confirm=answer_confirm,
+            prompt_timeout=prompt_timeout, banner_wait=banner_wait,
         )
         return {"status": "ok", "stdout": "out", "command": " ; ".join(lines)}
 
@@ -228,3 +382,12 @@ def test_tool_knobs_passthrough(captured):
     assert captured["stop_on_error"] is False
     assert captured["prompt_timeout"] == 30.0
     assert captured["banner_wait"] == 2.0
+    assert captured["answer_confirm"] is None
+
+
+def test_tool_answer_confirm_passthrough(captured):
+    raw_tool.run_raw(
+        "request system target-stack load http://x/pkg.tar",
+        device="cl", answer_confirm="yes",
+    )
+    assert captured["answer_confirm"] == "yes"

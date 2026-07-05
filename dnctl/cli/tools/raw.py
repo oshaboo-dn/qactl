@@ -29,6 +29,7 @@ def run_raw(
     device: Optional[str] = None,
     host: Optional[str] = None,
     stop_on_error: bool = True,
+    answer_confirm: Optional[str] = None,
     prompt_timeout: Optional[float] = None,
     banner_wait: Optional[float] = None,
     user: str = DEFAULT_USER,
@@ -46,7 +47,12 @@ def run_raw(
 
     By default the sequence aborts on the first line DNOS flags as an error
     (``stop_on_error``); pass ``stop_on_error=False`` to run every line
-    regardless. ``prompt_timeout`` / ``banner_wait`` widen the fresh-channel
+    regardless. ``answer_confirm`` (``"yes"`` / ``"no"``) auto-answers any
+    interactive ``(yes/no)?`` / ``[y/n]?`` confirm a line raises — without
+    it a confirming line (e.g. ``request system target-stack load``) never
+    paints the prompt and the call times out; a follow-up ``yes`` line
+    cannot answer it, because each line waits for the CLI prompt first.
+    ``prompt_timeout`` / ``banner_wait`` widen the fresh-channel
     prompt-detection budget for a slow/odd box (e.g. DNAAS-LEAF-B13) — they
     override the ``DNCTL_CLI_PROMPT_TIMEOUT`` / ``DNCTL_CLI_BANNER_WAIT`` env
     knobs, which in turn override the built-in defaults.
@@ -56,6 +62,7 @@ def run_raw(
         device: Device alias from the registry.
         host: Raw hostname/IP (alternative to device).
         stop_on_error: Abort on the first errored line (default True).
+        answer_confirm: Reply auto-sent to interactive (yes/no) confirms.
         prompt_timeout: Seconds to coax a prompt out of a fresh channel.
         banner_wait: Per-drain settle window while detecting the prompt.
         user: SSH username (default dnroot).
@@ -77,6 +84,7 @@ def run_raw(
         "run_raw", device, host, user, password,
         cmds, timeout, RUN_RAW_NEXT_ACTION,
         stop_on_error=stop_on_error,
+        answer_confirm=answer_confirm,
         prompt_timeout=prompt_timeout,
         banner_wait=banner_wait,
     )

@@ -564,6 +564,7 @@ def ncm_cli(
 def raw(
     lines: Annotated[List[str], typer.Argument(help="Raw CLI line(s) sent verbatim, in order, on ONE channel. Each argument is one line (configure-mode lines need a preceding 'configure' line in the same call).")],
     continue_on_error: Annotated[bool, typer.Option("--continue-on-error", help="Run every line even after one errors (default: abort on first error).")] = False,
+    answer_confirm: Annotated[Optional[str], typer.Option("--answer-confirm", help="Auto-answer interactive (yes/no)/[y/n] confirms a line raises with this reply, e.g. 'yes' for 'request system target-stack load'. Without it a confirming line times out — a follow-up 'yes' line can't answer it.")] = None,
     prompt_timeout: Annotated[Optional[float], typer.Option("--prompt-timeout", help="Seconds to coax a CLI prompt out of a fresh channel (slow/odd boxes, e.g. DNAAS-LEAF-B13). Overrides DNCTL_CLI_PROMPT_TIMEOUT.")] = None,
     banner_wait: Annotated[Optional[float], typer.Option("--banner-wait", help="Per-drain settle window while detecting the prompt. Overrides DNCTL_CLI_BANNER_WAIT.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -574,14 +575,17 @@ def raw(
 
     For flows the structured show / show-config / config / shell tools don't
     cover. Lines run verbatim in order on one ephemeral channel; --json
-    carries a per-line `steps` transcript. Tune prompt detection per-call
-    with --prompt-timeout / --banner-wait.
+    carries a per-line `steps` transcript. Interactive (yes/no) confirms
+    need --answer-confirm yes (each line waits for the CLI prompt, so a
+    'yes' line can't answer them). Tune prompt detection per-call with
+    --prompt-timeout / --banner-wait.
     """
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     if not confirm.ensure(f"raw cli on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(
         O.call(run_raw, c, lines=lines, stop_on_error=not continue_on_error,
+               answer_confirm=answer_confirm,
                prompt_timeout=prompt_timeout, banner_wait=banner_wait),
         c,
     )

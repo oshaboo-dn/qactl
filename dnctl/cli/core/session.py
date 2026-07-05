@@ -1004,6 +1004,7 @@ def run_sequence(
     timeout: float = DEFAULT_CMD_TIMEOUT,
     stop_predicate: Optional[Callable[["StepCapture"], bool]] = None,
     auto_confirm: bool = False,
+    confirm_answer: str = "yes",
     prompt_timeout: Optional[float] = None,
     banner_wait: Optional[float] = None,
 ) -> Invocation:
@@ -1030,10 +1031,10 @@ def run_sequence(
     ``auto_confirm`` (default ``False``) routes every step through
     :func:`send_command_with_confirm` instead of :func:`send_command`,
     which watches for ``(yes/no)?`` / ``[y/n]?`` prompts mid-command and
-    answers them with ``yes\\n``. Use on the GI (Genesis Image) shell
-    where ``set cli-no-confirm`` is not available — without it,
-    ``request system target-stack load`` (and similar) wedges the
-    channel forever. On deployed DNOS, prefix the sequence with
+    answers them with ``confirm_answer`` (default ``yes``). Use on the GI
+    (Genesis Image) shell where ``set cli-no-confirm`` is not available —
+    without it, ``request system target-stack load`` (and similar) wedges
+    the channel forever. On deployed DNOS, prefix the sequence with
     ``set cli-no-confirm`` instead and keep ``auto_confirm=False``.
 
     ``prompt_timeout`` / ``banner_wait`` (optional) widen the fresh-channel
@@ -1066,6 +1067,7 @@ def run_sequence(
                 if auto_confirm:
                     output, head, tail, hit = send_command_with_confirm(
                         channel, cmd, prompt, overall_timeout=timeout,
+                        answer=confirm_answer,
                     )
                 else:
                     output, head, tail, hit = send_command(
