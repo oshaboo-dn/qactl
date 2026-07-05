@@ -24,6 +24,7 @@ from dnctl.cli.core.session import (
     connect_error_next_actions,
     run_ncm_cli,
     run_once,
+    run_probes,
     run_sequence,
 )
 
@@ -203,6 +204,135 @@ def _run_raw_on_device(
 
     # Surface an error on any step (not just the last), so a mid-sequence
     # failure isn't masked by a clean trailing line.
+    err_lines: List[str] = []
+    for s in result.steps:
+        is_err, lines_err = detect_error(s.output)
+        if is_err:
+            err_lines.extend(lines_err[-5:])
+    if err_lines:
+        response["status"] = "error"
+        response["errors"].extend(err_lines[-5:])
+        response["next_actions"].append(next_action_on_error)
+
+    log_request(tool, request, response)
+    return response
+
+
+def _run_probe_on_device(
+    tool: str,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    probes: List[tuple],
+    timeout: float,
+    next_action_on_error: str,
+    config_mode: bool = False,
+    prompt_timeout: Optional[float] = None,
+    banner_wait: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Run keystroke probes on one channel; return the per-probe transcript.
+
+    The glue behind ``cli probe``. Mirrors :func:`_run_raw_on_device` but
+    drives :func:`run_probes` — each ``(prefix, key)`` pair is typed
+    without a newline, one keystroke is injected, and the line is wiped
+    with Ctrl-U before the next probe, so nothing is ever submitted. The
+    per-probe ``steps`` carry the harvested ``stdout`` plus the
+    post-keystroke ``line_buffer`` (the completed line for a TAB probe).
+    """
+    joined = " ; ".join(
+        f"{p}<TAB>" if key == "tab" else f"{p}?" for p, key in probes
+    )
+    request = {"device": device, "host": host, "user": user, "command": joined}
+    response = make_response(device=device, host=host, command=joined)
+
+    try:
+        result = run_probes(
+            transport_registry,
+            device=device,
+            host=host,
+            user=user,
+            password=password,
+            probes=probes,
+            config_mode=config_mode,
+            timeout=timeout,
+            prompt_timeout=prompt_timeout,
+            banner_wait=banner_wait,
+        )
+    except ConnectError as exc:
+        response.update(
+            status="connect_error",
+            state="unreachable",
+            errors=[str(exc)],
+            next_actions=connect_error_next_actions(exc),
+        )
+        log_request(tool, request, response)
+        return response
+    except Exception as exc:
+        response.update(status="error", errors=[str(exc)])
+        log_request(tool, request, response)
+        return response
+
+    response["host"] = result.host
+    response["device"] = result.device or device
+
+    # In config mode the session records the ``configure`` entry as the
+    # first step (so a box where it fails — e.g. GI mode — is caught by the
+    # error scan below); the probe steps follow it.
+    setup_steps = result.steps[:1] if config_mode else []
+    probe_steps = result.steps[1:] if config_mode else result.steps
+
+    steps_out = []
+    transcript_blocks = [
+        s.command if not s.output else f"{s.command}\n{s.output.rstrip()}"
+        for s in setup_steps
+    ]
+    for (prefix, key), s in zip(probes, probe_steps):
+        steps_out.append(
+            {
+                "prefix": prefix,
+                "key": key,
+                "stdout": s.output,
+                "line_buffer": s.line_buffer,
+                "hit_prompt": s.hit_prompt,
+            }
+        )
+        block = s.command if not s.output else f"{s.command}\n{s.output.rstrip()}"
+        if key == "tab" and s.line_buffer:
+            block += f"\n[buffer] {s.line_buffer}"
+        transcript_blocks.append(block)
+    response["stdout"] = "\n\n".join(transcript_blocks)
+    response["steps"] = steps_out
+
+    log_invocation(
+        result.device or device,
+        result.host,
+        joined,
+        result.output,
+        result.head_prompt_line,
+        result.tail_prompt,
+        steps=result.steps,
+    )
+
+    if not result.hit_prompt:
+        response["status"] = "timeout"
+        detail = (
+            f"probe {len(probe_steps)} of {len(probes)}"
+            if probe_steps
+            else "entering configure mode"
+        )
+        response["errors"].append(
+            f"Timed out waiting for the CLI prompt after {timeout}s ({detail})."
+        )
+        response["next_actions"].append(
+            "Retry with a larger --timeout, or --prompt-timeout if the prompt "
+            "itself is slow to appear."
+        )
+        log_request(tool, request, response)
+        return response
+
+    # Surface an error on any probe (an invalid prefix makes DNOS print an
+    # error block instead of help/completion).
     err_lines: List[str] = []
     for s in result.steps:
         is_err, lines_err = detect_error(s.output)

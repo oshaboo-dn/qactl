@@ -46,6 +46,7 @@ from .shell import (
     send_config_help,
     send_help,
     send_ncm_cli,
+    send_probe,
     send_shell_exec,
 )
 
@@ -775,6 +776,9 @@ class StepCapture:
     output: str
     tail_prompt: str
     hit_prompt: bool
+    # Keystroke probes only (``run_probes``): the CLI line buffer after the
+    # injected key — the completed line for a TAB probe. Empty elsewhere.
+    line_buffer: str = ""
 
 
 @dataclass
@@ -1113,6 +1117,126 @@ def run_sequence(
     raise RuntimeError(f"run_sequence failed: {last_exc}")
 
 
+def run_probes(
+    registry: TransportRegistry,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    probes: List[Tuple[str, str]],
+    config_mode: bool = False,
+    timeout: float = DEFAULT_CMD_TIMEOUT,
+    prompt_timeout: Optional[float] = None,
+    banner_wait: Optional[float] = None,
+) -> Invocation:
+    """Run keystroke probes (``(prefix, key)`` pairs) on ONE fresh channel.
+
+    Each probe types ``prefix`` WITHOUT a newline, injects ``key`` (``"?"``
+    or ``"tab"``) via :func:`send_probe`, harvests what the CLI painted,
+    then clears the line with Ctrl-U before the next probe — so nothing is
+    ever submitted and the probes are read-only by construction. Same
+    transport-reuse + retry semantics as :func:`run_sequence`.
+
+    ``config_mode`` pushes the channel into ``configure`` first so the
+    probes hit the configuration grammar, and leaves via ``end`` before
+    teardown (best-effort) — mirroring :func:`send_config_help`. The
+    candidate config is never touched. The ``configure`` entry is recorded
+    as the FIRST step so the caller can see it failed (e.g. a GI-mode box
+    has no ``configure`` and answers "ERROR: Unknown word." while still
+    presenting a prompt); probing continues only if its prompt came back.
+
+    Each probe ``StepCapture`` carries the harvested block in ``output``
+    and the post-keystroke line buffer in ``line_buffer`` (the completed
+    line for a TAB probe). The probe loop stops early when a probe fails
+    to win the prompt back after its Ctrl-U.
+    """
+    if not probes:
+        raise ValueError("probes must be non-empty")
+    last_exc: Optional[Exception] = None
+    for attempt in (1, 2):
+        transport = registry.get(
+            device=device, host=host, user=user, password=password,
+        )
+        registry._mark(transport, 1)
+        channel = None
+        try:
+            channel = transport.client.invoke_shell(width=500, height=1000)
+            channel.settimeout(0.5)
+            prompt = _init_channel(
+                channel, prompt_timeout=prompt_timeout, banner_wait=banner_wait,
+            )
+
+            steps: List[StepCapture] = []
+            if config_mode:
+                cfg_out, cfg_head, cfg_tail, hit_cfg = send_command(
+                    channel, "configure", prompt, overall_timeout=timeout,
+                )
+                steps.append(
+                    StepCapture("configure", cfg_head, cfg_out, cfg_tail, hit_cfg)
+                )
+                if not hit_cfg:
+                    return Invocation(
+                        output=cfg_out,
+                        hit_prompt=False,
+                        head_prompt_line=cfg_head,
+                        tail_prompt=cfg_tail,
+                        host=transport.host,
+                        device=transport.device,
+                        steps=steps,
+                    )
+
+            last_output = ""
+            last_hit = True
+            for prefix, key in probes:
+                shown = f"{prefix}<TAB>" if key == "tab" else f"{prefix}?"
+                output, line_buffer, hit = send_probe(
+                    channel, prefix, key, prompt, overall_timeout=timeout,
+                )
+                steps.append(
+                    StepCapture(shown, "", output, "", hit, line_buffer)
+                )
+                last_output, last_hit = output, hit
+                transport.last_used = time.time()
+                if not hit:
+                    break
+
+            if config_mode:
+                try:
+                    send_command(channel, "end", prompt, overall_timeout=timeout)
+                except Exception:  # noqa: BLE001 - leaving config is best-effort
+                    pass
+
+            transport.last_used = time.time()
+            return Invocation(
+                output=last_output,
+                hit_prompt=last_hit,
+                head_prompt_line="",
+                tail_prompt="",
+                host=transport.host,
+                device=transport.device,
+                steps=steps,
+            )
+        except (paramiko.SSHException, EOFError, OSError) as exc:
+            last_exc = exc
+            try:
+                if channel is not None:
+                    channel.close()
+            except Exception:
+                pass
+            registry.drop(transport.key, reason="transport-broken")
+            if attempt == 2:
+                raise
+            continue
+        finally:
+            registry._mark(transport, -1)
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+    raise RuntimeError(f"run_probes failed: {last_exc}")
+
+
 def run_sequence_pw(
     registry: TransportRegistry,
     device: Optional[str],
@@ -1330,6 +1454,7 @@ __all__ = [
     "Invocation",
     "run_once",
     "run_ncm_cli",
+    "run_probes",
     "run_sequence",
     "run_sequence_pw",
     "save_device_host",

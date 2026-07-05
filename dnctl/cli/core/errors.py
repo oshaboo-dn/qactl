@@ -125,6 +125,18 @@ RUN_RAW_NEXT_ACTION = (
     "purpose-built `qactl cli show` / `qactl cli show-config` / "
     "`qactl cli config` / `qactl cli shell` when they fit."
 )
+RUN_PROBE_NEXT_ACTION = (
+    "`qactl cli probe '<prefix>' [--key '?'|tab] [--config]` types the "
+    "prefix WITHOUT Enter, injects one keystroke and returns what the CLI "
+    "painted (context help for '?', the completed line buffer for tab) — "
+    "read-only by construction: the line is wiped with Ctrl-U, never "
+    "submitted. Check (1) the prefix is valid for the mode probed "
+    "(--config probes the configure-mode grammar); (2) trailing-space "
+    "semantics: '... bfd ' enumerates children, '... bfd str' acts on the "
+    "partial token — quote the prefix so the shell preserves the trailing "
+    "space; (3) each argument is one probe, all on ONE channel. For plain "
+    "child enumeration prefer `qactl cli crawl` / `qactl cli help`."
+)
 RUN_NCM_CLI_NEXT_ACTION = (
     "`qactl cli ncm-cli <cmd> ... --ncm <id> --yes` drives the NCM "
     "management switch's own (ICOS-style) nested "

@@ -426,6 +426,91 @@ def send_config_help(
     return output, head_prompt_line, "", hit_prompt
 
 
+def send_probe(
+    channel: paramiko.Channel,
+    prefix: str,
+    key: str,
+    prompt: str,
+    overall_timeout: float = 10.0,
+) -> Tuple[str, str, bool]:
+    """Send ``prefix`` WITHOUT a newline, inject one keystroke, harvest output.
+
+    The primitive behind interactive CLI-discoverability probes: type a
+    command-line prefix exactly as given (no strip — a trailing space is
+    the difference between "list children of ``bfd``" and "act on the
+    partial token ``str``"), then inject a single keystroke:
+
+    - ``key="?"``: DNOS prints the context-help block for the buffered
+      prefix and repaints the line.
+    - ``key="tab"``: DNOS completes the partial last token in place (the
+      completion characters are echoed onto the line) or, when ambiguous,
+      lists the candidates.
+
+    No newline is ever sent for the probe itself, so the buffered line is
+    never submitted; afterwards ``Ctrl-U`` (``\\x15``, kill-line) plus a
+    newline wipe the buffer and force a fresh prompt, which we wait for —
+    the same safety model as :func:`send_help`.
+
+    Returns ``(clean_output, line_buffer, hit_prompt)``. ``clean_output``
+    is the harvested block (help text / completion candidates) with the
+    prefix echo and prompt repaints filtered out. ``line_buffer`` is the
+    CLI's line buffer after the keystroke: for ``tab`` it is reconstructed
+    from the echo (prefix + completion), for ``?`` it is ``prefix``
+    unchanged (``?`` never edits the line).
+    """
+    keystroke = "\t" if key == "tab" else "?"
+    prefix = prefix or ""
+    if prefix:
+        channel.send(prefix)
+    channel.send(keystroke)
+    block = drain(channel, max_wait=max(overall_timeout / 2, 2.0))
+
+    channel.send("\x15\n")
+    raw_tail, hit_prompt = read_until_prompt(
+        channel, prompt, overall_timeout=overall_timeout,
+    )
+
+    # DNOS pads the PTY stream with NUL bursts around keystroke echoes —
+    # drop them along with bell characters before any line parsing.
+    cleaned_block = strip_ansi(block).replace("\x07", "").replace("\x00", "")
+
+    if keystroke == "\t":
+        # The echo stream is literally what the line buffer became: the
+        # typed prefix followed by whatever completion DNOS appended. On
+        # an ambiguous tab DNOS lists candidates and repaints
+        # ``PROMPT# <prefix>`` — strip the prompt, keep the buffer.
+        last = ""
+        for ln in cleaned_block.splitlines():
+            if ln.strip():
+                last = ln
+        line_buffer = _PROMPT_ECHO_RE.sub("", last).lstrip()
+    else:
+        line_buffer = prefix
+
+    cleaned = cleaned_block + strip_ansi(raw_tail).replace("\x07", "").replace(
+        "\x00", ""
+    )
+    lines = cleaned.splitlines()
+
+    stripped_prefix = prefix.strip()
+    if stripped_prefix and lines and stripped_prefix in lines[0] and "#" not in lines[0]:
+        lines = lines[1:]
+
+    filtered: list[str] = []
+    for ln in lines:
+        if _PROMPT_ECHO_RE.match(ln.rstrip()):
+            continue
+        filtered.append(ln)
+
+    while filtered and filtered[-1].strip() == "":
+        filtered.pop()
+
+    output = "\n".join(filtered)
+    if output and not output.endswith("\n"):
+        output += "\n"
+    return output, line_buffer, hit_prompt
+
+
 def ends_with_shell_prompt(text: str) -> bool:
     """True if ``text`` ends with a Linux shell prompt from ``run start shell``."""
     clean = strip_ansi(text).rstrip()

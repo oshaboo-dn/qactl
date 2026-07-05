@@ -39,6 +39,7 @@ from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get
 from dnctl.cli.core.events import DEFAULT_SEVERITY as _DEFAULT_SEVERITY
 from dnctl.cli.tools.monitor import monitor_reset, monitor_tick
 from dnctl.cli.tools.ping import run_ping_ipv4
+from dnctl.cli.tools.probe import run_probe
 from dnctl.cli.tools.raw import run_raw
 from dnctl.cli.core.shell_exec import is_read_only_shell
 from dnctl.cli.tools.shell import run_ncm_cli, run_shell
@@ -190,6 +191,33 @@ def crawl(
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
     fn = cli_config_crawler if config else cli_crawler
     O.finish(O.call(fn, c, path=path), c)
+
+
+@app.command()
+def probe(
+    prefixes: Annotated[List[str], typer.Argument(help="Command-line prefix(es), each typed WITHOUT Enter (one probe per argument, all on ONE channel; the line is wiped with Ctrl-U between probes). Keep a trailing space to enumerate children ('... bfd '); omit it to act on the partial last token ('... bfd str'). Quote to preserve spacing.")],
+    key: Annotated[str, typer.Option("--key", help="Keystroke injected after the prefix: '?' (context help) or 'tab' (completion; per-step line_buffer carries the completed line).")] = "?",
+    config: Annotated[bool, typer.Option("--config", help="Probe the configure-mode grammar (channel enters 'configure' first, leaves via 'end'; the candidate is never touched).")] = False,
+    prompt_timeout: Annotated[Optional[float], typer.Option("--prompt-timeout", help="Seconds to coax a CLI prompt out of a fresh channel (slow/odd boxes). Overrides DNCTL_CLI_PROMPT_TIMEOUT.")] = None,
+    banner_wait: Annotated[Optional[float], typer.Option("--banner-wait", help="Per-drain settle window while detecting the prompt. Overrides DNCTL_CLI_BANNER_WAIT.")] = None,
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Keystroke probe (TAB / ?) on a command prefix WITHOUT submitting it.
+
+    For interactive CLI-discoverability tests: types the prefix, injects a
+    single keystroke — never Enter — and returns what the CLI painted (the
+    context-help block for '?', the completed line buffer for tab). The
+    line is cleared with Ctrl-U after every probe, so nothing is ever
+    executed: read-only by construction, no --yes needed.
+    """
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes)
+    O.finish(
+        O.call(run_probe, c, prefixes=prefixes, key=key, config_mode=config,
+               prompt_timeout=prompt_timeout, banner_wait=banner_wait),
+        c,
+    )
 
 
 @app.command()

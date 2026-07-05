@@ -271,6 +271,8 @@ qactl cli interfaces -d cl --json    # aggregated per-iface: state+desc+LLDP+IGP
 qactl cli show -d cl 'show bgp summary' --log run.md   # tee raw output → QA evidence
 qactl cli config -d cl --compare 'protocols bgp neighbor 1.1.1.1 peer-as 65001'  # candidate diff, no commit
 qactl cli shell -d cl 'grep -lE libasan /proc/[0-9]*/maps'   # read-only shell exec, no --yes
+qactl cli probe -d sa --config 'protocols bgp 100001 neighbor 1.1.1.1 bfd ' --key '?'  # ?/TAB keystroke probe, never submits (no --yes)
+qactl cli probe -d sa --config 'protocols bgp 100001 neighbor 1.1.1.1 bfd str' --key tab --json | jq '.steps[0].line_buffer'
 qactl cli core list -d cl --json     # parsed `show file core list`
 qactl cli core bt routing_engine/core-bgpd.cpid-199103.sig-6.2026-07-02.11-46-37.tar -d cl --yes  # extract + gdb bt + assert line
 cat filter.xml | qactl nc get -d sa - --json
