@@ -131,15 +131,34 @@ _SHOW_SYSTEM_CMD = "show system"
 # DNOS refuses to re-register a tarball the device is already pulling:
 #   "error downloading package. error: file is already registered for
 #    download"
-# For staging purposes that is NOT a failure — the file is already
-# (being) downloaded onto the box, which is exactly the end state a load
-# step wants. detect_error() flags it (it matches the generic
-# ``error downloading package`` pattern), so without this the whole
-# sequence aborts and every retry re-hits the same line — leaving the
-# device permanently un-loadable until the registration clears (issue
-# #17's "can't upload anything" symptom). Treat it as already-staged and
-# continue to the next component.
+# For staging purposes that is USUALLY not a failure — the file is
+# already (being) downloaded onto the box. detect_error() flags it (it
+# matches the generic ``error downloading package`` pattern), so without
+# special-casing the whole sequence aborts and every retry re-hits the
+# same line — leaving the device permanently un-loadable until the
+# registration clears (issue #17's "can't upload anything" symptom).
+# BUT the registration alone proves nothing: a worker killed mid-download
+# leaves it behind with nothing staged (issue #77). So the sequence keeps
+# going past the line, and the worker then cross-checks the component
+# against ``show system stack`` — verified → already-staged warning,
+# absent/mismatched/unverifiable → loud error.
 _ALREADY_REGISTERED_RE = re.compile(r"(?i)already registered for download")
+
+# ``show system stack`` prints one table row per component; the Target
+# column (last cell) is what a ``target-stack load`` stages into.
+_SHOW_STACK_CMD = "show system stack"
+_STACK_COMPONENT_LABEL: Dict[str, str] = {
+    "base_os": "BASEOS", "dnos": "DNOS", "gi": "GI",
+}
+# The version embedded in the artifact tar filename is exactly what the
+# stack table shows: ``drivenets_dnos_26.2.0.610_dev.dev_v26_2_1565.tar``
+# appears as DNOS ``26.2.0.610_dev.dev_v26_2_1565``.
+_TAR_BASENAME_RE = re.compile(
+    r"^drivenets_(?P<comp>baseos|dnos|gi)_(?P<ver>.+)\.tar$", re.IGNORECASE
+)
+_TAR_FILENAME_COMPONENT: Dict[str, str] = {
+    "baseos": "base_os", "dnos": "dnos", "gi": "gi",
+}
 
 # Valid values for the ``components`` arg. Order matters: it controls
 # the on-device load order (``base_os`` is loaded first when present —
@@ -214,6 +233,141 @@ def _detect_device_mode(probe_output: str, head_prompt: str) -> str:
     if probe_output and _DNOS_VERSION_RE.search(probe_output):
         return "deployed"
     return "gi"
+
+
+def _parse_stack_targets(output: str) -> Dict[str, str]:
+    """``show system stack`` table → ``{component label: Target cell}``.
+
+    Rows look like::
+
+        | DNOS | default | default | - | <current> | <target> |
+
+    Components with no row at all (the issue #77 failure shape) are
+    simply absent from the returned dict.
+    """
+    targets: Dict[str, str] = {}
+    for line in (output or "").splitlines():
+        row = line.strip()
+        if not row.startswith("|"):
+            continue
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        if len(cells) >= 6 and cells[0].upper() in _STACK_COMPONENT_LABEL.values():
+            targets[cells[0].upper()] = cells[-1]
+    return targets
+
+
+def _load_step_component(
+    job: TarLoadJob, cmd: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Map a ``request system target-stack load <url>`` step back to
+    ``(component, expected_version)``.
+
+    The component comes from the job's resolved per-component URL when
+    it matches, else from the ``drivenets_<comp>_...`` tar filename; the
+    expected version only from the filename. Either can be ``None`` when
+    unresolvable.
+    """
+    url = cmd[len(_TAR_LOAD_CMD):].strip()
+    comp = None
+    for c, u in (
+        ("base_os", job.base_os_url), ("dnos", job.dnos_url), ("gi", job.gi_url),
+    ):
+        if u and u == url:
+            comp = c
+            break
+    m = _TAR_BASENAME_RE.match(url.rsplit("/", 1)[-1])
+    if comp is None and m:
+        comp = _TAR_FILENAME_COMPONENT[m.group("comp").lower()]
+    return comp, (m.group("ver") if m else None)
+
+
+def _verify_already_registered(
+    job: TarLoadJob,
+    password: str,
+    step_envelopes: List[Dict[str, Any]],
+    indices: List[int],
+) -> List[str]:
+    """Cross-check "already registered for download" load steps against
+    ``show system stack`` (issue #77).
+
+    The registration only proves a download was *started* at some point;
+    a worker killed mid-download leaves it behind with nothing staged.
+    Each flagged step is confirmed against the Target column: verified →
+    warning + ``already_staged`` stands; absent / wrong version / probe
+    failure → the step is flipped to ``error`` so the run fails loudly
+    instead of exiting 0 with a missing component. Returns the error
+    lines (empty when everything verified).
+    """
+    try:
+        inv = run_once(
+            transport_registry,
+            device=job.device, host=job.host,
+            user=job.user, password=password,
+            command=_SHOW_STACK_CMD,
+            timeout=DEFAULT_CMD_TIMEOUT,
+        )
+        targets = _parse_stack_targets(inv.output)
+        probe_err = (
+            None if targets
+            else f"could not parse '{_SHOW_STACK_CMD}' output"
+        )
+    except Exception as exc:  # noqa: BLE001 — any probe failure means "unverified"
+        targets, probe_err = {}, str(exc)
+
+    errors: List[str] = []
+    for i in indices:
+        env = step_envelopes[i]
+        cmd = env["command"]
+        comp, expected = _load_step_component(job, cmd)
+        label = _STACK_COMPONENT_LABEL.get(comp or "")
+        target = targets.get(label) if label else None
+        if probe_err is not None:
+            reason = f"staging could not be verified ({probe_err})"
+        elif label is None:
+            reason = (
+                "the component for this URL could not be determined, "
+                "so staging could not be verified"
+            )
+        elif expected is not None and target == expected:
+            job.warnings.append(
+                f"{cmd}: file already registered for download on the "
+                f"device — verified {label} {expected} present in "
+                f"'{_SHOW_STACK_CMD}' target; treated as already staged."
+            )
+            continue
+        elif expected is None and target and target != "-":
+            job.warnings.append(
+                f"{cmd}: file already registered for download on the "
+                f"device — {label} {target} present in '{_SHOW_STACK_CMD}' "
+                "target (expected version not parseable from the tar "
+                "filename); treated as already staged."
+            )
+            continue
+        elif not target or target == "-":
+            reason = (
+                f"{label} is absent from the '{_SHOW_STACK_CMD}' target "
+                "stack — a prior interrupted load left a stale download "
+                "registration and the component was NOT staged"
+            )
+        else:
+            reason = (
+                f"'{_SHOW_STACK_CMD}' target has {label} {target}, not "
+                f"the expected {expected} — a prior interrupted load left "
+                "a stale download registration and the component was NOT "
+                "staged"
+            )
+        env["status"] = "error"
+        env["errors"] = [
+            f"file already registered for download, but {reason}."
+        ]
+        errors.append(f"{cmd}: {env['errors'][0]}")
+        if comp:
+            job.next_actions.append(
+                "Re-issue the load for the missing component (the stale "
+                "registration clears once the dead download times out): "
+                f"tar-load start <jenkins_url> -c {comp} --yes"
+            )
+    return errors
 
 
 @dataclass
@@ -1210,6 +1364,7 @@ def _tar_load_worker(
     overall_status = "ok"
     overall_errors: List[str] = []
     step_envelopes: List[Dict[str, Any]] = []
+    registered_steps: List[int] = []
     for cmd in commands:
         if cmd in (_NO_CONFIRM_CMD, _PRECHECK_SHOW_CMD):
             continue
@@ -1233,17 +1388,16 @@ def _tar_load_worker(
             continue
         is_err, err_lines = detect_error(s.output)
         if is_err and _ALREADY_REGISTERED_RE.search(s.output or ""):
-            # Benign: the device already has this tarball registered for
-            # download (e.g. from a prior load). Treat as already staged
-            # and keep the overall run healthy.
-            job.warnings.append(
-                f"{cmd}: file already registered for download on the "
-                "device — treated as already staged (no re-load needed)."
-            )
+            # The device refused to re-register the tarball. Benign when
+            # the file really is staged from an earlier load (issue #17),
+            # but a worker killed mid-download leaves the registration
+            # behind with nothing staged (issue #77) — verdict deferred
+            # to the `show system stack` cross-check after this loop.
             step_envelopes.append({
                 "command": cmd, "status": "already_staged",
                 "errors": [], "stdout": s.output,
             })
+            registered_steps.append(len(step_envelopes) - 1)
             continue
         if is_err:
             overall_status = "error" if overall_status == "ok" else overall_status
@@ -1260,6 +1414,14 @@ def _tar_load_worker(
             "command": cmd, "status": "ok",
             "errors": [], "stdout": s.output,
         })
+
+    if registered_steps:
+        reg_errors = _verify_already_registered(
+            job, password, step_envelopes, registered_steps,
+        )
+        if reg_errors:
+            overall_status = "error" if overall_status == "ok" else overall_status
+            overall_errors.extend(reg_errors)
 
     job.steps = step_envelopes
 

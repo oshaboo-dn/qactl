@@ -10,10 +10,12 @@ moment ``start`` returns, so:
   directly with a faked ``run_sequence``;
 - the terminal envelope must be persisted to disk so ``tar-load show``
   resolves from a later process;
-- "file is already registered for download" must NOT abort the run (it is
-  the device telling us the tarball is already staged).
+- "file is already registered for download" must NOT abort the run, but it
+  is only benign once the component is confirmed present in the
+  ``show system stack`` target — a worker killed mid-download leaves the
+  registration behind with nothing staged (issue #77).
 
-No device traffic: ``run_sequence`` is monkeypatched.
+No device traffic: ``run_sequence`` / ``run_once`` are monkeypatched.
 """
 
 import inspect
@@ -65,9 +67,31 @@ def _job(job_id="dev-7-abcdef", device="dev"):
     )
 
 
-_LOAD_A = "request system target-stack load http://minio/baseos.tar"
-_LOAD_B = "request system target-stack load http://minio/dnos.tar"
+_BASEOS_TAR = "http://minio/pkg/drivenets_baseos_2.2620287169.tar"
+_DNOS_TAR = "http://minio/pkg/drivenets_dnos_26.2.0.610_dev.dev_v26_2_1565.tar"
+_LOAD_A = f"request system target-stack load {_BASEOS_TAR}"
+_LOAD_B = f"request system target-stack load {_DNOS_TAR}"
 _ALREADY = "error downloading package. error: file is already registered for download"
+
+
+def _stack_table(rows):
+    """Render ``show system stack`` output from (label, current, target)."""
+    body = "\n".join(
+        f"| {label:<11} | default | default | - | {cur:<20} | {tgt:<20} |"
+        for label, cur, tgt in rows
+    )
+    return (
+        "| Component   | HW Model | HW Revision | Revert | Current | Target |\n"
+        "|-------------+----------+-------------+--------+---------+--------|\n"
+        + body
+    )
+
+
+def _fake_run_once(stack_output):
+    def _run_once(reg, **kw):
+        assert kw.get("command") == tarload._SHOW_STACK_CMD
+        return types.SimpleNamespace(output=stack_output)
+    return _run_once
 
 
 @pytest.fixture(autouse=True)
@@ -197,13 +221,19 @@ def test_get_tar_load_job_true_miss_is_error():
 
 
 # --------------------------------------------------------------------------
-# worker: idempotent "already registered for download"
+# worker: "already registered for download" — benign ONLY when the
+# component is verified staged in `show system stack` (issues #17 + #77)
 # --------------------------------------------------------------------------
 
-def test_already_registered_is_benign_and_run_completes(monkeypatch):
+def test_already_registered_verified_staged_is_benign(monkeypatch):
     commands = [_LOAD_A, _LOAD_B]
     steps = [_step(_LOAD_A, _ALREADY), _step(_LOAD_B, "Package loaded.")]
     monkeypatch.setattr(tarload, "run_sequence", lambda reg, **kw: _result(steps))
+    # BASEOS target matches the tar version → genuinely already staged.
+    monkeypatch.setattr(tarload, "run_once", _fake_run_once(_stack_table([
+        ("BASEOS", "2.2620000000", "2.2620287169"),
+        ("DNOS", "26.1.0.1", "26.2.0.610_dev.dev_v26_2_1565"),
+    ])))
 
     job = _job()
     tarload._tar_load_worker(job, "pw", commands)
@@ -212,10 +242,107 @@ def test_already_registered_is_benign_and_run_completes(monkeypatch):
     statuses = {s["command"]: s["status"] for s in job.steps}
     assert statuses[_LOAD_A] == "already_staged"
     assert statuses[_LOAD_B] == "ok"
-    assert any("already registered" in w for w in job.warnings)
+    assert any("already registered" in w and "verified" in w
+               for w in job.warnings)
     # persisted for a later `tar-load show`
     persisted = job_store.load(job.job_id)
     assert persisted is not None and persisted["status"] == "ok"
+
+
+def test_already_registered_component_missing_fails_loudly(monkeypatch):
+    # Issue #77: prior worker killed mid-download → registration left
+    # behind, DNOS row absent from `show system stack`. Must NOT exit 0.
+    commands = [_LOAD_B]
+    steps = [_step(_LOAD_B, _ALREADY)]
+    monkeypatch.setattr(tarload, "run_sequence", lambda reg, **kw: _result(steps))
+    monkeypatch.setattr(tarload, "run_once", _fake_run_once(_stack_table([
+        ("BASEOS", "2.2620287169", "2.2620287169"),
+        ("GI", "26.2.0.1", "26.2.0.610_dev.dev_v26_2_1565"),
+    ])))
+
+    job = _job()
+    tarload._tar_load_worker(job, "pw", commands)
+
+    assert job.state == "error"
+    assert job.steps[0]["status"] == "error"
+    assert any("NOT staged" in e for e in job.errors)
+    assert any("-c dnos" in a for a in job.next_actions)
+    persisted = job_store.load(job.job_id)
+    assert persisted is not None and persisted["status"] == "error"
+
+
+def test_already_registered_wrong_target_version_fails(monkeypatch):
+    # Registration matched, but the target stack holds a DIFFERENT dnos
+    # version — the requested tar was never staged.
+    commands = [_LOAD_B]
+    steps = [_step(_LOAD_B, _ALREADY)]
+    monkeypatch.setattr(tarload, "run_sequence", lambda reg, **kw: _result(steps))
+    monkeypatch.setattr(tarload, "run_once", _fake_run_once(_stack_table([
+        ("DNOS", "26.1.0.1", "26.1.0.463_dev.dev_v26_1_1344"),
+    ])))
+
+    job = _job()
+    tarload._tar_load_worker(job, "pw", commands)
+
+    assert job.state == "error"
+    assert job.steps[0]["status"] == "error"
+    assert any("26.1.0.463_dev.dev_v26_1_1344" in e for e in job.errors)
+
+
+def test_already_registered_unverifiable_probe_fails_loudly(monkeypatch):
+    # If the verification probe itself dies we must not silently assume
+    # staged — fail loudly instead.
+    commands = [_LOAD_B]
+    steps = [_step(_LOAD_B, _ALREADY)]
+    monkeypatch.setattr(tarload, "run_sequence", lambda reg, **kw: _result(steps))
+
+    def _boom(reg, **kw):
+        raise tarload.ConnectError("channel died")
+
+    monkeypatch.setattr(tarload, "run_once", _boom)
+
+    job = _job()
+    tarload._tar_load_worker(job, "pw", commands)
+
+    assert job.state == "error"
+    assert any("could not be verified" in e for e in job.errors)
+
+
+def test_no_already_registered_skips_stack_probe(monkeypatch):
+    # Clean loads must not pay the extra `show system stack` round-trip.
+    commands = [_LOAD_A, _LOAD_B]
+    steps = [_step(_LOAD_A, "Package loaded."), _step(_LOAD_B, "Package loaded.")]
+    monkeypatch.setattr(tarload, "run_sequence", lambda reg, **kw: _result(steps))
+    monkeypatch.setattr(
+        tarload, "run_once",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("clean run must not probe the stack")),
+    )
+
+    job = _job()
+    tarload._tar_load_worker(job, "pw", commands)
+    assert job.state == "done"
+
+
+def test_parse_stack_targets_real_table():
+    out = (
+        "| Component   | HW Model   | HW Revision   | Revert   | Current | Target |\n"
+        "|-------------+------------+---------------+----------+---------+--------|\n"
+        "| BASEOS      | default    | default       | -        | 2.2630801007 | 2.2630801007 |\n"
+        "| DNOS        | default    | default       | -        | 26.3.0.7_priv.x | 26.3.0.7_priv.y |\n"
+        "| GI          | default    | default       | -        | 26.3.0.7_priv.x | 26.3.0.7_priv.y |\n"
+        "\n"
+        "Stack replication status:\n"
+        "| Stack   | Sync status   |\n"
+        "|---------+---------------|\n"
+        "| current | REPLICATED    |\n"
+    )
+    assert tarload._parse_stack_targets(out) == {
+        "BASEOS": "2.2630801007",
+        "DNOS": "26.3.0.7_priv.y",
+        "GI": "26.3.0.7_priv.y",
+    }
+    assert tarload._parse_stack_targets("") == {}
 
 
 def test_real_download_error_still_aborts(monkeypatch):
