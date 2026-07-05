@@ -194,6 +194,8 @@ class ConnectResult:
     sn_verified: bool = field(default=False, repr=False)
     serial_numbers: List[str] = field(default_factory=list, repr=False)
     role: Optional[str] = field(default=None, repr=False)
+    mgmt0_verified: bool = field(default=False, repr=False)
+    mgmt0_warnings: List[str] = field(default_factory=list, repr=False)
 
     def __enter__(self):
         self.mgr.__enter__()
@@ -243,12 +245,18 @@ def connect(
     When device= is used:
       1. Read expected_role from the canonical map (required) — picks the
          right SN subtree (NCC for CL, NCP for SA).
-      2. Connect to cached mgmt0 IP from the map.
-      3. Verify serial number matches expected_sns from the map.
-      4. On TCP / NETCONF failure or SN mismatch: raise
+      2. Verify the cached mgmt0 against the chassis's live mgmt0 via the
+         cli group (``show interfaces management`` over the expected_sns
+         SSH hosts — issue #71). On mismatch the map is refreshed and the
+         live address is used; when the chassis can't be probed we proceed
+         with the cached address carrying an UNVERIFIED warning.
+      3. Connect to the (verified) mgmt0 IP.
+      4. Verify serial number matches expected_sns from the map.
+      5. On TCP / NETCONF failure or SN mismatch: raise
          :class:`StaleMgmt0Error` pointing the caller at
          ``dnctl cli device refresh <alias>`` — the nc group never SSHes
-         the chassis to refresh itself; the cli group owns the wire.
+         the chassis itself; the cli group owns the wire (the mgmt0
+         pre-check above is delegated to it, not done here).
 
     When host= is used directly: no SN verification (caller knows the target).
     """
@@ -276,6 +284,26 @@ def connect(
         )
 
     resolved_host = resolve_device_host_from_map(device, map_file)
+
+    # Issue #71: ask the chassis itself for its CURRENT mgmt0 (via the cli
+    # group's transport pool) before trusting the cached address — a stale
+    # cached IP can point at a different box that still answers NETCONF.
+    mgmt0_verified = False
+    mgmt0_warnings: List[str] = []
+    try:
+        from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
+        verification = verify_device_mgmt0(device, map_file=map_file)
+        mgmt0_verified = verification.verified
+        mgmt0_warnings = list(verification.warnings)
+        if verification.address:
+            resolved_host = verification.address
+    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+        mgmt0_warnings.append(
+            f"mgmt0 CLI pre-verification errored "
+            f"({type(exc).__name__}: {exc}); proceeding with cached "
+            f"mgmt0={resolved_host!r} UNVERIFIED."
+        )
+
     expected_sns = _get_expected_sns(device, map_file)
 
     def _try_connect(target_host: str) -> ConnectResult:
@@ -304,6 +332,7 @@ def connect(
             device=device,
             sn_verified=sn_verified, serial_numbers=actual_sns,
             role=expected_role,
+            mgmt0_verified=mgmt0_verified, mgmt0_warnings=mgmt0_warnings,
         )
 
     if not resolved_host:

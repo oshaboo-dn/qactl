@@ -118,6 +118,7 @@ def _do_get(
     out["resolved_host"] = resolved.host
     out["resolved_port"] = resolved.port
     out["resolved_device"] = resolved.device
+    out["mgmt0_warnings"] = list(resolved.warnings)
     out["slept_s"] = rate_limiter.gate(
         resolved.device, resolved.host, resolved.port,
     )
@@ -208,6 +209,7 @@ def gnmi_get(
         port=res.get("resolved_port") or port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(res.get("mgmt0_warnings") or [])
     if res["slept_s"] > 0:
         env["warnings"].append(
             f"paced {res['slept_s']:.2f}s before sending to keep "
@@ -296,6 +298,7 @@ def gnmi_get_many(
             port=res.get("resolved_port") or port,
             tls_mode=tls_mode, request=request,
         )
+        env["warnings"].extend(res.get("mgmt0_warnings") or [])
         if res["error"]:
             kind, msg = res["error"]
             env["status"] = kind
@@ -315,6 +318,7 @@ def gnmi_get_many(
     total_slept = 0.0
     total_latency = 0
     failures = 0
+    mgmt0_warnings: List[str] = []
     for p in paths:
         sub = _do_get(
             paths=[p], encoding=encoding, datatype=datatype,
@@ -325,6 +329,9 @@ def gnmi_get_many(
         )
         total_slept += sub["slept_s"]
         total_latency += sub["latency_ms"]
+        for w in sub.get("mgmt0_warnings") or []:
+            if w not in mgmt0_warnings:
+                mgmt0_warnings.append(w)
         entry: Dict[str, Any] = {
             "path": p,
             "latency_ms": sub["latency_ms"],
@@ -348,6 +355,7 @@ def gnmi_get_many(
         device=device, host=host, port=port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(mgmt0_warnings)
     if failures == len(paths):
         env["status"] = "error"
     elif failures > 0:
@@ -475,6 +483,7 @@ def gnmi_enumerate_keys(
         port=res.get("resolved_port") or port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(res.get("mgmt0_warnings") or [])
 
     if res["error"]:
         kind, msg = res["error"]
@@ -661,6 +670,7 @@ def gnmi_set(
         host=resolved.host, port=resolved.port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(resolved.warnings)
     slept = rate_limiter.gate(resolved.device, resolved.host, resolved.port)
     if slept > 0:
         env["warnings"].append(

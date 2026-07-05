@@ -184,6 +184,7 @@ def gnmi_subscribe(
         host=resolved.host, port=resolved.port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(resolved.warnings)
     slept = rate_limiter.gate(resolved.device, resolved.host, resolved.port)
     if slept > 0:
         env["warnings"].append(

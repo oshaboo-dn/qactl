@@ -75,6 +75,24 @@ def restconf_mount_add(
         )
 
     host = dev.get("mgmt0")
+
+    # Issue #71: verify the cached mgmt0 against the chassis's live mgmt0
+    # (via the cli group) before baking the address into the ODL mount —
+    # a stale cached IP would make ODL manage the wrong box.
+    mgmt0_warnings = []
+    try:
+        from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
+        verification = verify_device_mgmt0(device)
+        mgmt0_warnings = list(verification.warnings)
+        if verification.address:
+            host = verification.address
+    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+        mgmt0_warnings.append(
+            f"mgmt0 CLI pre-verification errored "
+            f"({type(exc).__name__}: {exc}); proceeding with cached "
+            f"mgmt0={host!r} UNVERIFIED."
+        )
+
     if not host:
         return error_envelope(
             f"device '{device}' has no mgmt0 configured",
@@ -92,6 +110,7 @@ def restconf_mount_add(
             "host": host, "port": netconf_port,
         },
     )
+    env["warnings"].extend(mgmt0_warnings)
 
     sc, body = put_mount(
         base_url=base,

@@ -24,6 +24,10 @@ def _base_result(
         result["serial_numbers"] = cr.serial_numbers
     if cr.sn_verified:
         result["sn_verified"] = True
+    if cr.mgmt0_verified:
+        result["mgmt0_verified"] = True
+    if cr.mgmt0_warnings:
+        result["mgmt0_warnings"] = list(cr.mgmt0_warnings)
     if extra:
         result.update(extra)
     return result

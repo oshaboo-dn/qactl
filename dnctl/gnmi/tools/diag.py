@@ -72,6 +72,7 @@ def gnmi_ping(
         host=resolved.host, port=resolved.port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(resolved.warnings)
 
     t0 = time.time()
     try:
@@ -147,6 +148,7 @@ def gnmi_capabilities(
         host=resolved.host, port=resolved.port,
         tls_mode=tls_mode, request=request,
     )
+    env["warnings"].extend(resolved.warnings)
 
     try:
         with client as gc:

@@ -25,8 +25,8 @@ every other MCP in the monorepo.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 from pygnmi.client import gNMIclient
 
@@ -51,10 +51,18 @@ class Resolved:
     host: str
     port: int
     device: Optional[str] = None
+    mgmt0_verified: bool = False
+    warnings: List[str] = field(default_factory=list)
 
 
 def resolve_host(device: Optional[str], host: Optional[str]) -> Resolved:
-    """Resolve a device alias to mgmt0; or pass a host through verbatim."""
+    """Resolve a device alias to mgmt0; or pass a host through verbatim.
+
+    For device= the cached mgmt0 is verified against the chassis's live
+    mgmt0 via the cli group (issue #71): on mismatch the map is refreshed
+    and the live address is returned; when the chassis can't be CLI-probed
+    the cached address is used with an UNVERIFIED warning on ``Resolved``.
+    """
     if host and not device:
         return Resolved(host=host, port=DEFAULT_PORT)
     if not device:
@@ -66,12 +74,30 @@ def resolve_host(device: Optional[str], host: Optional[str]) -> Resolved:
             f"{_devices.default_device_map_path()}"
         )
     mgmt0 = _devices.resolve_mgmt0(device)
+    mgmt0_verified = False
+    warnings: List[str] = []
+    try:
+        from dnctl.cli.core.mgmt0_verify import verify_device_mgmt0
+        verification = verify_device_mgmt0(device)
+        mgmt0_verified = verification.verified
+        warnings = list(verification.warnings)
+        if verification.address:
+            mgmt0 = verification.address
+    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+        warnings.append(
+            f"mgmt0 CLI pre-verification errored "
+            f"({type(exc).__name__}: {exc}); proceeding with cached "
+            f"mgmt0={mgmt0!r} UNVERIFIED."
+        )
     if not mgmt0:
         raise ValueError(
             f"Device '{device}' has no mgmt0 in "
             f"{_devices.default_device_map_path()}"
         )
-    return Resolved(host=mgmt0, port=DEFAULT_PORT, device=device)
+    return Resolved(
+        host=mgmt0, port=DEFAULT_PORT, device=device,
+        mgmt0_verified=mgmt0_verified, warnings=warnings,
+    )
 
 
 def _client_kwargs(
