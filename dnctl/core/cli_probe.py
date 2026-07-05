@@ -79,6 +79,23 @@ _DNOS_VERSION_RE = re.compile(
 )
 _GI_VERSION_COL_RE = re.compile(r"\bGI\s+version\b", re.IGNORECASE)
 
+# ``System status: <value>`` — the raw machine-state line. Values seen live:
+# ``running`` (healthy) and ``running (insufficient-ncfs)`` (degraded,
+# SW-279187 episode 2026-07-02). Recovery mode is expected to surface here
+# too (``System status: recovery``). NOT to be confused with the
+# ``Recovery-mode: supported`` line, which is a *capability* flag present on
+# every healthy box — the regex is anchored to the ``System status:`` label
+# so the capability line can never match.
+_SYSTEM_STATUS_RE = re.compile(
+    r"^\s*System\s+status\s*:\s*(?P<status>.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+# Active-recovery marker outside the status line (banner / free-text form,
+# e.g. "system is in recovery mode"). Requires the two words separated by
+# whitespace so the hyphenated capability label ``Recovery-mode:`` — present
+# on every healthy ``show system`` — can never match.
+_RECOVERY_MODE_TEXT_RE = re.compile(r"\brecovery\s+mode\b", re.IGNORECASE)
+
 
 def parse_system_name(show_system_output: str) -> Optional[str]:
     """Return the ``System Name`` token from a ``show system`` capture.
@@ -201,6 +218,58 @@ def detect_system_mode(show_system_output: str) -> str:
         return "operational"
     if _GI_ACTIVE_NCC_RE.search(text) or _GI_VERSION_COL_RE.search(text):
         return "gi"
+    return "unknown"
+
+
+def parse_system_status(show_system_output: str) -> Optional[str]:
+    """Return the raw ``System status:`` value from a ``show system`` capture.
+
+    E.g. ``"running"`` or ``"running (insufficient-ncfs)"``. Returns ``None``
+    when the line is absent (GI-mode variants, non-DNOS output, errors).
+    Only the ``System status:`` line matches — the ``Recovery-mode:``
+    capability line is a different label and never leaks in.
+    """
+    match = _SYSTEM_STATUS_RE.search(show_system_output or "")
+    if not match:
+        return None
+    return match.group("status").strip() or None
+
+
+def classify_system_state(show_system_output: str) -> str:
+    """Map a ``show system`` capture to one stable machine-state enum value.
+
+    The enum (issue #66): ``running`` | ``running-degraded`` | ``recovery``
+    | ``gi`` | ``unknown`` (connect-path failures add ``unreachable``,
+    assigned by the caller — a failed connect has no output to classify).
+
+    - ``recovery`` — the ``System status:`` line mentions recovery, or the
+      body carries an active-recovery marker ("... recovery mode ...").
+      The ``Recovery-mode: supported`` *capability* line on every healthy
+      box never triggers this (different label, hyphenated).
+    - ``gi`` — golden-image installer schema; its bare
+      ``System status: running`` reflects the installer, not DNOS.
+    - ``running`` / ``running-degraded`` — operational schema with a clean
+      ``running`` status vs. a qualified one
+      (``running (insufficient-ncfs)``, ...).
+    - ``unknown`` — anything else, including a bare status line with no
+      recognisable schema around it (the GI lesson: that line alone proves
+      nothing).
+    """
+    text = show_system_output or ""
+    status = parse_system_status(text)
+    if status and "recovery" in status.lower():
+        return "recovery"
+    if _RECOVERY_MODE_TEXT_RE.search(text):
+        return "recovery"
+    mode = detect_system_mode(text)
+    if mode == "gi":
+        return "gi"
+    if mode == "operational" and status:
+        low = status.lower()
+        if low == "running":
+            return "running"
+        if low.startswith("running"):
+            return "running-degraded"
     return "unknown"
 
 
@@ -557,6 +626,8 @@ __all__ = [
     "parse_mgmt0_ipv4",
     "parse_ncc_serials",
     "detect_system_mode",
+    "parse_system_status",
+    "classify_system_state",
     "parse_gi_inventory",
     "parse_lldp_neighbors",
     "rack_from_name",

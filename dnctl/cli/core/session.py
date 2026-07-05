@@ -363,7 +363,18 @@ def _is_transient_connect_error(exc: Exception) -> bool:
 
 
 class ConnectError(RuntimeError):
-    """Raised when we cannot establish the SSH transport (TCP or auth)."""
+    """Raised when we cannot establish the SSH transport (TCP or auth).
+
+    ``transient`` records whether the underlying failure was
+    transient-shaped (see :func:`_is_transient_connect_error`) — the
+    signature a rebooting / recovery-mode box shares with sshd
+    rate-limiting, as opposed to a deterministic one (rejected creds,
+    DNS miss).
+    """
+
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 class UnknownDeviceError(ConnectError):
@@ -379,6 +390,17 @@ class UnknownDeviceError(ConnectError):
 _GENERIC_CONNECT_NEXT_ACTION = (
     "Verify device is reachable and credentials are correct."
 )
+# A box mid-reboot or in recovery mode fails the connect in exactly these
+# generic-looking ways (banner reset, auth timeout, no session — observed
+# live during the 2026-07-02 SW-279187 HA escalation, issue #66). We can't
+# distinguish them from a dead box at the transport layer, so the hint
+# points the caller at the state check instead of silently reading as
+# "wrong credentials".
+_TRANSIENT_CONNECT_NEXT_ACTION = (
+    "If the device was recently up, it may be rebooting or in recovery "
+    "mode (HA escalation) — retry shortly, then run `qactl cli system` "
+    "and check `state`."
+)
 _REGISTRY_MISS_NEXT_ACTION = (
     "Pass --host <ip/sn> to skip the registry, or register the device with "
     "`qactl cli device add <name> --host <ip/sn>` (MCP: manage_device "
@@ -390,11 +412,15 @@ def connect_error_next_actions(exc: ConnectError) -> List[str]:
     """next_actions for a :class:`ConnectError`.
 
     A registry-miss hint when the device simply isn't registered, else the
-    generic reachability/credentials hint.
+    generic reachability/credentials hint — plus, for transient-shaped
+    failures, the reboot/recovery-mode pointer.
     """
     if isinstance(exc, UnknownDeviceError):
         return [_REGISTRY_MISS_NEXT_ACTION]
-    return [_GENERIC_CONNECT_NEXT_ACTION]
+    actions = [_GENERIC_CONNECT_NEXT_ACTION]
+    if getattr(exc, "transient", False):
+        actions.append(_TRANSIENT_CONNECT_NEXT_ACTION)
+    return actions
 
 
 @dataclass
@@ -614,7 +640,11 @@ def _open_transport(
         time.sleep(backoff[min(attempt, len(backoff) - 1)])
     if client is None:
         raise ConnectError(
-            f"Could not connect to {device or host}: {last_err}"
+            f"Could not connect to {device or host}: {last_err}",
+            transient=(
+                last_err is not None
+                and _is_transient_connect_error(last_err)
+            ),
         )
 
     return Transport(

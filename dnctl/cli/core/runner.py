@@ -58,6 +58,7 @@ def _run_on_device(
     except ConnectError as exc:
         response.update(
             status="connect_error",
+            state="unreachable",
             errors=[str(exc)],
             next_actions=connect_error_next_actions(exc),
         )
@@ -150,6 +151,7 @@ def _run_raw_on_device(
     except ConnectError as exc:
         response.update(
             status="connect_error",
+            state="unreachable",
             errors=[str(exc)],
             next_actions=connect_error_next_actions(exc),
         )
@@ -257,6 +259,7 @@ def _run_ncm_on_device(
     except ConnectError as exc:
         response.update(
             status="connect_error",
+            state="unreachable",
             errors=[str(exc)],
             next_actions=connect_error_next_actions(exc),
         )

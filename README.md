@@ -248,7 +248,7 @@ same behaviour, same `--json`/`--yes` contract:
 
 ```bash
 qactl setup ...                       # one-time device registry / creds (dnctl)
-qactl cli system -d sa --json
+qactl cli system -d sa --json        # incl. machine state: running|running-degraded|recovery|gi|unreachable|unknown
 qactl cli interfaces -d cl --json    # aggregated per-iface: state+desc+LLDP+IGP
 qactl cli show -d cl 'show bgp summary' --log run.md   # tee raw output → QA evidence
 qactl cli config -d cl --compare 'protocols bgp neighbor 1.1.1.1 peer-as 65001'  # candidate diff, no commit

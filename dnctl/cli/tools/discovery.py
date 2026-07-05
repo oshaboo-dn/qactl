@@ -39,7 +39,12 @@ from dnctl.cli.vendors import (
     CAP_SYSTEM,
     requires,
 )
-from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory
+from dnctl.core.cli_probe import (
+    classify_system_state,
+    detect_system_mode,
+    parse_gi_inventory,
+    parse_system_status,
+)
 from dnctl.cli.core.validation import _quote_list, _validate_quoted, _validate_show_command
 
 
@@ -532,6 +537,16 @@ def show_system(
           schemas print ``System status: running``, so consumers MUST read
           ``mode`` — not the ``running`` line — to decide whether
           operational DNOS is actually up.
+        - ``system_status``: the raw ``System status:`` line value
+          (``"running"``, ``"running (insufficient-ncfs)"``, ...), or
+          ``null`` when absent.
+        - ``state``: one stable machine-state enum (issue #66):
+          ``running`` | ``running-degraded`` | ``recovery`` | ``gi`` |
+          ``unknown``. Connect-path failures report ``unreachable`` on
+          their own envelope. ``recovery`` means the box is *actively* in
+          recovery mode (HA escalation exhausted) — distinct from the
+          ``Recovery-mode: supported`` capability line every healthy box
+          prints.
         - ``gi_inventory`` (GI mode only): per-node rows parsed from the
           GI-mode inventory table (``status`` / ``baseos_version`` /
           ``gi_version`` / ``onie_version`` / ...).
@@ -546,16 +561,33 @@ def show_system(
 
 
 def _annotate_system_mode(response: Dict[str, Any]) -> None:
-    """Tag a ``show_system`` envelope with ``mode`` and, in GI mode, inventory.
+    """Tag a ``show_system`` envelope with ``mode`` / ``system_status`` / ``state``.
 
     Keeps ``status`` untouched (the command itself succeeded) but flags GI
-    mode loudly via ``mode`` + a warning + a next action, so neither a
-    human nor an agent mistakes the bare ``System status: running`` for
-    "operational DNOS is up".
+    mode and active recovery mode loudly via a warning + a next action, so
+    neither a human nor an agent mistakes the bare ``System status:
+    running`` for "operational DNOS is up" — or a half-parsed recovery box
+    for a healthy one (issue #66).
     """
     stdout = response.get("stdout") or ""
     mode = detect_system_mode(stdout)
     response["mode"] = mode
+    response["system_status"] = parse_system_status(stdout)
+    state = classify_system_state(stdout)
+    response["state"] = state
+    if state == "recovery":
+        response.setdefault("warnings", []).append(
+            "Device is in RECOVERY MODE — HA escalation exhausted its "
+            "failover budget (Escalation-stop-failovers) and the chassis "
+            "dropped to a minimal environment. Operational commands and "
+            "config are unavailable until it is restarted out of recovery."
+        )
+        response.setdefault("next_actions", []).append(
+            "Exit recovery with `qactl cli restart system --mode cold "
+            "--device <dev> --yes` (coordinate first — a restart drops "
+            "traffic), then re-run `qactl cli system` and confirm state "
+            "is 'running'."
+        )
     if mode == "gi":
         inventory = parse_gi_inventory(stdout)
         if inventory:
