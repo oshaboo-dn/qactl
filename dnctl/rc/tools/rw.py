@@ -40,6 +40,9 @@ from dnctl.rc.core.uri import build_data_url
 LEGACY_DATA_MEDIA = "application/yang.data+json"
 LEGACY_PATCH_MEDIA = "application/yang.patch+json"
 LEGACY_ACCEPT = "application/yang.data+json, application/json;q=0.9"
+# yang-patch responses are a distinct media type; advertising the data
+# form makes bierman02 refuse with HTTP 406 (issue #80 follow-up).
+LEGACY_PATCH_STATUS_ACCEPT = "application/yang.patch-status+json"
 
 
 def _normalize_segments(segments: Sequence[Any]) -> List[Any]:
@@ -260,6 +263,7 @@ def _do_write(
         write_headers["Accept"] = LEGACY_ACCEPT
         if method == "PATCH":
             write_headers["Content-Type"] = LEGACY_PATCH_MEDIA
+            write_headers["Accept"] = LEGACY_PATCH_STATUS_ACCEPT
             if not (
                 isinstance(body_json, dict)
                 and "ietf-yang-patch:yang-patch" in body_json

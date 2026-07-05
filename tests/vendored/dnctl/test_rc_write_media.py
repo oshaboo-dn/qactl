@@ -74,6 +74,9 @@ def test_patch_legacy_converts_to_yang_patch(monkeypatch, capture):
     assert env["status"] == "ok"
     (call,) = capture
     assert call["extra_headers"]["Content-Type"] == "application/yang.patch+json"
+    # yang-patch responses are patch-status, not data — Accept must say so
+    # or bierman02 refuses with HTTP 406
+    assert call["extra_headers"]["Accept"] == "application/yang.patch-status+json"
     # PATCH goes to the parent of the wrapper resource
     assert call["url"].endswith("/dn-top:drivenets-top/dn-bfd:bfd")
 
@@ -122,6 +125,7 @@ def test_patch_legacy_passes_explicit_yang_patch_through(monkeypatch, capture):
     assert call["json_body"] == doc
     assert call["url"].endswith("/dn-top:drivenets-top/dn-bfd:bfd")
     assert call["extra_headers"]["Content-Type"] == "application/yang.patch+json"
+    assert call["extra_headers"]["Accept"] == "application/yang.patch-status+json"
 
 
 def test_patch_legacy_unconvertible_payload_errors(monkeypatch, capture):
