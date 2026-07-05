@@ -87,11 +87,13 @@ def request(
     body: Any = None
     if xml_body is not None:
         body = xml_body.encode("utf-8")
-        headers["Content-Type"] = "application/xml"
+        headers.setdefault("Content-Type", "application/xml")
     elif json_body is not None:
         import json as _json
         body = _json.dumps(json_body).encode("utf-8")
-        headers["Content-Type"] = "application/yang-data+json"
+        # Callers can force a different media type via extra_headers —
+        # legacy (bierman02) ODL only accepts the pre-RFC-8040 dot form.
+        headers.setdefault("Content-Type", "application/yang-data+json")
 
     import time
     t0 = time.monotonic()

@@ -35,6 +35,12 @@ from dnctl.rc.core.uri import build_data_url
 # helpers
 # --------------------------------------------------------------------------
 
+# Legacy (bierman02/draft02) ODL only speaks the pre-RFC-8040 dot-form
+# media types; the RFC 8040 dash form gets HTTP 415 (issue #80).
+LEGACY_DATA_MEDIA = "application/yang.data+json"
+LEGACY_PATCH_MEDIA = "application/yang.patch+json"
+LEGACY_ACCEPT = "application/yang.data+json, application/json;q=0.9"
+
 
 def _normalize_segments(segments: Sequence[Any]) -> List[Any]:
     """Convert agent-friendly segment notation to the internal form.
@@ -62,6 +68,92 @@ def _normalize_segments(segments: Sequence[Any]) -> List[Any]:
         else:
             out.append(s)
     return out
+
+
+def _yang_patch_scalar(v: Any) -> Any:
+    """Shape a leaf value for the bierman02 yang-patch parser.
+
+    Trial-verified quirk (issue #80): bare JSON numbers/booleans are
+    rejected — every scalar must arrive string-quoted.
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return v
+
+
+def _plain_merge_to_yang_patch(norm_segments: List[Any], payload: Any):
+    """Convert a plain-merge PATCH payload into a YANG-PATCH document.
+
+    bierman02 ODL rejects plain-merge PATCH outright (415); the working
+    form (issue #80) is ``application/yang.patch+json`` where every
+    ``target`` segment is module-prefixed, each edit touches one leaf,
+    and the leaf value is wrapped ``{"leaf": "<string>"}``.
+
+    Accepts the same wrapper-object payload ``restconf_put`` takes
+    (``{"mod:container": {...leaves/containers...}}``). If the request
+    URL already ends at the wrapper resource the PATCH is issued against
+    its parent, mirroring the proven manual session.
+
+    Returns ``(patch_segments, yang_patch_doc)`` or ``None`` when the
+    payload doesn't fit the convertible shape.
+    """
+    if not isinstance(payload, dict) or len(payload) != 1 or not norm_segments:
+        return None
+    [(wrapper, inner)] = payload.items()
+    if not isinstance(inner, dict) or not inner:
+        return None
+
+    prefix, _, local = str(wrapper).rpartition(":")
+    if not prefix:
+        # inherit the module prefix from the nearest prefixed URL segment
+        for seg in reversed(norm_segments):
+            name = seg[0] if isinstance(seg, tuple) else str(seg)
+            p = name.rpartition(":")[0]
+            if p:
+                prefix = p
+                break
+    if not prefix:
+        return None
+
+    # If the URL ends at the wrapper resource itself, PATCH its parent —
+    # yang-patch targets are relative to the request URI resource.
+    last = norm_segments[-1]
+    last_name = last[0] if isinstance(last, tuple) else str(last)
+    if (
+        not isinstance(last, tuple)
+        and last_name.rpartition(":")[2] == local
+        and len(norm_segments) > 1
+    ):
+        patch_segments = list(norm_segments[:-1])
+    else:
+        patch_segments = list(norm_segments)
+
+    edits: List[Dict[str, Any]] = []
+
+    def _walk(path: str, node: Dict[str, Any], pfx: str) -> None:
+        for k, v in node.items():
+            p, _, loc = str(k).rpartition(":")
+            cur = p or pfx
+            step = f"{path}/{cur}:{loc}"
+            if isinstance(v, dict):
+                _walk(step, v, cur)
+            else:
+                edits.append({
+                    "edit-id": f"e{len(edits) + 1}",
+                    "operation": "merge",
+                    "target": step,
+                    "value": {loc: _yang_patch_scalar(v)},
+                })
+
+    _walk(f"/{prefix}:{local}", inner, prefix)
+    if not edits:
+        return None
+    doc = {
+        "ietf-yang-patch:yang-patch": {"patch-id": "qactl-merge", "edit": edits},
+    }
+    return patch_segments, doc
 
 
 def _resolve_endpoint(
@@ -150,19 +242,62 @@ def _do_write(
     quirks = ep.get("module_name_quirks") or {}
 
     norm = _normalize_segments(segments)
+
+    body_json = payload if not (
+        isinstance(payload, str) and payload.lstrip().startswith("<")
+    ) else None
+    body_xml = payload if (
+        isinstance(payload, str) and payload.lstrip().startswith("<")
+    ) else None
+
+    # Legacy (bierman02) ODL media-type handling — issue #80. The RFC 8040
+    # dash-form Content-Type gets 415; plain-merge PATCH is unsupported and
+    # must go out as a YANG-PATCH against the parent resource.
+    legacy_odl = ep.get("kind") == "odl" and eff_style == "legacy"
+    write_headers: Dict[str, str] = {}
+    send_segments = norm
+    if legacy_odl and body_json is not None:
+        write_headers["Accept"] = LEGACY_ACCEPT
+        if method == "PATCH":
+            write_headers["Content-Type"] = LEGACY_PATCH_MEDIA
+            if not (
+                isinstance(body_json, dict)
+                and "ietf-yang-patch:yang-patch" in body_json
+            ):
+                conv = _plain_merge_to_yang_patch(norm, body_json)
+                if conv is None:
+                    env = error_envelope(
+                        "legacy ODL PATCH needs a YANG-PATCH body and this "
+                        "payload can't be converted automatically — pass a "
+                        "single wrapper object ({\"module:container\": "
+                        "{...leaves...}}) or a full ietf-yang-patch:yang-patch "
+                        "document",
+                        kind=kind, device=device, endpoint=endpoint,
+                    )
+                    return env
+                send_segments, body_json = conv
+        else:
+            write_headers["Content-Type"] = LEGACY_DATA_MEDIA
+
     # PATCH/PUT/POST/DELETE on data tree always use the config datastore.
     url = build_data_url(
-        base_url=base, mount_name=mount_name, yang_segments=norm,
+        base_url=base, mount_name=mount_name, yang_segments=send_segments,
         datastore="config", style=eff_style, module_quirks=quirks,
     )
 
+    request_info = {
+        "method": method, "device": device, "mount_name": mount_name,
+        "segments": norm, "style": eff_style, "url": url,
+        "payload": payload,
+    }
+    if write_headers.get("Content-Type"):
+        request_info["content_type"] = write_headers["Content-Type"]
+    if body_json is not payload and body_json is not None:
+        request_info["yang_patch"] = body_json
+
     env = make_envelope(
         kind=kind, device=device, endpoint=endpoint, base_url=base,
-        request={
-            "method": method, "device": device, "mount_name": mount_name,
-            "segments": norm, "style": eff_style, "url": url,
-            "payload": payload,
-        },
+        request=request_info,
     )
 
     if not confirm:
@@ -173,19 +308,13 @@ def _do_write(
         )
         return env
 
-    body_json = payload if not (
-        isinstance(payload, str) and payload.lstrip().startswith("<")
-    ) else None
-    body_xml = payload if (
-        isinstance(payload, str) and payload.lstrip().startswith("<")
-    ) else None
-
     t0 = time.monotonic()
     sc, _h, body, _el = http_request(
         method=method, url=url,
         user=auth.get("user"), password=auth.get("password"),
         verify=False, timeout=timeout,
         json_body=body_json, xml_body=body_xml,
+        extra_headers=write_headers or None,
     )
     raw_text = body.decode("utf-8", errors="replace")
     env["result"] = {
@@ -198,6 +327,15 @@ def _do_write(
     if sc not in (200, 201, 204):
         env["status"] = "error"
         env["errors"].append(f"HTTP {sc}: {raw_text[:400]}")
+        if sc == 415:
+            env["next_actions"].append(
+                "HTTP 415 = unsupported media type. bierman02/legacy ODL "
+                "expects application/yang.data+json (dot form) for writes "
+                "and a YANG-PATCH (application/yang.patch+json) for PATCH; "
+                "these are applied automatically when the endpoint has "
+                "kind=odl + uri_style=legacy — check the endpoint config "
+                "and any explicit --style override."
+            )
         _surface_odl_hints(env, raw_text, eff_style)
     return env
 
