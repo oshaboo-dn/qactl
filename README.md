@@ -173,7 +173,7 @@ and no baked-in tokens.
 | Command | Description | Gate |
 |---|---|---|
 | `whoami` | resolve the token to a Jira user | |
-| `status <issue>` | issue status + summary (falls back to the JSM service-desk API on a 404, so portal `HD-*` tickets resolve) | |
+| `status <issue> [<issue> ...]` | issue status + summary + assignee (falls back to the JSM service-desk API on a 404, so portal `HD-*` tickets resolve); several keys return one bulk envelope, per-key errors collected without failing the batch | |
 | `watchers list <issue>` | list watchers | |
 | `watchers add <issue> <account_id>` | add a watcher | |
 | `watchers remove <issue> <account_id>` | remove a watcher | `--yes` |

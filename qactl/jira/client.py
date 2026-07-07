@@ -71,7 +71,7 @@ class JiraClient:
     # ---- status ------------------------------------------------------
 
     def get_issue_status(self, issue_key: str) -> dict[str, Any]:
-        """Return the issue's status object plus summary (one GET).
+        """Return the issue's status, summary and assignee (one GET).
 
         Falls back to the JSM service-desk API on a 404: portal customers
         lack Browse-Project permission on a service desk, so a JSM ticket
@@ -81,7 +81,7 @@ class JiraClient:
         """
         r = self._session.get(
             self._url(f"/rest/api/3/issue/{quote(issue_key, safe='')}"),
-            params={"fields": "status,summary"},
+            params={"fields": "status,summary,assignee"},
             timeout=self.timeout,
         )
         if r.status_code == 404:
@@ -94,6 +94,7 @@ class JiraClient:
             "summary": fields.get("summary"),
             "status": status.get("name"),
             "status_category": ((status.get("statusCategory") or {}).get("name")),
+            "assignee": ((fields.get("assignee") or {}).get("displayName")),
             "source": "jira",
         }
 
@@ -123,6 +124,7 @@ class JiraClient:
             "summary": summary,
             "status": current.get("status"),
             "status_category": current.get("statusCategory"),
+            "assignee": None,
             "source": "servicedesk",
         }
 

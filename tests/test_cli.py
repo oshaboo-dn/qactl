@@ -34,7 +34,11 @@ class ParserTests(unittest.TestCase):
 
     def test_jira_status_positional(self):
         args = self.parser.parse_args(["jira", "status", "SW-1", "--json"])
-        self.assertEqual(args.issue_key, "SW-1")
+        self.assertEqual(args.issue_key, ["SW-1"])
+
+    def test_jira_status_multi_key(self):
+        args = self.parser.parse_args(["jira", "status", "SW-1", "SW-2", "SW-3"])
+        self.assertEqual(args.issue_key, ["SW-1", "SW-2", "SW-3"])
 
     def test_nested_watchers_add(self):
         args = self.parser.parse_args(["jira", "watchers", "add", "SW-1", "acc-123"])

@@ -32,7 +32,10 @@ def _whoami(args):
 
 
 def _status(args):
-    return emit(tools.jira_status(args.issue_key, **_creds(args)), as_json=args.json)
+    keys = args.issue_key
+    if len(keys) == 1:
+        return emit(tools.jira_status(keys[0], **_creds(args)), as_json=args.json)
+    return emit(tools.jira_status_bulk(keys, **_creds(args)), as_json=args.json)
 
 
 def _watchers_list(args):
@@ -114,8 +117,9 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
 
     leaf("whoami", help="resolve the token to a Jira user").set_defaults(func=_whoami)
 
-    p = leaf("status", help="issue status + summary (falls back to JSM service-desk on 404)")
-    p.add_argument("issue_key")
+    p = leaf("status", help="issue status + summary + assignee; several keys = one bulk "
+                            "envelope (falls back to JSM service-desk on 404)")
+    p.add_argument("issue_key", nargs="+")
     p.set_defaults(func=_status)
 
     w = sub.add_parser("watchers", help="watcher list / add / remove")

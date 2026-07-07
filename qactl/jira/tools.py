@@ -15,7 +15,7 @@ optional per-call overrides exist so the CLI's ``--email`` / ``--token`` /
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from qactl.core.creds import CredentialError
 from qactl.core.envelope import error_envelope, ok_envelope
@@ -95,10 +95,57 @@ def jira_status(
     issue_key: str, *, timeout: float = 30.0, email: Optional[str] = None,
     token: Optional[str] = None, base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Return an issue's status and summary."""
+    """Return an issue's status, summary and assignee."""
     return _run("jira_status",
                 lambda c: ok_envelope(kind="jira_status", result=c.get_issue_status(issue_key)),
                 timeout=timeout, email=email, token=token, base_url=base_url)
+
+
+def jira_status_bulk(
+    issue_keys: Sequence[str], *, timeout: float = 30.0, email: Optional[str] = None,
+    token: Optional[str] = None, base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Status + assignee for many issue keys in one envelope (one GET per key).
+
+    Per-key error tolerance: a failing key never fails the batch — it lands
+    in ``result.errors`` and the envelope is ``warning`` (exit 0) as long as
+    at least one key resolved. Only all-keys-failed is an error.
+    """
+    kind = "jira_status_bulk"
+    keys = list(dict.fromkeys(issue_keys))
+    if not keys:
+        return error_envelope("no issue keys given", kind=kind, status="bad_argument")
+
+    client, err = _client(kind, timeout=timeout, email=email, token=token, base_url=base_url)
+    if err is not None:
+        return err
+
+    issues: Dict[str, Any] = {}
+    failures: Dict[str, str] = {}
+    for key in keys:
+        try:
+            issues[key] = client.get_issue_status(key)
+        except JiraError as e:
+            failures[key] = f"HTTP {e.status_code}: {e.body[:200]}"
+        except Exception as e:  # noqa: BLE001
+            failures[key] = str(e)
+
+    result = {
+        "requested": len(keys), "resolved": len(issues), "failed": len(failures),
+        "issues": issues, "errors": failures,
+    }
+    if not issues:
+        env = error_envelope(
+            f"all {len(keys)} issue key(s) failed", kind=kind, result=result,
+            next_actions=[
+                "Check the issue keys and that the token can see them; "
+                "401/403 means auth or permissions, 404 means missing."
+            ],
+        )
+        env["errors"].extend(f"{k}: {v}" for k, v in failures.items())
+        return env
+    return ok_envelope(kind=kind, result=result,
+                       warnings=[f"{k}: {v}" for k, v in failures.items()])
 
 
 def jira_list_watchers(
