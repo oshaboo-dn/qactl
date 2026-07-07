@@ -22,6 +22,9 @@ import requests
 
 from qactl.core.creds import AtlassianConfig
 
+# Jira Cloud custom field holding Story Points on this site (#85).
+STORY_POINTS_FIELD = "customfield_10023"
+
 
 class JiraError(RuntimeError):
     """Raised when the Jira REST API returns a non-2xx status."""
@@ -71,7 +74,7 @@ class JiraClient:
     # ---- status ------------------------------------------------------
 
     def get_issue_status(self, issue_key: str) -> dict[str, Any]:
-        """Return the issue's status, summary and assignee (one GET).
+        """Return the issue's status, summary, assignee and story points (one GET).
 
         Falls back to the JSM service-desk API on a 404: portal customers
         lack Browse-Project permission on a service desk, so a JSM ticket
@@ -81,7 +84,7 @@ class JiraClient:
         """
         r = self._session.get(
             self._url(f"/rest/api/3/issue/{quote(issue_key, safe='')}"),
-            params={"fields": "status,summary,assignee"},
+            params={"fields": "status,summary,assignee," + STORY_POINTS_FIELD},
             timeout=self.timeout,
         )
         if r.status_code == 404:
@@ -95,6 +98,7 @@ class JiraClient:
             "status": status.get("name"),
             "status_category": ((status.get("statusCategory") or {}).get("name")),
             "assignee": ((fields.get("assignee") or {}).get("displayName")),
+            "story_points": fields.get(STORY_POINTS_FIELD),
             "source": "jira",
         }
 
@@ -125,6 +129,7 @@ class JiraClient:
             "status": current.get("status"),
             "status_category": current.get("statusCategory"),
             "assignee": None,
+            "story_points": None,
             "source": "servicedesk",
         }
 

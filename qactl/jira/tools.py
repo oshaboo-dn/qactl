@@ -95,7 +95,7 @@ def jira_status(
     issue_key: str, *, timeout: float = 30.0, email: Optional[str] = None,
     token: Optional[str] = None, base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Return an issue's status, summary and assignee."""
+    """Return an issue's status, summary, assignee and story points."""
     return _run("jira_status",
                 lambda c: ok_envelope(kind="jira_status", result=c.get_issue_status(issue_key)),
                 timeout=timeout, email=email, token=token, base_url=base_url)

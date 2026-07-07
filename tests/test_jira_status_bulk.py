@@ -10,7 +10,7 @@ from unittest import mock
 from qactl.core.creds import AtlassianConfig
 from qactl.core.output import exit_code_for
 from qactl.jira import tools
-from qactl.jira.client import JiraClient, JiraError
+from qactl.jira.client import STORY_POINTS_FIELD, JiraClient, JiraError
 
 
 class _FakeResp:
@@ -41,11 +41,13 @@ def _client(routes):
     return c
 
 
-def _issue_resp(status, summary, assignee):
+def _issue_resp(status, summary, assignee, story_points=None):
     fields = {"summary": summary,
               "status": {"name": status, "statusCategory": {"name": status}}}
     if assignee is not None:
         fields["assignee"] = {"displayName": assignee}
+    if story_points is not None:
+        fields[STORY_POINTS_FIELD] = story_points
     return _FakeResp(200, {"fields": fields})
 
 
@@ -61,6 +63,30 @@ def test_status_assignee_null_when_unassigned():
     assert c.get_issue_status("SW-1")["assignee"] is None
 
 
+def test_status_includes_story_points():
+    c = _client({"/rest/api/3/issue/": _issue_resp("Blocked", "s", "A", story_points=0.1)})
+    assert c.get_issue_status("SW-1")["story_points"] == 0.1
+
+
+def test_status_story_points_null_when_unset():
+    c = _client({"/rest/api/3/issue/": _issue_resp("To Do", "s", "A")})
+    assert c.get_issue_status("SW-1")["story_points"] is None
+
+
+def test_status_requests_story_points_field():
+    captured = {}
+    c = _client({"/rest/api/3/issue/": _issue_resp("Done", "s", "A")})
+    real_get = c._session.get
+
+    def spy_get(url, **kwargs):
+        captured.update(kwargs.get("params") or {})
+        return real_get(url, **kwargs)
+
+    c._session.get = spy_get  # type: ignore[assignment]
+    c.get_issue_status("SW-1")
+    assert STORY_POINTS_FIELD in captured["fields"]
+
+
 def test_servicedesk_fallback_has_assignee_key():
     routes = {
         "/rest/api/3/issue/": _FakeResp(404, text="not found"),
@@ -72,6 +98,7 @@ def test_servicedesk_fallback_has_assignee_key():
     }
     res = _client(routes).get_issue_status("HD-1")
     assert res["assignee"] is None
+    assert res["story_points"] is None
 
 
 # ---- tool layer: jira_status_bulk ------------------------------------------
