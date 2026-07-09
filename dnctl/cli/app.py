@@ -33,6 +33,7 @@ from dnctl.cli.tools.edit import (
     load_override_factory_default,
     rollback_config,
 )
+from dnctl.cli.tools.capture import capture_devices
 from dnctl.cli.tools.gitcommit import get_gitcommit
 from dnctl.cli.tools.interfaces import interfaces as interfaces_tool
 from dnctl.cli.tools.log_read import get_accounting, get_netconf_accounting, get_system_events
@@ -540,6 +541,48 @@ def shell(
     O.finish(
         O.call(run_shell, c, commands=commands, ncc=ncc, ncp=ncp, ncm=ncm,
                container=container, continue_on_error=continue_on_error),
+        c,
+    )
+
+
+@app.command()
+def capture(
+    device: Annotated[Optional[List[str]], typer.Option("--device", "-d", help="Device(s) to capture on (repeatable). Runs concurrently, one pcap per device.")] = None,
+    mode: Annotated[str, typer.Option("--mode", help="Capture mode: routing (control-plane / routing-engine, default) or datapath (NCP wbox-cli).")] = "routing",
+    duration: Annotated[str, typer.Option("--duration", help="Capture seconds, or 'inf'/'0' for as-long-as-possible (clamped, since a one-shot capture can't be Ctrl+C'd).")] = "30",
+    name: Annotated[str, typer.Option("--name", help="pcap filename prefix; final name is <prefix>_<device>_<YYYYmmdd_HHMMSS>.pcap.")] = "capture",
+    bpf: Annotated[Optional[str], typer.Option("--filter", help="BPF applied LOCALLY after download (tcpdump -r) — the device path has no BPF knob. Writes a sibling *_filtered.pcap, keeps the raw one.")] = None,
+    ncp: Annotated[Optional[str], typer.Option("--ncp", help="datapath NCP override; auto-detected from port-mirroring config when unset (falls back to 0).")] = None,
+    host: O.Host = None, user: O.User = None, password: O.Password = None,
+    timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
+):
+    """Capture packets on DNOS device(s); land one pcap per device on this host (DESTRUCTIVE — needs --yes).
+
+    Two modes:
+
+    - routing (default): a `timeout`-bounded tcpdump in the routing-engine
+      container's inband_ns — captures in-band control-plane traffic
+      (BGP/179, BFD, ISIS, ICMP, ...). No device config or physical setup.
+      Note: `-i any` double-counts each packet (both legs); dedupe locally
+      with `editcap -d` if wanted.
+    - datapath: the NCP wbox-cli pcap engine, with a /tmp free-space
+      preflight and a size cap. LAB PREREQUISITE (not automated): datapath
+      capture needs a physical loop cable (or a DNAAS mirror chain)
+      steering datapath packets into the capture; with no wiring the pcap
+      opens but stays empty (surfaced as a warning).
+
+    The pcap egresses straight to THIS host over the device→local-sftp path
+    (same endpoint `cli backup` uses — run `qactl setup --check-local-sftp`
+    to verify it) — no external hop. Writes device /tmp (and datapath
+    toggles wbox-cli state), so it's gated by --yes.
+    """
+    c = O.build_ctx(None, host, user, password, None, timeout, True, as_json, yes)
+    tgt = ", ".join(device) if device else (host or "?")
+    if not confirm.ensure(f"cli capture --mode {mode} on {tgt}", yes=c.yes, as_json=c.json):
+        raise typer.Exit(confirm.REFUSAL_EXIT)
+    O.finish(
+        O.call(capture_devices, c, devices=device, mode=mode, duration=duration,
+               name=name, bpf_filter=bpf, ncp=ncp),
         c,
     )
 

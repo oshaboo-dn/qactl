@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Packet capture**: `qactl cli capture` — native, agent-safe packet
+  capture on DNOS devices, replacing the external `dn_capture.py` script.
+  Two modes: `routing` (control-plane — a `timeout`-bounded `tcpdump` in
+  the routing-engine container's `inband_ns`, no device config or physical
+  setup; captures BGP/179, BFD, ISIS, ICMP, …) and `datapath` (the NCP
+  `wbox-cli` pcap engine with a `/tmp` free-space preflight + size cap;
+  documents the loop-cable / mirror-chain lab prerequisite and warns when
+  the sink opens but no bytes accrue). Multi-device: `-d cl -d sa` captures
+  concurrently, one device-tagged pcap each. The pcap egresses straight to
+  *this* host over the existing device→local-sftp path (same endpoint
+  `cli backup` uses) — no `zkeiserman-dev` hop, no `~/Downloads/
+  dn_devices.json`. `--filter <bpf>` is applied locally on egress
+  (`tcpdump -r`) since the device path has no BPF knob. `--json` envelope
+  carries per-device `{pcap_path, bytes, ...}`; non-zero exit if any device
+  fails. Mutating (writes device `/tmp`; datapath toggles `wbox-cli`) —
+  gated by `--yes`. (#86)
 - **Core-dump surface**: `qactl cli core list` (parsed `show file core
   list`, wrapped rows merged) and `qactl cli core bt <full-name>` — one
   command from "box restarted" to the exact assert: extracts the bundle

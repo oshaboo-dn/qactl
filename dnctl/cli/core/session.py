@@ -918,6 +918,55 @@ def run_once(
     raise RuntimeError(f"run_once failed: {last_exc}")
 
 
+def run_capture(
+    registry: TransportRegistry,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    driver: Callable[[object, str, str, Optional[str]], "Dict[str, object]"],
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+) -> "Dict[str, object]":
+    """Open a fresh channel, hand it to ``driver``, then close it.
+
+    Purpose-built for ``qactl cli capture``: the capture is a long,
+    stateful ``run start shell`` session (enter shell → tcpdump / wbox-cli
+    → scp egress) that a mid-flight transport retry would corrupt, so —
+    unlike :func:`run_once` — there is no retry-once. ``driver`` is called
+    as ``driver(channel, dnos_prompt, host, device)`` and returns the
+    result dict verbatim; the channel is always closed in ``finally``.
+
+    Raises :class:`ConnectError` (from the registry) if the transport
+    can't be established — the caller maps that to a connect_error
+    envelope, same as every other tool.
+    """
+    user, password = _creds.resolve_device_credentials(
+        device, user, password, host=host,
+    )
+    from dnctl.cli.vendors.registry import dialect_for_device
+    dialect = dialect_for_device(device, host)
+    transport = registry.get(
+        device=device, host=host, user=user, password=password,
+        connect_timeout=connect_timeout,
+    )
+    registry._mark(transport, 1)
+    channel = None
+    try:
+        channel = transport.client.invoke_shell(width=500, height=1000)
+        channel.settimeout(0.5)
+        prompt = _init_channel(channel, dialect=dialect)
+        result = driver(channel, prompt, transport.host, transport.device)
+        transport.last_used = time.time()
+        return result
+    finally:
+        registry._mark(transport, -1)
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+
 def run_ncm_cli(
     registry: TransportRegistry,
     device: Optional[str],
@@ -1455,6 +1504,7 @@ __all__ = [
     "TransportRegistry",
     "Invocation",
     "run_once",
+    "run_capture",
     "run_ncm_cli",
     "run_probes",
     "run_sequence",

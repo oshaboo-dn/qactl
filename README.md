@@ -273,6 +273,8 @@ qactl cli config -d cl --compare 'protocols bgp neighbor 1.1.1.1 peer-as 65001' 
 qactl cli shell -d cl 'grep -lE libasan /proc/[0-9]*/maps'   # read-only shell exec, no --yes
 qactl cli probe -d sa --config 'protocols bgp 100001 neighbor 1.1.1.1 bfd ' --key '?'  # ?/TAB keystroke probe, never submits (no --yes)
 qactl cli probe -d sa --config 'protocols bgp 100001 neighbor 1.1.1.1 bfd str' --key tab --json | jq '.steps[0].line_buffer'
+qactl cli capture -d cl --mode routing --duration 20 --yes --json  # control-plane pcap → lands on this host
+qactl cli capture -d cl -d sa --duration 30 --yes    # multi-device, concurrent, one pcap each
 qactl cli core list -d cl --json     # parsed `show file core list`
 qactl cli core bt routing_engine/core-bgpd.cpid-199103.sig-6.2026-07-02.11-46-37.tar -d cl --yes  # extract + gdb bt + assert line
 cat filter.xml | qactl nc get -d sa - --json
