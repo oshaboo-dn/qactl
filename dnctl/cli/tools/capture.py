@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
@@ -109,21 +110,35 @@ def _apply_local_filter(src: str, bpf: str) -> tuple[Optional[str], Optional[str
     Writes a sibling ``<stem>_filtered.pcap`` and returns
     ``(filtered_path, warning)``. The raw pcap is always kept. Returns
     ``(None, <warning>)`` when tcpdump is absent or the rewrite fails.
+
+    The captures dir lives under ``~/.local/state`` — a *dot-directory* the
+    stock Ubuntu ``tcpdump`` AppArmor profile explicitly denies (``audit deny
+    @{HOME}/.*/** mrwkl``), so reading/writing the pcap there fails with
+    "Permission denied" even though the file is owner-readable. We therefore
+    stage the tcpdump read+write through a ``/tmp`` tempdir (allowed by the
+    profile) and move the result into the captures dir with plain Python I/O,
+    which is not AppArmor-confined.
     """
     if not shutil.which("tcpdump"):
         return None, "tcpdump not found on this host; --filter not applied."
     stem, ext = os.path.splitext(src)
     dst = f"{stem}_filtered{ext or '.pcap'}"
+    pext = ext or ".pcap"
     try:
-        proc = subprocess.run(
-            H.build_local_bpf_cmd(src, dst, bpf),
-            capture_output=True, text=True, timeout=120,
-        )
+        with tempfile.TemporaryDirectory(prefix="qactl-bpf-") as td:
+            tmp_src = os.path.join(td, f"in{pext}")
+            tmp_dst = os.path.join(td, f"out{pext}")
+            shutil.copyfile(src, tmp_src)
+            proc = subprocess.run(
+                H.build_local_bpf_cmd(tmp_src, tmp_dst, bpf),
+                capture_output=True, text=True, timeout=120,
+            )
+            if proc.returncode != 0:
+                detail = (proc.stderr or "").strip().splitlines()
+                return None, "local --filter failed: " + (detail[-1] if detail else "tcpdump error")
+            shutil.move(tmp_dst, dst)
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"local --filter failed: {exc}"
-    if proc.returncode != 0:
-        detail = (proc.stderr or "").strip().splitlines()
-        return None, "local --filter failed: " + (detail[-1] if detail else "tcpdump error")
     return dst, None
 
 

@@ -1,5 +1,7 @@
 """Unit tests for the capture_devices orchestrator (mocked device I/O)."""
 
+import os
+
 import pytest
 
 from dnctl.cli.tools import capture as cap
@@ -114,16 +116,35 @@ def test_datapath_infinite_passes_none_to_driver(_pw, _one):
 
 def test_apply_local_filter_ok(monkeypatch, tmp_path):
     monkeypatch.setattr(cap.shutil, "which", lambda _n: "/usr/bin/tcpdump")
+    src = tmp_path / "x.pcap"
+    src.write_bytes(b"\xd4\xc3\xb2\xa1rawpcap")
+    seen = {}
 
-    class _Proc:
-        returncode = 0
-        stderr = ""
+    def _fake_run(argv, *a, **k):
+        seen["argv"] = list(argv)
+        # tcpdump -r <in> -w <out> <bpf>: emulate the rewrite by creating -w
+        with open(argv[argv.index("-w") + 1], "wb") as fh:
+            fh.write(b"filtered")
 
-    monkeypatch.setattr(cap.subprocess, "run", lambda *a, **k: _Proc())
-    src = str(tmp_path / "x.pcap")
-    dst, warn = cap._apply_local_filter(src, "tcp port 179")
+        class _Proc:
+            returncode = 0
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(cap.subprocess, "run", _fake_run)
+    dst, warn = cap._apply_local_filter(str(src), "tcp port 179")
     assert warn is None
     assert dst.endswith("x_filtered.pcap")
+    assert os.path.exists(dst)  # tmp output was moved into the captures dir
+
+    # AppArmor fix: tcpdump must be handed a /tmp staging path, never the
+    # ~/.local/state dot-dir pcap it would be denied from reading/writing.
+    rpath = seen["argv"][seen["argv"].index("-r") + 1]
+    wpath = seen["argv"][seen["argv"].index("-w") + 1]
+    assert rpath != str(src)
+    assert wpath != dst
+    assert "qactl-bpf-" in rpath and "qactl-bpf-" in wpath
 
 
 def test_apply_local_filter_no_tcpdump(monkeypatch):
@@ -135,12 +156,14 @@ def test_apply_local_filter_no_tcpdump(monkeypatch):
 
 def test_apply_local_filter_tcpdump_error(monkeypatch, tmp_path):
     monkeypatch.setattr(cap.shutil, "which", lambda _n: "/usr/bin/tcpdump")
+    src = tmp_path / "x.pcap"
+    src.write_bytes(b"\xd4\xc3\xb2\xa1rawpcap")
 
     class _Proc:
         returncode = 1
         stderr = "tcpdump: syntax error"
 
     monkeypatch.setattr(cap.subprocess, "run", lambda *a, **k: _Proc())
-    dst, warn = cap._apply_local_filter(str(tmp_path / "x.pcap"), "bad bpf")
+    dst, warn = cap._apply_local_filter(str(src), "bad bpf")
     assert dst is None
     assert "syntax error" in warn

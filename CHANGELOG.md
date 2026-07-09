@@ -70,6 +70,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (e.g. SW-279182) (#49).
 
 ### Fixed
+- `cli capture --filter`: the local BPF re-write now stages through a `/tmp`
+  tempdir instead of running `tcpdump -r/-w` directly on the pcap in the
+  `~/.local/state/dnctl/captures/…` dir. The stock Ubuntu `tcpdump` AppArmor
+  profile (`audit deny @{HOME}/.*/** mrwkl`) denies reading/writing anything
+  under a dot-directory in `$HOME`, so `--filter` silently failed with
+  "Permission denied" (no `*_filtered.pcap`) on every such host. tcpdump now
+  only ever touches `/tmp` (allowed); the result is moved into the captures
+  dir with plain Python I/O, which is not AppArmor-confined.
 - `jira status` (MCP: `jira_status`) now resolves JSM service-desk portal
   tickets (e.g. `HD-*`). Portal customers lack Browse-Project permission on
   a service desk, so `/rest/api/3/issue/{key}` 404s; on a 404 the client
