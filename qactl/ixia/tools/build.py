@@ -29,14 +29,14 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from ixia.models import IxiaError, IxiaNotFoundError, IxiaOperationError
+from qactl.ixia.client.models import IxiaError, IxiaNotFoundError, IxiaOperationError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._ngpf_lookup import (
+from qactl.ixia.tools._ngpf_lookup import (
     confirm_guard,
     extract_self_href,
     find_bgp_peer,

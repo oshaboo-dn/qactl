@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import (
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import (
     confirm_or_exit, name_or_index, primary_timeout,
 )
 
@@ -17,13 +17,13 @@ from ixiactl.cli.common import (
 # ----------------------------------------------------------------- topology
 
 def _list(args: argparse.Namespace) -> int:
-    from ixia_tools.topology import ixia_list_topologies
+    from qactl.ixia.tools.topology import ixia_list_topologies
     env = ixia_list_topologies(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _get(args: argparse.Namespace) -> int:
-    from ixia_tools.topology import ixia_get_topology
+    from qactl.ixia.tools.topology import ixia_get_topology
     env = ixia_get_topology(
         host=args.host, name=args.name, port=args.port, user=args.user,
     )
@@ -31,7 +31,7 @@ def _get(args: argparse.Namespace) -> int:
 
 
 def _create(args: argparse.Namespace) -> int:
-    from ixia_tools.build import ixia_create_topology
+    from qactl.ixia.tools.build import ixia_create_topology
     env = ixia_create_topology(
         host=args.host, name=args.name,
         vport_hrefs=args.vport or None,
@@ -47,7 +47,7 @@ def _delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.build import ixia_delete_topology
+    from qactl.ixia.tools.build import ixia_delete_topology
     env = ixia_delete_topology(
         host=args.host, name=args.name, port=args.port, user=args.user,
         confirm=True,
@@ -56,7 +56,7 @@ def _delete(args: argparse.Namespace) -> int:
 
 
 def _start(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_topology_start
+    from qactl.ixia.tools.run import ixia_topology_start
     env = ixia_topology_start(
         host=args.host, name=args.name, port=args.port, user=args.user,
         wait_for_vports_ready_ms=args.wait_for_vports_ready_ms,
@@ -74,7 +74,7 @@ def _stop(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.run import ixia_topology_stop
+    from qactl.ixia.tools.run import ixia_topology_stop
     env = ixia_topology_stop(
         host=args.host, name=args.name, port=args.port, user=args.user,
     )
@@ -84,7 +84,7 @@ def _stop(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------- device group
 
 def _dg_create(args: argparse.Namespace) -> int:
-    from ixia_tools.build import ixia_create_device_group
+    from qactl.ixia.tools.build import ixia_create_device_group
     env = ixia_create_device_group(
         host=args.host, topology=args.topology, name=args.name,
         multiplier=args.multiplier, port=args.port, user=args.user,
@@ -100,7 +100,7 @@ def _dg_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.build import ixia_delete_device_group
+    from qactl.ixia.tools.build import ixia_delete_device_group
     env = ixia_delete_device_group(
         host=args.host, topology=args.topology, name=args.name,
         port=args.port, user=args.user, confirm=True,
@@ -109,7 +109,7 @@ def _dg_delete(args: argparse.Namespace) -> int:
 
 
 def _dg_start(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_dg_start
+    from qactl.ixia.tools.run import ixia_dg_start
     env = ixia_dg_start(
         host=args.host, topology=args.topology, name=args.name,
         port=args.port, user=args.user,
@@ -128,7 +128,7 @@ def _dg_stop(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.run import ixia_dg_stop
+    from qactl.ixia.tools.run import ixia_dg_stop
     env = ixia_dg_stop(
         host=args.host, topology=args.topology, name=args.name,
         port=args.port, user=args.user,
@@ -139,7 +139,7 @@ def _dg_stop(args: argparse.Namespace) -> int:
 # -------------------------------------------------------------------- ethernet
 
 def _eth_create(args: argparse.Namespace) -> int:
-    from ixia_tools.stack import ixia_create_ethernet
+    from qactl.ixia.tools.stack import ixia_create_ethernet
     env = ixia_create_ethernet(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -158,7 +158,7 @@ def _eth_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.stack import ixia_delete_ethernet
+    from qactl.ixia.tools.stack import ixia_delete_ethernet
     env = ixia_delete_ethernet(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -170,7 +170,7 @@ def _eth_delete(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------------ ipv4
 
 def _ipv4_create(args: argparse.Namespace) -> int:
-    from ixia_tools.stack import ixia_create_ipv4
+    from qactl.ixia.tools.stack import ixia_create_ipv4
     env = ixia_create_ipv4(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -191,7 +191,7 @@ def _ipv4_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.stack import ixia_delete_ipv4
+    from qactl.ixia.tools.stack import ixia_delete_ipv4
     env = ixia_delete_ipv4(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -204,7 +204,7 @@ def _ipv4_delete(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------- netgroup
 
 def _ng_create(args: argparse.Namespace) -> int:
-    from ixia_tools.build import ixia_create_network_group
+    from qactl.ixia.tools.build import ixia_create_network_group
     env = ixia_create_network_group(
         host=args.host, topology=args.topology,
         device_group=args.device_group, name=args.name,
@@ -219,7 +219,7 @@ def _ng_create(args: argparse.Namespace) -> int:
 
 
 def _ng_get(args: argparse.Namespace) -> int:
-    from ixia_tools.inspect import ixia_get_network_group
+    from qactl.ixia.tools.inspect import ixia_get_network_group
     env = ixia_get_network_group(
         host=args.host, topology=args.topology,
         network_group=args.name,
@@ -237,7 +237,7 @@ def _ng_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.build import ixia_delete_network_group
+    from qactl.ixia.tools.build import ixia_delete_network_group
     env = ixia_delete_network_group(
         host=args.host, topology=args.topology,
         device_group=args.device_group, name=args.name,

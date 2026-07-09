@@ -14,10 +14,10 @@ import os
 import sys
 from typing import List, Optional
 
-from ixiactl import __version__
-from ixiactl.cli import bfd, bgp, proto, rest, session_cmds, topo
-from ixiactl.cli import traffic as traffic_cli
-from ixiactl.cli.common import apply_session_policy, global_parent
+from qactl.ixia.ctl import __version__
+from qactl.ixia.ctl.cli import bfd, bgp, proto, rest, session_cmds, topo
+from qactl.ixia.ctl.cli import traffic as traffic_cli
+from qactl.ixia.ctl.cli.common import apply_session_policy, global_parent
 
 
 def build_parser(prog: str = "ixiactl") -> argparse.ArgumentParser:
@@ -73,8 +73,8 @@ def main(argv: Optional[List[str]] = None, prog: str = "ixiactl") -> int:
         print("interrupted", file=sys.stderr)
         return 130
     except Exception as e:  # last-resort: never dump a raw traceback at a user
-        from ixiactl.core.output import emit
-        from ixia_core.envelope import error_envelope
+        from qactl.ixia.ctl.core.output import emit
+        from qactl.ixia.core.envelope import error_envelope
         env = error_envelope(
             f"{type(e).__name__}: {str(e)[:240]}",
             kind=getattr(args, "group", "ixiactl") or "ixiactl",

@@ -37,14 +37,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from ixia.models import IxiaError
+from qactl.ixia.client.models import IxiaError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._vport_wait import (
+from qactl.ixia.tools._vport_wait import (
     READY_CONNECTION_STATE, READY_LINK_STATE,
     vport_state_snapshot, filter_vports, wait_for_vports_ready,
     stuck_vport_summary,

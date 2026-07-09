@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from ixia.models import IxiaError, IxiaNotFoundError, IxiaOperationError
-from ixia._helpers import read_multivalue
+from qactl.ixia.client.models import IxiaError, IxiaNotFoundError, IxiaOperationError
+from qactl.ixia.client._helpers import read_multivalue
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, session_id_of,
 )

@@ -124,7 +124,7 @@ def _delegate_dnctl(argv: List[str]) -> int:
 
 def _delegate_ixia(argv: List[str]) -> int:
     """Invoke the vendored ixiactl argparse main with everything after ``ixia``."""
-    from ixiactl.__main__ import main as ixia_main
+    from qactl.ixia.ctl.__main__ import main as ixia_main
     return int(ixia_main(argv[1:], prog="qactl ixia"))
 
 

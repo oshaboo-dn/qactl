@@ -11,10 +11,10 @@ from dataclasses import asdict
 from fnmatch import fnmatch
 from typing import Any, Dict, Optional
 
-from ixia.models import IxiaError
+from qactl.ixia.client.models import IxiaError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, session_id_of,
 )

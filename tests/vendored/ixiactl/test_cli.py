@@ -18,9 +18,9 @@ import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from unittest import mock
 
-from ixiactl.__main__ import build_parser, main
-from ixiactl.cli import common
-from ixiactl.core import output
+from qactl.ixia.ctl.__main__ import build_parser, main
+from qactl.ixia.ctl.cli import common
+from qactl.ixia.ctl.core import output
 
 
 class ParserTests(unittest.TestCase):
@@ -79,7 +79,7 @@ class LoadPathResolutionTests(unittest.TestCase):
     """`session load` resolves a bare name against the configs folder."""
 
     def setUp(self):
-        from ixiactl.cli import session_cmds
+        from qactl.ixia.ctl.cli import session_cmds
         self.sc = session_cmds
         self.default = session_cmds.DEFAULT_CONFIG_FOLDER
 
@@ -166,7 +166,7 @@ class CredentialPolicyTests(unittest.TestCase):
     """--password / --api-key resolve from flag then env into the policy."""
 
     def setUp(self):
-        from ixia_core import session as core_session
+        from qactl.ixia.core import session as core_session
         self.core_session = core_session
 
     def test_flag_password_recorded(self):

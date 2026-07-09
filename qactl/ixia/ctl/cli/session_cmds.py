@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import confirm_or_exit, primary_timeout
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import confirm_or_exit, primary_timeout
 
 
 def _wait_ms(args: argparse.Namespace, default_ms: int) -> int:
@@ -54,19 +54,19 @@ def _resolve_config_path(path: str, folder: str) -> str:
 
 
 def _connect(args: argparse.Namespace) -> int:
-    from ixia_tools.diag import ixia_connect_check
+    from qactl.ixia.tools.diag import ixia_connect_check
     env = ixia_connect_check(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _sessions(args: argparse.Namespace) -> int:
-    from ixia_tools.diag import ixia_list_sessions
+    from qactl.ixia.tools.diag import ixia_list_sessions
     env = ixia_list_sessions(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _describe(args: argparse.Namespace) -> int:
-    from ixia_tools.inspect import (
+    from qactl.ixia.tools.inspect import (
         DEFAULT_DESCRIBE_TIMEOUT_S, ixia_describe_session,
     )
     env = ixia_describe_session(
@@ -79,19 +79,19 @@ def _describe(args: argparse.Namespace) -> int:
 
 
 def _chassis(args: argparse.Namespace) -> int:
-    from ixia_tools.topology import ixia_list_chassis
+    from qactl.ixia.tools.topology import ixia_list_chassis
     env = ixia_list_chassis(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _vports(args: argparse.Namespace) -> int:
-    from ixia_tools.topology import ixia_list_vports
+    from qactl.ixia.tools.topology import ixia_list_vports
     env = ixia_list_vports(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _wait_vports(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_wait_vports_ready
+    from qactl.ixia.tools.run import ixia_wait_vports_ready
     timeout_ms = args.timeout_ms
     if args.timeout is not None:
         timeout_ms = int(args.timeout) * 1000
@@ -116,7 +116,7 @@ def _assign(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_assign_port
+    from qactl.ixia.tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_assign_port
     env = ixia_assign_port(
         host=args.host, port=args.port, user=args.user,
         port_spec=args.port_spec, name=args.name,
@@ -134,7 +134,7 @@ def _connect_ports(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_connect_ports
+    from qactl.ixia.tools.ports import DEFAULT_CONNECT_WAIT_MS, ixia_connect_ports
     env = ixia_connect_ports(
         host=args.host, port=args.port, user=args.user,
         vport=args.vport, wait=args.wait,
@@ -156,7 +156,7 @@ def _release(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.ports import ixia_release_port
+    from qactl.ixia.tools.ports import ixia_release_port
     env = ixia_release_port(
         host=args.host, port=args.port, user=args.user,
         port_spec=args.port_spec, vport=args.vport,
@@ -166,7 +166,7 @@ def _release(args: argparse.Namespace) -> int:
 
 
 def _configs(args: argparse.Namespace) -> int:
-    from ixia_tools.config import ixia_list_configs
+    from qactl.ixia.tools.config import ixia_list_configs
     env = ixia_list_configs(
         host=args.host, folder=args.folder,
         ssh_alias=args.ssh_alias,
@@ -183,7 +183,7 @@ def _new(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.config import ixia_new_config
+    from qactl.ixia.tools.config import ixia_new_config
     env = ixia_new_config(
         host=args.host, port=args.port, user=args.user, confirm=True,
     )
@@ -199,7 +199,7 @@ def _load(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.config import ixia_load_config
+    from qactl.ixia.tools.config import ixia_load_config
     env = ixia_load_config(
         host=args.host, server_path=server_path,
         port=args.port, user=args.user, confirm=True,
@@ -211,7 +211,7 @@ def _load(args: argparse.Namespace) -> int:
 def _save(args: argparse.Namespace) -> int:
     # Save is not in the spec's --yes list (it writes a file, doesn't tear
     # down session state) — proceed without a gate, passing confirm=True.
-    from ixia_tools.config import ixia_save_config
+    from qactl.ixia.tools.config import ixia_save_config
     env = ixia_save_config(
         host=args.host, server_path=args.file,
         port=args.port, user=args.user, confirm=True,
@@ -220,7 +220,7 @@ def _save(args: argparse.Namespace) -> int:
 
 
 def _apply(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_apply_changes
+    from qactl.ixia.tools.run import ixia_apply_changes
     env = ixia_apply_changes(
         host=args.host, port=args.port, user=args.user,
         timeout_s=primary_timeout(args, 60),
@@ -229,7 +229,7 @@ def _apply(args: argparse.Namespace) -> int:
 
 
 def _clear_stats(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_clear_stats
+    from qactl.ixia.tools.run import ixia_clear_stats
     env = ixia_clear_stats(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 

@@ -44,18 +44,18 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Union
 
-from ixia.models import (
+from qactl.ixia.client.models import (
     IxiaError,
     IxiaNotFoundError,
     IxiaOperationError,
 )
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._ngpf_lookup import (
+from qactl.ixia.tools._ngpf_lookup import (
     ROUTE_PROPERTY_ATTRS,
     POOL_ATTRS,
     resolve_topology,

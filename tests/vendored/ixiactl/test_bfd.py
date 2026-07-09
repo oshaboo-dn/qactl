@@ -12,7 +12,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from ixiactl.__main__ import build_parser
+from qactl.ixia.ctl.__main__ import build_parser
 
 
 class BfdParserTests(unittest.TestCase):
@@ -104,7 +104,7 @@ class BfdValidationTests(unittest.TestCase):
     """Bad-argument guards fire before any IxNetwork session is opened."""
 
     def test_negative_tx_interval(self):
-        from ixia_tools.bfd import ixia_create_bfdv4_interface
+        from qactl.ixia.tools.bfd import ixia_create_bfdv4_interface
         env = ixia_create_bfdv4_interface(
             host="h", topology="CL", device_group="DG1", name="b",
             tx_interval=-5,
@@ -112,7 +112,7 @@ class BfdValidationTests(unittest.TestCase):
         self.assertEqual(env["status"], "bad_argument")
 
     def test_zero_detect_multiplier(self):
-        from ixia_tools.bfd import ixia_create_bfdv4_interface
+        from qactl.ixia.tools.bfd import ixia_create_bfdv4_interface
         env = ixia_create_bfdv4_interface(
             host="h", topology="CL", device_group="DG1", name="b",
             detect_multiplier=0,
@@ -120,7 +120,7 @@ class BfdValidationTests(unittest.TestCase):
         self.assertEqual(env["status"], "bad_argument")
 
     def test_bad_no_of_sessions(self):
-        from ixia_tools.bfd import ixia_create_bfdv4_interface
+        from qactl.ixia.tools.bfd import ixia_create_bfdv4_interface
         env = ixia_create_bfdv4_interface(
             host="h", topology="CL", device_group="DG1", name="b",
             no_of_sessions=0,
@@ -128,7 +128,7 @@ class BfdValidationTests(unittest.TestCase):
         self.assertEqual(env["status"], "bad_argument")
 
     def test_peer_bad_bfd_mode(self):
-        from ixia_tools.stack import ixia_create_bgp_peer
+        from qactl.ixia.tools.stack import ixia_create_bgp_peer
         env = ixia_create_bgp_peer(
             host="h", topology="CL", device_group="DG1", name="p",
             dut_ip="1.1.1.1", local_as=65000, bfd_mode="sideways",
@@ -136,7 +136,7 @@ class BfdValidationTests(unittest.TestCase):
         self.assertEqual(env["status"], "bad_argument")
 
     def test_delete_requires_confirm(self):
-        from ixia_tools.bfd import ixia_delete_bfdv4_interface
+        from qactl.ixia.tools.bfd import ixia_delete_bfdv4_interface
         env = ixia_delete_bfdv4_interface(
             host="h", topology="CL", device_group="DG1", name="b",
             confirm=False,
@@ -146,7 +146,7 @@ class BfdValidationTests(unittest.TestCase):
 
 class StateCountsTests(unittest.TestCase):
     def test_positional_args_relabelled(self):
-        from ixia_tools.bfd import _normalise_state_counts
+        from qactl.ixia.tools.bfd import _normalise_state_counts
         self.assertEqual(
             _normalise_state_counts(
                 {"arg1": 5, "arg2": 5, "arg3": 0, "arg4": 0}
@@ -155,12 +155,12 @@ class StateCountsTests(unittest.TestCase):
         )
 
     def test_named_dict_passthrough(self):
-        from ixia_tools.bfd import _normalise_state_counts
+        from qactl.ixia.tools.bfd import _normalise_state_counts
         named = {"total": 2, "notStarted": 0, "down": 1, "up": 1}
         self.assertEqual(_normalise_state_counts(named), named)
 
     def test_non_dict_passthrough(self):
-        from ixia_tools.bfd import _normalise_state_counts
+        from qactl.ixia.tools.bfd import _normalise_state_counts
         self.assertIsNone(_normalise_state_counts(None))
 
 
@@ -199,12 +199,12 @@ class RestOptionsTests(unittest.TestCase):
     def _patch_session(self, conn):
         href = "/api/v1/sessions/1/ixnetwork"
         return mock.patch(
-            "ixia_tools.rest.get_session",
+            "qactl.ixia.tools.rest.get_session",
             return_value=_FakeSession(conn, href),
         )
 
     def test_options_uses_send_recv(self):
-        from ixia_tools.rest import ixia_rest_get
+        from qactl.ixia.tools.rest import ixia_rest_get
         conn = _FakeConn()
         with self._patch_session(conn):
             env = ixia_rest_get(
@@ -220,7 +220,7 @@ class RestOptionsTests(unittest.TestCase):
         )
 
     def test_get_uses_read(self):
-        from ixia_tools.rest import ixia_rest_get
+        from qactl.ixia.tools.rest import ixia_rest_get
         conn = _FakeConn()
         with self._patch_session(conn):
             env = ixia_rest_get(
@@ -234,7 +234,7 @@ class RestOptionsTests(unittest.TestCase):
 
 class NormalisePathTests(unittest.TestCase):
     def test_api_path_passthrough(self):
-        from ixia_tools.rest import _normalise_path
+        from qactl.ixia.tools.rest import _normalise_path
         self.assertEqual(
             _normalise_path("/api/v1/sessions/1/ixnetwork/topology",
                             "/api/v1/sessions/1/ixnetwork"),
@@ -242,14 +242,14 @@ class NormalisePathTests(unittest.TestCase):
         )
 
     def test_bare_api_prefix_gets_slash(self):
-        from ixia_tools.rest import _normalise_path
+        from qactl.ixia.tools.rest import _normalise_path
         self.assertEqual(
             _normalise_path("api/v1/sessions/1/ixnetwork", None),
             "/api/v1/sessions/1/ixnetwork",
         )
 
     def test_relative_resolves_against_root(self):
-        from ixia_tools.rest import _normalise_path
+        from qactl.ixia.tools.rest import _normalise_path
         self.assertEqual(
             _normalise_path("topology/1/deviceGroup/1",
                             "/api/v1/sessions/1/ixnetwork"),
@@ -257,13 +257,13 @@ class NormalisePathTests(unittest.TestCase):
         )
 
     def test_relative_without_root_falls_back_to_slash(self):
-        from ixia_tools.rest import _normalise_path
+        from qactl.ixia.tools.rest import _normalise_path
         self.assertEqual(
             _normalise_path("topology/1", None), "/topology/1",
         )
 
     def test_empty_path_raises(self):
-        from ixia_tools.rest import _normalise_path
+        from qactl.ixia.tools.rest import _normalise_path
         with self.assertRaises(ValueError):
             _normalise_path("", "/api/v1/sessions/1/ixnetwork")
 

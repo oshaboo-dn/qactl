@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Tuple, Union
 
-from ixia.models import IxiaNotFoundError
+from qactl.ixia.client.models import IxiaNotFoundError
 
 
 # ----------------------------------------------------------------------
@@ -55,7 +55,7 @@ def confirm_guard(
     # Local import to avoid envelope <-> lookup cycle (envelope is in
     # ixia_core, lookup is in ixia_tools — unrelated, but kept local
     # for symmetry with the build.py original).
-    from ixia_core.envelope import error_envelope
+    from qactl.ixia.core.envelope import error_envelope
     return error_envelope(
         f"{kind} deletes live IxNetwork objects and has no undo. "
         "Re-call with confirm=True after reviewing the arguments.",

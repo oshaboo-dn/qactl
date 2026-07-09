@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import confirm_or_exit, name_or_index
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import confirm_or_exit, name_or_index
 
 
 def _bfd_create(args: argparse.Namespace) -> int:
-    from ixia_tools.bfd import ixia_create_bfdv4_interface
+    from qactl.ixia.tools.bfd import ixia_create_bfdv4_interface
     env = ixia_create_bfdv4_interface(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -24,7 +24,7 @@ def _bfd_create(args: argparse.Namespace) -> int:
 
 
 def _bfd_get(args: argparse.Namespace) -> int:
-    from ixia_tools.bfd import ixia_get_bfdv4_interface
+    from qactl.ixia.tools.bfd import ixia_get_bfdv4_interface
     env = ixia_get_bfdv4_interface(
         host=args.host, topology=args.topology, name=args.name,
         device_group=name_or_index(args.device_group),
@@ -42,7 +42,7 @@ def _bfd_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.bfd import ixia_delete_bfdv4_interface
+    from qactl.ixia.tools.bfd import ixia_delete_bfdv4_interface
     env = ixia_delete_bfdv4_interface(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,

@@ -12,8 +12,8 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from ixiactl.__main__ import build_parser
-from ixia_tools.ports import (
+from qactl.ixia.ctl.__main__ import build_parser
+from qactl.ixia.tools.ports import (
     _parse_port_spec,
     ixia_assign_port,
     ixia_connect_ports,
@@ -140,7 +140,7 @@ def _session(*, owner="", vports=None):
 
 
 def _patch(sess):
-    return mock.patch("ixia_tools.ports.get_session", return_value=sess)
+    return mock.patch("qactl.ixia.tools.ports.get_session", return_value=sess)
 
 
 # --------------------------------------------------------------------------

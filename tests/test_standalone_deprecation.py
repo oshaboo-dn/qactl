@@ -16,7 +16,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from qactl.dnctl.__main__ import _warn_if_standalone as dnctl_warn
-from ixiactl.__main__ import _warn_if_standalone as ixiactl_warn
+from qactl.ixia.ctl.__main__ import _warn_if_standalone as ixiactl_warn
 
 
 def _capture(fn, argv0):

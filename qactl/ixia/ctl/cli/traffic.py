@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import confirm_or_exit, primary_timeout
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import confirm_or_exit, primary_timeout
 
 
 def _list(args: argparse.Namespace) -> int:
-    from ixia_tools.traffic import ixia_list_traffic_items
+    from qactl.ixia.tools.traffic import ixia_list_traffic_items
     env = ixia_list_traffic_items(
         host=args.host, port=args.port, user=args.user,
         pattern=args.pattern, limit=args.limit,
@@ -18,7 +18,7 @@ def _list(args: argparse.Namespace) -> int:
 
 
 def _get(args: argparse.Namespace) -> int:
-    from ixia_tools.traffic import ixia_get_traffic_item
+    from qactl.ixia.tools.traffic import ixia_get_traffic_item
     env = ixia_get_traffic_item(
         host=args.host, name=args.name, port=args.port, user=args.user,
         max_streams=args.max_streams,
@@ -30,7 +30,7 @@ def _create(args: argparse.Namespace) -> int:
     track_by = args.track_by or None
     if args.no_track:
         track_by = []
-    from ixia_tools.build import ixia_create_traffic_item
+    from qactl.ixia.tools.build import ixia_create_traffic_item
     env = ixia_create_traffic_item(
         host=args.host, name=args.name,
         src_refs=args.src, dst_refs=args.dst,
@@ -48,7 +48,7 @@ def _delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.build import ixia_delete_traffic_item
+    from qactl.ixia.tools.build import ixia_delete_traffic_item
     env = ixia_delete_traffic_item(
         host=args.host, name=args.name, port=args.port, user=args.user,
         confirm=True,
@@ -57,13 +57,13 @@ def _delete(args: argparse.Namespace) -> int:
 
 
 def _generate(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_traffic_generate
+    from qactl.ixia.tools.run import ixia_traffic_generate
     env = ixia_traffic_generate(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
 
 def _apply(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_traffic_apply
+    from qactl.ixia.tools.run import ixia_traffic_apply
     env = ixia_traffic_apply(host=args.host, port=args.port, user=args.user)
     return emit(env, as_json=args.json)
 
@@ -75,7 +75,7 @@ def _start(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.run import ixia_traffic_start
+    from qactl.ixia.tools.run import ixia_traffic_start
     env = ixia_traffic_start(
         host=args.host, port=args.port, user=args.user, name=args.name,
     )
@@ -89,7 +89,7 @@ def _stop(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.run import ixia_traffic_stop
+    from qactl.ixia.tools.run import ixia_traffic_stop
     env = ixia_traffic_stop(
         host=args.host, port=args.port, user=args.user, name=args.name,
     )
@@ -97,7 +97,7 @@ def _stop(args: argparse.Namespace) -> int:
 
 
 def _stats(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_get_traffic_stats
+    from qactl.ixia.tools.run import ixia_get_traffic_stats
     env = ixia_get_traffic_stats(
         host=args.host, port=args.port, user=args.user,
         timeout=primary_timeout(args, 10),

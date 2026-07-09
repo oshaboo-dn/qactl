@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import (
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import (
     confirm_or_exit, name_or_index, parse_capabilities, parse_rt,
 )
 
@@ -14,11 +14,11 @@ def _peer_create(args: argparse.Namespace) -> int:
     try:
         caps = parse_capabilities(args.capability)
     except ValueError as e:
-        from ixia_core.envelope import error_envelope
+        from qactl.ixia.core.envelope import error_envelope
         return emit(error_envelope(str(e), kind="create_bgp_peer",
                                    host=args.host, port=args.port,
                                    status="bad_argument"), as_json=args.json)
-    from ixia_tools.stack import ixia_create_bgp_peer
+    from qactl.ixia.tools.stack import ixia_create_bgp_peer
     env = ixia_create_bgp_peer(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -32,7 +32,7 @@ def _peer_create(args: argparse.Namespace) -> int:
 
 
 def _peer_get(args: argparse.Namespace) -> int:
-    from ixia_tools.inspect import ixia_get_bgp_peer
+    from qactl.ixia.tools.inspect import ixia_get_bgp_peer
     env = ixia_get_bgp_peer(
         host=args.host, topology=args.topology, peer=args.name,
         device_group=name_or_index(args.device_group),
@@ -50,7 +50,7 @@ def _peer_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.stack import ixia_delete_bgp_peer
+    from qactl.ixia.tools.stack import ixia_delete_bgp_peer
     env = ixia_delete_bgp_peer(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), name=args.name,
@@ -64,11 +64,11 @@ def _vrf_create(args: argparse.Namespace) -> int:
         import_rts = [parse_rt(x) for x in (args.import_rt or [])]
         export_rts = [parse_rt(x) for x in (args.export_rt or [])]
     except ValueError as e:
-        from ixia_core.envelope import error_envelope
+        from qactl.ixia.core.envelope import error_envelope
         return emit(error_envelope(str(e), kind="create_bgp_vrf",
                                    host=args.host, port=args.port,
                                    status="bad_argument"), as_json=args.json)
-    from ixia_tools.stack import ixia_create_bgp_vrf
+    from qactl.ixia.tools.stack import ixia_create_bgp_vrf
     env = ixia_create_bgp_vrf(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), peer=args.peer,
@@ -86,7 +86,7 @@ def _vrf_delete(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.stack import ixia_delete_bgp_vrf
+    from qactl.ixia.tools.stack import ixia_delete_bgp_vrf
     env = ixia_delete_bgp_vrf(
         host=args.host, topology=args.topology,
         device_group=name_or_index(args.device_group), peer=args.peer,

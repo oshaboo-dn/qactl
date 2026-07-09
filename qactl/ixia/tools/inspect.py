@@ -33,15 +33,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
-from ixia.models import IxiaError, IxiaNotFoundError
-from ixia._helpers import read_multivalue
+from qactl.ixia.client.models import IxiaError, IxiaNotFoundError
+from qactl.ixia.client._helpers import read_multivalue
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, session_id_of,
 )
-from ixia_tools._ngpf_lookup import (
+from qactl.ixia.tools._ngpf_lookup import (
     POOL_ATTRS,
     find_bgp_peer,
     list_bgp_peers,
@@ -744,7 +744,7 @@ def _dg_bfd_interfaces(dg, ixn) -> List[Dict[str, Any]]:
     no BFD child contributes nothing; a read error on one interface
     doesn't tank the describe.
     """
-    from ixia_tools.bfd import _build_bfdv4_view
+    from qactl.ixia.tools.bfd import _build_bfdv4_view
     out: List[Dict[str, Any]] = []
     try:
         for eth in dg.Ethernet.find():
@@ -951,7 +951,7 @@ def ixia_describe_session(
             result["traffic_items"] = _traffic_summary(ixn)
         return result
 
-    from ixia_tools.run import _run_bounded
+    from qactl.ixia.tools.run import _run_bounded
 
     done, value = _run_bounded(_build, timeout=timeout_s)
     if not done:

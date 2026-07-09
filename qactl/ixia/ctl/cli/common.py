@@ -21,10 +21,10 @@ import os
 import sys
 from typing import Any, Callable, Dict, List, Optional
 
-from ixia_core.envelope import error_envelope
-from ixia_core.session import DEFAULT_PORT, DEFAULT_USER, set_session_policy
+from qactl.ixia.core.envelope import error_envelope
+from qactl.ixia.core.session import DEFAULT_PORT, DEFAULT_USER, set_session_policy
 
-from ixiactl.core.output import emit
+from qactl.ixia.ctl.core.output import emit
 
 
 # Handler signature: takes parsed args, returns a process exit code.

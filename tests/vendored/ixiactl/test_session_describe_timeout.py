@@ -15,8 +15,8 @@ import time
 import unittest
 from unittest import mock
 
-from ixia_tools.inspect import DEFAULT_DESCRIBE_TIMEOUT_S, ixia_describe_session
-from ixiactl.__main__ import build_parser
+from qactl.ixia.tools.inspect import DEFAULT_DESCRIBE_TIMEOUT_S, ixia_describe_session
+from qactl.ixia.ctl.__main__ import build_parser
 
 
 class _SlowTopologyColl:
@@ -52,7 +52,7 @@ class _FakeSession:
 class DescribeTimeoutTests(unittest.TestCase):
     def test_slow_deep_read_returns_timeout_not_hang(self):
         with mock.patch(
-            "ixia_tools.inspect.get_session",
+            "qactl.ixia.tools.inspect.get_session",
             return_value=_FakeSession(slow=True),
         ):
             start = time.monotonic()
@@ -71,13 +71,13 @@ class DescribeTimeoutTests(unittest.TestCase):
         )
 
     def test_timeout_status_maps_to_nonzero_exit(self):
-        from ixiactl.core.output import exit_code_for
+        from qactl.ixia.ctl.core.output import exit_code_for
 
         self.assertNotEqual(exit_code_for({"status": "timeout"}), 0)
 
     def test_fast_session_succeeds_within_budget(self):
         with mock.patch(
-            "ixia_tools.inspect.get_session",
+            "qactl.ixia.tools.inspect.get_session",
             return_value=_FakeSession(slow=False),
         ):
             env = ixia_describe_session(host="h", timeout_s=5)

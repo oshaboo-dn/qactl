@@ -28,14 +28,14 @@ import time
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from ixia.models import IxiaError, IxiaOperationError
+from qactl.ixia.client.models import IxiaError, IxiaOperationError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER, STAT_VIEW_WAIT_SECONDS,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._vport_wait import (
+from qactl.ixia.tools._vport_wait import (
     NOT_READY_ERROR_MARKER,
     filter_vports,
     stuck_vport_summary,
@@ -43,7 +43,7 @@ from ixia_tools._vport_wait import (
     vports_not_ready,
     wait_for_vports_ready,
 )
-from ixia_tools.routes import apply_changes as _apply_changes
+from qactl.ixia.tools.routes import apply_changes as _apply_changes
 
 
 # Default vport-readiness preflight wait for the start tools.

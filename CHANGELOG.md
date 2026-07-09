@@ -84,8 +84,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   top-level tree. All in-repo imports point at `qactl.dnctl`; a thin
   top-level `dnctl` shim aliases the old name so any lingering `import
   dnctl` keeps working (zero-break). Runtime state/config paths
-  (`~/.config/dnctl`, `~/.local/state/dnctl`) are unchanged. `ixia*`
-  packages follow in stage 2.
+  (`~/.config/dnctl`, `~/.local/state/dnctl`) are unchanged.
+- **Package consolidation (stage 2)**: the four top-level `ixia*` packages
+  collapsed into one `qactl.ixia` — `ixia` → `qactl.ixia.client`,
+  `ixia_core` → `qactl.ixia.core`, `ixia_tools` → `qactl.ixia.tools`,
+  `ixiactl` → `qactl.ixia.ctl`. Top-level `ixia`/`ixia_core`/`ixia_tools`/
+  `ixiactl` shims alias the old names (zero-break). `qactl ixia …`
+  unchanged. Only the top-level `qactl` package remains.
 
 ### Fixed
 - `cli capture --filter`: the local BPF re-write now stages through a `/tmp`

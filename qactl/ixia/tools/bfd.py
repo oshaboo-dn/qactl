@@ -43,14 +43,14 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional, Union
 
-from ixia.models import IxiaError, IxiaNotFoundError, IxiaOperationError
+from qactl.ixia.client.models import IxiaError, IxiaNotFoundError, IxiaOperationError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._ngpf_lookup import (
+from qactl.ixia.tools._ngpf_lookup import (
     confirm_guard,
     patch_singlevalue,
     patch_singlevalue_if_set,
@@ -59,7 +59,7 @@ from ixia_tools._ngpf_lookup import (
     resolve_ipv4,
     resolve_topology,
 )
-from ixia_tools.build import _bounce_if_running
+from qactl.ixia.tools.build import _bounce_if_running
 
 
 # IxNetwork's ``stateCounts`` is documented as
@@ -372,7 +372,7 @@ def _build_bfdv4_view(bfd, ixn) -> Dict[str, Any]:
     Imported lazily by ``ixia_tools.inspect`` so the session/topology
     describe can embed BFD state per IPv4 stack without re-walking.
     """
-    from ixia_tools.inspect import _mv_scalar, _coerce_int, _safe_bool
+    from qactl.ixia.tools.inspect import _mv_scalar, _coerce_int, _safe_bool
 
     status = getattr(bfd, "SessionStatus", None)
     if not isinstance(status, list):

@@ -122,7 +122,7 @@ def register_group(group: str, mcp, *, wrap: Optional[Callable] = None) -> List[
         return sel.registered
     if group in IXIA_GROUPS:
         sel = _Selector(mcp, wrap=wrap)
-        _register_package("ixia_tools", sel)
+        _register_package("qactl.ixia.tools", sel)
         return sel.registered
     raise ValueError(f"unknown MCP group {group!r}; choose from {', '.join(ALL_GROUPS)}")
 

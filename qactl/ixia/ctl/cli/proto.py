@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import argparse
 
-from ixiactl.core.output import emit
-from ixiactl.cli.common import (
+from qactl.ixia.ctl.core.output import emit
+from qactl.ixia.ctl.cli.common import (
     confirm_or_exit, name_or_index, parse_lines, primary_timeout,
 )
 
 
 def _start_all(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_protocols_start_all
+    from qactl.ixia.tools.run import ixia_protocols_start_all
     env = ixia_protocols_start_all(
         host=args.host, port=args.port, user=args.user, sync=not args.no_sync,
         wait_for_vports_ready_ms=args.wait_for_vports_ready_ms,
@@ -29,7 +29,7 @@ def _stop_all(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.run import ixia_protocols_stop_all
+    from qactl.ixia.tools.run import ixia_protocols_stop_all
     env = ixia_protocols_stop_all(
         host=args.host, port=args.port, user=args.user, sync=not args.no_sync,
     )
@@ -37,7 +37,7 @@ def _stop_all(args: argparse.Namespace) -> int:
 
 
 def _summary(args: argparse.Namespace) -> int:
-    from ixia_tools.run import ixia_protocols_summary
+    from qactl.ixia.tools.run import ixia_protocols_summary
     env = ixia_protocols_summary(
         host=args.host, port=args.port, user=args.user,
         timeout=primary_timeout(args, 10),
@@ -53,7 +53,7 @@ def _route_action(args: argparse.Namespace) -> int:
     )
     if rc is not None:
         return rc
-    from ixia_tools.routes import ixia_route_action
+    from qactl.ixia.tools.routes import ixia_route_action
     env = ixia_route_action(
         host=args.host, topology=args.topology,
         network_group=args.network_group, action=args.action,
@@ -69,7 +69,7 @@ def _route_action(args: argparse.Namespace) -> int:
 
 
 def _route_apply_pending(args: argparse.Namespace) -> int:
-    from ixia_tools.routes import ixia_route_apply_pending
+    from qactl.ixia.tools.routes import ixia_route_apply_pending
     env = ixia_route_apply_pending(
         host=args.host, port=args.port, user=args.user,
         timeout_s=primary_timeout(args, 30),

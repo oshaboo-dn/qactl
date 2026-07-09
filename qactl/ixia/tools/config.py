@@ -28,14 +28,14 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
-from ixia.models import IxiaError, IxiaOperationError
+from qactl.ixia.client.models import IxiaError, IxiaOperationError
 
-from ixia_core.envelope import make_envelope, error_envelope
-from ixia_core.session import (
+from qactl.ixia.core.envelope import make_envelope, error_envelope
+from qactl.ixia.core.session import (
     DEFAULT_PORT, DEFAULT_USER,
     get_session, write_lock, session_id_of,
 )
-from ixia_tools._vport_wait import (
+from qactl.ixia.tools._vport_wait import (
     stuck_vport_summary,
     vport_state_snapshot,
     vports_not_ready,

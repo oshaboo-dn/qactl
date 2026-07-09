@@ -31,8 +31,8 @@ from __future__ import annotations
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from ixia import IxiaSession
-from ixia.models import IxiaConnectionError
+from qactl.ixia.client import IxiaSession
+from qactl.ixia.client.models import IxiaConnectionError
 
 
 DEFAULT_PORT = 11009
