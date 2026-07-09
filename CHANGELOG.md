@@ -18,8 +18,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   concurrently, one device-tagged pcap each. The pcap egresses straight to
   *this* host over the existing device→local-sftp path (same endpoint
   `cli backup` uses) — no `zkeiserman-dev` hop, no `~/Downloads/
-  dn_devices.json`. `--filter <bpf>` is applied locally on egress
-  (`tcpdump -r`) since the device path has no BPF knob. `--json` envelope
+  dn_devices.json`. `--filter <bpf>` scopes the capture: in `routing` mode
+  it is applied **on the device** (trailing tcpdump expression) so the raw
+  pcap lands already small — a ~180× reduction vs an unfiltered
+  whole-control-plane capture; in `datapath` mode (no device BPF knob) it
+  filters locally after download (`tcpdump -r`, sibling `*_filtered.pcap`).
+  `--json` envelope
   carries per-device `{pcap_path, bytes, ...}`; non-zero exit if any device
   fails. Mutating (writes device `/tmp`; datapath toggles `wbox-cli`) —
   gated by `--yes`. (#86)

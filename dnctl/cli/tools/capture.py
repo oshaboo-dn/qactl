@@ -199,6 +199,7 @@ def _capture_one(
                 channel, prompt, device_host=chost, password=password,
                 pcap_path=device_pcap, duration=int(duration_s),
                 egress_cmd=egress, egress_password=local_pw, cmd_timeout=timeout,
+                bpf=bpf,
             )
         return datapath_capture_on_channel(
             channel, prompt, ncp=str(resolved_ncp), password=password,
@@ -247,8 +248,11 @@ def _capture_one(
     if stat.size_bytes == _PCAP_MIN_BYTES:
         warnings.append("pcap contains no packets (header only).")
 
+    # routing mode applies the BPF on the device (raw already scoped), so
+    # there's no separate local re-filter to do. datapath mode has no
+    # device-side BPF knob → fall back to a local post-download filter.
     filtered_path = None
-    if bpf:
+    if bpf and mode == "datapath":
         filtered_path, filt_warn = _apply_local_filter(stat.path, bpf)
         if filt_warn:
             warnings.append(filt_warn)
@@ -298,9 +302,11 @@ def capture_devices(
             can't be Ctrl+C'd.
         name: pcap filename prefix; final name is
             ``<name>_<device>_<YYYYmmdd_HHMMSS>.pcap``.
-        bpf_filter: a BPF applied **locally** after download
-            (``tcpdump -r``); the device-side path has no BPF knob. Writes
-            a sibling ``*_filtered.pcap`` and keeps the raw one.
+        bpf_filter: a BPF filter (e.g. ``host 1.2.3.4``). For **routing**
+            mode it is applied **on the device** so the landed pcap is
+            already scoped; for **datapath** mode (no device BPF knob) it is
+            applied locally after download (``tcpdump -r``), writing a
+            sibling ``*_filtered.pcap`` and keeping the raw one.
         ncp: datapath NCP override; when unset it is auto-detected from the
             device's port-mirroring config (falling back to 0).
         user/password/timeout: SSH params (per-step timeout).

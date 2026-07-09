@@ -551,7 +551,7 @@ def capture(
     mode: Annotated[str, typer.Option("--mode", help="Capture mode: routing (control-plane / routing-engine, default) or datapath (NCP wbox-cli).")] = "routing",
     duration: Annotated[str, typer.Option("--duration", help="Capture seconds, or 'inf'/'0' for as-long-as-possible (clamped, since a one-shot capture can't be Ctrl+C'd).")] = "30",
     name: Annotated[str, typer.Option("--name", help="pcap filename prefix; final name is <prefix>_<device>_<YYYYmmdd_HHMMSS>.pcap.")] = "capture",
-    bpf: Annotated[Optional[str], typer.Option("--filter", help="BPF applied LOCALLY after download (tcpdump -r) — the device path has no BPF knob. Writes a sibling *_filtered.pcap, keeps the raw one.")] = None,
+    bpf: Annotated[Optional[str], typer.Option("--filter", help="BPF filter, e.g. 'host 1.2.3.4'. routing: applied ON THE DEVICE so the raw pcap lands already scoped. datapath: applied locally after download (writes a sibling *_filtered.pcap, keeps the raw). Recommended on every routing capture — otherwise it grabs the whole control plane.")] = None,
     ncp: Annotated[Optional[str], typer.Option("--ncp", help="datapath NCP override; auto-detected from port-mirroring config when unset (falls back to 0).")] = None,
     host: O.Host = None, user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,

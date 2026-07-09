@@ -169,6 +169,7 @@ def routing_capture_on_channel(
     egress_cmd: str,
     egress_password: str,
     cmd_timeout: float = 30.0,
+    bpf: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Drive a control-plane (routing-engine) capture on one channel.
 
@@ -199,7 +200,7 @@ def routing_capture_on_channel(
     # sweep — that could clobber another capture on the same box).
     _run(channel, f"rm -f {pcap_path}", cmd_timeout)
 
-    tcpdump_cmd = H.build_re_tcpdump_cmd(container, pcap_path, duration)
+    tcpdump_cmd = H.build_re_tcpdump_cmd(container, pcap_path, duration, bpf)
     # The command blocks for ~duration (self-terminating via `timeout`),
     # plus RE/tcpdump setup latency — give it a generous margin.
     _out, hit = _run(channel, tcpdump_cmd, timeout=duration + cmd_timeout + 15)

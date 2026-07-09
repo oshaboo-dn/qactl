@@ -199,17 +199,27 @@ def resolve_ncp_from_port_mirroring(output: str) -> Optional[str]:
 # --- device-side command builders -----------------------------------------
 
 
-def build_re_tcpdump_cmd(container: str, pcap_path: str, duration: int) -> str:
+def build_re_tcpdump_cmd(
+    container: str, pcap_path: str, duration: int, bpf: Optional[str] = None
+) -> str:
     """Control-plane capture line: tcpdump in the RE container's inband_ns.
 
     ``timeout <duration>`` makes it self-terminating (no Ctrl+C needed).
     ``-i any`` captures all in-band interfaces; note it double-counts each
     packet (both legs) — dedupe locally with ``editcap -d`` if wanted.
+
+    ``bpf`` (optional) is appended as the trailing tcpdump filter
+    expression, applied **on the device** so the pcap that lands is already
+    scoped (a routing capture otherwise grabs the whole control plane). It
+    is passed as a single quoted argument.
     """
-    return (
+    cmd = (
         f"docker exec {shlex.quote(container)} ip netns exec inband_ns "
         f"timeout {int(duration)} tcpdump -nqe -i any -w {shlex.quote(pcap_path)}"
     )
+    if bpf and bpf.strip():
+        cmd += f" {shlex.quote(bpf.strip())}"
+    return cmd
 
 
 def build_wbox_open_cmd(pcap_path: str) -> str:
@@ -313,9 +323,11 @@ def parse_stat_size(text: str) -> Optional[int]:
 def build_local_bpf_cmd(src: str, dst: str, bpf: str) -> List[str]:
     """argv for a local ``tcpdump -r`` re-write applying a BPF filter.
 
-    The device-side capture path has no BPF knob, so ``--filter`` is
-    applied on egress: read ``src``, write matching packets to ``dst``.
-    Returns an argv list (no shell), so the BPF is passed as one argument.
+    Used for **datapath** captures, whose wbox-cli path has no BPF knob, so
+    ``--filter`` is applied on egress: read ``src``, write matching packets
+    to ``dst``. (routing captures filter on the device instead — see
+    ``build_re_tcpdump_cmd``.) Returns an argv list (no shell), so the BPF
+    is passed as one argument.
     """
     return ["tcpdump", "-r", src, "-w", dst, bpf]
 

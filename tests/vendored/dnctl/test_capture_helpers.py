@@ -89,6 +89,18 @@ def test_build_re_tcpdump_cmd():
     assert "docker exec CT_routing-engine.a.b" in cmd
     assert "ip netns exec inband_ns" in cmd
     assert "timeout 20 tcpdump -nqe -i any -w /tmp/x.pcap" in cmd
+    assert cmd.rstrip().endswith("/tmp/x.pcap")  # no trailing BPF when unset
+
+
+def test_build_re_tcpdump_cmd_with_bpf():
+    cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20, "host 1.2.3.4")
+    # BPF appended after -w <file>, quoted as one trailing expression
+    assert cmd.endswith("-w /tmp/x.pcap 'host 1.2.3.4'")
+
+
+def test_build_re_tcpdump_cmd_blank_bpf_ignored():
+    cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20, "   ")
+    assert cmd.rstrip().endswith("/tmp/x.pcap")
 
 
 def test_build_wbox_open_cmd():
