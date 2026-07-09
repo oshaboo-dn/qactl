@@ -11,7 +11,7 @@ import socket
 import paramiko
 import pytest
 
-from dnctl.cli.core import session as sess
+from qactl.dnctl.cli.core import session as sess
 
 
 class FakeClient:

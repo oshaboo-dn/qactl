@@ -10,12 +10,12 @@ import json
 
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
-from dnctl.cli.core import event_spool as spool
-from dnctl.cli.core import events as ev
-from dnctl.cli.core import gnmi_links as gl
-from dnctl.cli.core import slack_notify
-from dnctl.cli.tools import monitor as mon
+from qactl.dnctl.__main__ import app
+from qactl.dnctl.cli.core import event_spool as spool
+from qactl.dnctl.cli.core import events as ev
+from qactl.dnctl.cli.core import gnmi_links as gl
+from qactl.dnctl.cli.core import slack_notify
+from qactl.dnctl.cli.tools import monitor as mon
 
 runner = CliRunner()
 

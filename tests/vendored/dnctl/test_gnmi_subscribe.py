@@ -10,10 +10,10 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
-from dnctl.gnmi.core.session import Resolved
-from dnctl.gnmi.tools import subscribe as sub_mod
-from dnctl.gnmi.tools.subscribe import gnmi_subscribe
+from qactl.dnctl.__main__ import app
+from qactl.dnctl.gnmi.core.session import Resolved
+from qactl.dnctl.gnmi.tools import subscribe as sub_mod
+from qactl.dnctl.gnmi.tools.subscribe import gnmi_subscribe
 
 runner = CliRunner()
 

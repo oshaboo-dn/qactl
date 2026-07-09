@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from dnctl.cli.core.commit_sequence import parse_commit_output
-from dnctl.cli.core.errors import COMMIT_CONFLICT_NEXT_ACTION
-from dnctl.cli.core.session import Invocation
-from dnctl.cli.core.shell import (
+from qactl.dnctl.cli.core.commit_sequence import parse_commit_output
+from qactl.dnctl.cli.core.errors import COMMIT_CONFLICT_NEXT_ACTION
+from qactl.dnctl.cli.core.session import Invocation
+from qactl.dnctl.cli.core.shell import (
     _COMMIT_CONFLICT_RE,
     send_command_with_commit_conflict,
 )
@@ -177,7 +177,7 @@ def _inv(output_str, *, hit_prompt=True):
 
 
 def test_edit_config_conflict_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -195,7 +195,7 @@ def test_edit_config_conflict_is_error(monkeypatch):
 
 
 def test_rollback_conflict_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -208,7 +208,7 @@ def test_rollback_conflict_is_error(monkeypatch):
 
 
 def test_load_override_conflict_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",

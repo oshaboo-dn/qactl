@@ -14,12 +14,12 @@ rejected statement, and clears the shared candidate. No device required.
 
 from __future__ import annotations
 
-from dnctl.cli.core.edit_helpers import (
+from qactl.dnctl.cli.core.edit_helpers import (
     batch_abort_errors,
     commit_was_attempted,
     stop_on_rejected_statement,
 )
-from dnctl.cli.core.session import Invocation, StepCapture
+from qactl.dnctl.cli.core.session import Invocation, StepCapture
 
 
 _OK = ""
@@ -140,7 +140,7 @@ _REJECTED_STMT = _BATCH[2]
 # --------------------------------------------------------------------------
 
 def test_edit_config_aborts_before_commit(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     sent = []
     cleanups = []
@@ -169,7 +169,7 @@ def test_edit_config_aborts_before_commit(monkeypatch):
 
 
 def test_edit_config_clean_batch_still_commits(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     sent = []
     monkeypatch.setattr(
@@ -185,7 +185,7 @@ def test_edit_config_clean_batch_still_commits(monkeypatch):
 
 
 def test_edit_config_abort_honours_abort_on_failure_false(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -208,7 +208,7 @@ def test_edit_config_abort_honours_abort_on_failure_false(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_deploy_rendered_statements_aborts_before_commit(monkeypatch):
-    from dnctl.cli.tools import templates
+    from qactl.dnctl.cli.tools import templates
 
     sent = []
     cleanups = []
@@ -238,7 +238,7 @@ def test_deploy_rendered_statements_aborts_before_commit(monkeypatch):
 def test_deploy_rendered_statements_dry_run_reports_all_rejections(monkeypatch):
     # deploy=False must NOT stop early: the dry-run ends in 'rollback 0'
     # and never applies, so it keeps going to surface every rejection.
-    from dnctl.cli.tools import templates
+    from qactl.dnctl.cli.tools import templates
 
     sent = []
     check_ok = "Commit check passed successfully"

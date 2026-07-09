@@ -10,9 +10,9 @@ import os
 
 import pytest
 
-from dnctl.cli.core import backup_store as bs
-from dnctl.core import local_sftp
-from dnctl.core.dnftp import build_download_command, build_upload_command
+from qactl.dnctl.cli.core import backup_store as bs
+from qactl.dnctl.core import local_sftp
+from qactl.dnctl.core.dnftp import build_download_command, build_upload_command
 
 
 @pytest.fixture

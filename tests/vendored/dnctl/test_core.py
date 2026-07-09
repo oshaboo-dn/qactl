@@ -6,9 +6,9 @@ from unittest import mock
 
 import pytest
 
-from dnctl.core import confirm
-from dnctl.core import devices as dn_devices
-from dnctl.core import output, payload
+from qactl.dnctl.core import confirm
+from qactl.dnctl.core import devices as dn_devices
+from qactl.dnctl.core import output, payload
 
 
 def test_exit_code_mapping():

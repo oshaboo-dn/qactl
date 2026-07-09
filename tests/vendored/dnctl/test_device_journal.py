@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 import pytest
 import typer
 
-from dnctl.core import options as O
-from dnctl.core.context import Ctx
+from qactl.dnctl.core import options as O
+from qactl.dnctl.core.context import Ctx
 
 
 def _journal_root(tmp_path, monkeypatch):

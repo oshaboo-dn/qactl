@@ -8,8 +8,8 @@ the schema, not that line.
 
 import pytest
 
-from dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory, probe_via
-from dnctl.cli.tools.discovery import _annotate_system_mode
+from qactl.dnctl.core.cli_probe import detect_system_mode, parse_gi_inventory, probe_via
+from qactl.dnctl.cli.tools.discovery import _annotate_system_mode
 
 
 GI_OUTPUT = """\

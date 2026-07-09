@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from dnctl.cli.core import capture_store
+from qactl.dnctl.cli.core import capture_store
 
 
 @pytest.fixture(autouse=True)

@@ -11,9 +11,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
-from dnctl.core import options as O
-from dnctl.core.context import Ctx
+from qactl.dnctl.__main__ import app
+from qactl.dnctl.core import options as O
+from qactl.dnctl.core.context import Ctx
 
 runner = CliRunner()
 

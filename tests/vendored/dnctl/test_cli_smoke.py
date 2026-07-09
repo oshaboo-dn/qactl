@@ -5,7 +5,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
+from qactl.dnctl.__main__ import app
 
 runner = CliRunner()
 
@@ -216,8 +216,8 @@ def test_device_refresh_warns_on_system_name_drift(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
 
-    from dnctl.cli.tools import devices as devtool
-    from dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnctl.cli.tools import devices as devtool
+    from qactl.dnctl.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devtool, "probe_device",
@@ -263,7 +263,7 @@ def test_device_alias_rejects_shadowing_device(tmp_path, monkeypatch):
 
 def _gi_probe(**overrides):
     """A DeviceProbe as returned for a box with no System Name (GI mode)."""
-    from dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnctl.core.cli_probe import DeviceProbe
 
     base = dict(
         system_name=None, system_id=None, expected_role=None,
@@ -275,7 +275,7 @@ def _gi_probe(**overrides):
 
 def _stub_add_probe(monkeypatch, probe):
     """Patch the SSH probe + best-effort post-add init out of the add path."""
-    from dnctl.cli.tools import devices as devtool
+    from qactl.dnctl.cli.tools import devices as devtool
 
     monkeypatch.setattr(devtool, "probe_device", lambda *a, **k: probe)
     monkeypatch.setattr(devtool, "_post_add_init", lambda device: (None, []))
@@ -391,8 +391,8 @@ def test_device_add_attaches_secondary_alias(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 def _stub_probe(monkeypatch, system_name):
-    from dnctl.cli.tools import devices as devtool
-    from dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnctl.cli.tools import devices as devtool
+    from qactl.dnctl.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devtool, "probe_device",

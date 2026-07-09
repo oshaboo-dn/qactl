@@ -78,6 +78,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bug-verification harnesses whose verdict is BFD session state
   (e.g. SW-279182) (#49).
 
+### Changed
+- **Package consolidation (stage 1)**: the vendored `dnctl` package now
+  lives under `qactl.dnctl` — one importable package instead of a separate
+  top-level tree. All in-repo imports point at `qactl.dnctl`; a thin
+  top-level `dnctl` shim aliases the old name so any lingering `import
+  dnctl` keeps working (zero-break). Runtime state/config paths
+  (`~/.config/dnctl`, `~/.local/state/dnctl`) are unchanged. `ixia*`
+  packages follow in stage 2.
+
 ### Fixed
 - `cli capture --filter`: the local BPF re-write now stages through a `/tmp`
   tempdir instead of running `tcpdump -r/-w` directly on the pcap in the

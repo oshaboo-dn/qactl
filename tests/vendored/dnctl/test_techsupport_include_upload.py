@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from dnctl.cli import app as cli_app
-from dnctl.cli.tools import techsupport
+from qactl.dnctl.cli import app as cli_app
+from qactl.dnctl.cli.tools import techsupport
 
 pytestmark = []
 

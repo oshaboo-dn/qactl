@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dnctl.cli.core import mgmt0_verify
+from qactl.dnctl.cli.core import mgmt0_verify
 
 
 def _mgmt_table(ip: str) -> str:
@@ -207,7 +207,7 @@ class _FakeMgr:
 
 
 def test_nc_connect_uses_live_mgmt0(device_map, monkeypatch):
-    from dnctl.nc.core import session as ncsession
+    from qactl.dnctl.nc.core import session as ncsession
 
     monkeypatch.setattr(
         mgmt0_verify, "verify_device_mgmt0",
@@ -239,7 +239,7 @@ def test_nc_connect_refuses_unverified_mgmt0(device_map, monkeypatch):
     """Issue #71 follow-up: verification failure REFUSES the session —
     warn-and-proceed with the stale cached address was the exact failure
     mode the issue reported."""
-    from dnctl.nc.core import session as ncsession
+    from qactl.dnctl.nc.core import session as ncsession
 
     monkeypatch.setattr(
         mgmt0_verify, "verify_device_mgmt0",
@@ -260,7 +260,7 @@ def test_nc_connect_refuses_unverified_mgmt0(device_map, monkeypatch):
 
 
 def test_nc_connect_fails_hard_on_verifier_crash(device_map, monkeypatch):
-    from dnctl.nc.core import session as ncsession
+    from qactl.dnctl.nc.core import session as ncsession
 
     def crash(device, **kw):
         raise RuntimeError("paramiko exploded")
@@ -277,7 +277,7 @@ def test_nc_connect_fails_hard_on_verifier_crash(device_map, monkeypatch):
 # --- gnmi resolve_host uses the verified address ----------------------------
 
 def test_gnmi_resolve_host_uses_live_mgmt0(device_map, monkeypatch):
-    from dnctl.gnmi.core import session as gsession
+    from qactl.dnctl.gnmi.core import session as gsession
 
     monkeypatch.setattr(
         mgmt0_verify, "verify_device_mgmt0",
@@ -294,7 +294,7 @@ def test_gnmi_resolve_host_uses_live_mgmt0(device_map, monkeypatch):
 
 
 def test_gnmi_resolve_host_refuses_unverified_mgmt0(device_map, monkeypatch):
-    from dnctl.gnmi.core import session as gsession
+    from qactl.dnctl.gnmi.core import session as gsession
 
     monkeypatch.setattr(
         mgmt0_verify, "verify_device_mgmt0",
@@ -310,7 +310,7 @@ def test_gnmi_resolve_host_refuses_unverified_mgmt0(device_map, monkeypatch):
 
 
 def test_gnmi_resolve_host_skips_verification_for_raw_host(monkeypatch):
-    from dnctl.gnmi.core import session as gsession
+    from qactl.dnctl.gnmi.core import session as gsession
 
     def never(device, **kw):
         raise AssertionError("host= path must not CLI-probe")
@@ -331,7 +331,7 @@ def _forbid_verifier(monkeypatch):
 
 
 def test_nc_connect_skips_verification_when_disabled(device_map, monkeypatch):
-    from dnctl.nc.core import session as ncsession
+    from qactl.dnctl.nc.core import session as ncsession
 
     _forbid_verifier(monkeypatch)
     monkeypatch.setattr(
@@ -351,7 +351,7 @@ def test_nc_connect_skips_verification_when_disabled(device_map, monkeypatch):
 
 
 def test_gnmi_resolve_host_skips_verification_when_disabled(device_map, monkeypatch):
-    from dnctl.gnmi.core import session as gsession
+    from qactl.dnctl.gnmi.core import session as gsession
 
     _forbid_verifier(monkeypatch)
     resolved = gsession.resolve_host(device="cl", host=None, verify_mgmt0=False)
@@ -361,7 +361,7 @@ def test_gnmi_resolve_host_skips_verification_when_disabled(device_map, monkeypa
 
 
 def test_rc_mount_add_skips_verification_when_disabled(device_map, monkeypatch):
-    from dnctl.rc.tools import mount as rcmount
+    from qactl.dnctl.rc.tools import mount as rcmount
 
     _forbid_verifier(monkeypatch)
     monkeypatch.setattr(
@@ -385,7 +385,7 @@ def test_rc_mount_add_skips_verification_when_disabled(device_map, monkeypatch):
 
 
 def test_ctx_flag_forwards_verify_mgmt0_to_tools():
-    from dnctl.core import options as O
+    from qactl.dnctl.core import options as O
 
     seen = {}
 
@@ -400,7 +400,7 @@ def test_ctx_flag_forwards_verify_mgmt0_to_tools():
 
 
 def test_rc_mount_add_refuses_unverified_mgmt0(device_map, monkeypatch):
-    from dnctl.rc.tools import mount as rcmount
+    from qactl.dnctl.rc.tools import mount as rcmount
 
     monkeypatch.setattr(
         rcmount, "get_endpoint",
@@ -426,7 +426,7 @@ def test_rc_mount_add_refuses_unverified_mgmt0(device_map, monkeypatch):
 
 
 def test_rc_mount_add_uses_live_mgmt0(device_map, monkeypatch):
-    from dnctl.rc.tools import mount as rcmount
+    from qactl.dnctl.rc.tools import mount as rcmount
 
     monkeypatch.setattr(
         rcmount, "get_endpoint",

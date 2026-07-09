@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from dnctl.cli.core.session import Invocation, StepCapture
-from dnctl.core import output
+from qactl.dnctl.cli.core.session import Invocation, StepCapture
+from qactl.dnctl.core import output
 
 
 # --------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def test_exit_code_for_status(status, code):
 # --------------------------------------------------------------------------
 
 def test_ping_total_loss_helper():
-    from dnctl.cli.tools import ping
+    from qactl.dnctl.cli.tools import ping
 
     assert ping._ping_total_loss("5 packets transmitted, 0 received, 100% packet loss")
     assert not ping._ping_total_loss("5 packets transmitted, 5 received, 0% packet loss")
@@ -47,7 +47,7 @@ def test_ping_total_loss_helper():
 
 
 def test_ping_100pct_loss_becomes_error(monkeypatch):
-    from dnctl.cli.tools import ping
+    from qactl.dnctl.cli.tools import ping
 
     def fake_run(*a, **k):
         return {
@@ -64,7 +64,7 @@ def test_ping_100pct_loss_becomes_error(monkeypatch):
 
 
 def test_ping_success_stays_ok(monkeypatch):
-    from dnctl.cli.tools import ping
+    from qactl.dnctl.cli.tools import ping
 
     monkeypatch.setattr(
         ping, "_run_on_device",
@@ -82,7 +82,7 @@ def test_ping_success_stays_ok(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_gitcommit_missing_file_is_error(monkeypatch):
-    from dnctl.cli.tools import gitcommit
+    from qactl.dnctl.cli.tools import gitcommit
 
     monkeypatch.setattr(
         gitcommit, "run_linux_on_device",
@@ -98,7 +98,7 @@ def test_gitcommit_missing_file_is_error(monkeypatch):
 
 
 def test_gitcommit_parses_sha(monkeypatch):
-    from dnctl.cli.tools import gitcommit
+    from qactl.dnctl.cli.tools import gitcommit
 
     monkeypatch.setattr(
         gitcommit, "run_linux_on_device",
@@ -115,7 +115,7 @@ def test_gitcommit_parses_sha(monkeypatch):
 
 
 def test_gitcommit_parses_sha_branch(monkeypatch):
-    from dnctl.cli.tools import gitcommit
+    from qactl.dnctl.cli.tools import gitcommit
 
     monkeypatch.setattr(
         gitcommit, "run_linux_on_device",
@@ -134,7 +134,7 @@ def test_gitcommit_parses_sha_branch(monkeypatch):
 
 
 def test_gitcommit_parses_bare_sha(monkeypatch):
-    from dnctl.cli.tools import gitcommit
+    from qactl.dnctl.cli.tools import gitcommit
 
     monkeypatch.setattr(
         gitcommit, "run_linux_on_device",
@@ -156,7 +156,7 @@ def test_gitcommit_parses_bare_sha(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_log_read_preamble_emits_marker():
-    from dnctl.cli.tools import log_read
+    from qactl.dnctl.cli.tools import log_read
 
     cmd, err = log_read._build_log_read(
         ("/a/x.log", "/b/x.log"), None, None, None, None, None, False,
@@ -166,7 +166,7 @@ def test_log_read_preamble_emits_marker():
 
 
 def test_log_read_not_found_is_error(monkeypatch):
-    from dnctl.cli.tools import log_read
+    from qactl.dnctl.cli.tools import log_read
 
     monkeypatch.setattr(
         log_read, "run_linux_on_device",
@@ -193,7 +193,7 @@ def _inv(output_str, *, hit_prompt=True):
 
 
 def test_load_override_failed_commit_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -204,7 +204,7 @@ def test_load_override_failed_commit_is_error(monkeypatch):
 
 
 def test_load_override_timeout_surfaces(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -215,7 +215,7 @@ def test_load_override_timeout_surfaces(monkeypatch):
 
 
 def test_rollback_success_is_ok(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -227,7 +227,7 @@ def test_rollback_success_is_ok(monkeypatch):
 
 
 def test_rollback_failed_commit_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     monkeypatch.setattr(
         edit, "drive_configure_commit",
@@ -242,7 +242,7 @@ def test_rollback_failed_commit_is_error(monkeypatch):
 # --------------------------------------------------------------------------
 
 def _fake_backupfile(device):
-    from dnctl.cli.core.backup_store import BackupFile
+    from qactl.dnctl.cli.core.backup_store import BackupFile
 
     return BackupFile(
         filename=f"{device}_20260101-000000.cli",
@@ -256,7 +256,7 @@ def _fake_backupfile(device):
 
 
 def _restore_env(monkeypatch, steps):
-    from dnctl.cli.tools import backup
+    from qactl.dnctl.cli.tools import backup
 
     monkeypatch.setattr(backup.backup_store, "validate_device", lambda d: None)
     monkeypatch.setattr(backup.backup_store, "validate_bucket", lambda b: None)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from dnctl.cli.tools import shell as shell_tool
+from qactl.dnctl.cli.tools import shell as shell_tool
 
 
 @pytest.fixture

@@ -26,9 +26,9 @@ import types
 import pytest
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
-from dnctl.cli.core import job_store
-from dnctl.cli.tools import tarload
+from qactl.dnctl.__main__ import app
+from qactl.dnctl.cli.core import job_store
+from qactl.dnctl.cli.tools import tarload
 
 runner = CliRunner()
 
@@ -394,7 +394,7 @@ def _capture_tar_load(monkeypatch):
         return {"status": "ok", "state": "done", "job_id": "dev-907-aaa",
                 "device": device}
 
-    from dnctl.cli import app as cli_app
+    from qactl.dnctl.cli import app as cli_app
     monkeypatch.setattr(cli_app, "request_system_tar_load", _stub)
     return captured
 

@@ -5,14 +5,14 @@ device — scripted fakes throughout.
 
 import pytest
 
-from dnctl.cli.core import runner as core_runner
-from dnctl.cli.core.session import (
+from qactl.dnctl.cli.core import runner as core_runner
+from qactl.dnctl.cli.core.session import (
     Invocation,
     StepCapture,
     _init_channel,
     run_sequence,
 )
-from dnctl.cli.tools import raw as raw_tool
+from qactl.dnctl.cli.tools import raw as raw_tool
 
 
 # --- _init_channel knob precedence ----------------------------------------

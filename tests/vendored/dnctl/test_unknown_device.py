@@ -9,13 +9,13 @@ problems. See the issue: "device-not-in-registry returns misleading
 
 import pytest
 
-from dnctl.cli.core import session as sess
-from dnctl.cli.core.session import (
+from qactl.dnctl.cli.core import session as sess
+from qactl.dnctl.cli.core.session import (
     ConnectError,
     UnknownDeviceError,
     connect_error_next_actions,
 )
-from dnctl.cli.tools import interfaces as ifmod
+from qactl.dnctl.cli.tools import interfaces as ifmod
 
 
 # --- the resolver raises the distinct error on a registry miss ------------

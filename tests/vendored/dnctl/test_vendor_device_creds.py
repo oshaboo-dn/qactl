@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from dnctl.core import config, credentials as creds, setup_cmd
+from qactl.dnctl.core import config, credentials as creds, setup_cmd
 
 
 VENDOR_ENV_VARS = [v for pair in creds.VENDOR_ENV.values() for v in pair]
@@ -115,7 +115,7 @@ def test_dnos_and_unknown_devices_untouched(lab, monkeypatch):
 
 
 def test_transport_registry_applies_resolution(lab, monkeypatch):
-    from dnctl.cli.core import session
+    from qactl.dnctl.cli.core import session
 
     lab.write_text(
         '[devices."jun-rt02"]\nuser = "boxuser"\npassword = "boxpw"\n',
@@ -245,7 +245,7 @@ def test_resolve_secret_prompts_hidden_on_tty(monkeypatch):
 
 def test_connect_error_hints_vendor_creds(lab, monkeypatch):
     import paramiko
-    from dnctl.cli.core import session
+    from qactl.dnctl.cli.core import session
 
     def fail_auth(host, user, password, timeout):
         raise paramiko.AuthenticationException("Authentication failed.")

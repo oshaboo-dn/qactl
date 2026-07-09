@@ -43,7 +43,7 @@ qactl = "qactl.__main__:main"
 include = ["qactl*", "dnctl*", "ixiactl*", "ixia*"]
 
 [tool.setuptools.package-data]
-dnctl = ["data/*.json"]
+"qactl.dnctl" = ["data/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

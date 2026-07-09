@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from dnctl.core import config, credentials as creds
+from qactl.dnctl.core import config, credentials as creds
 
 
 BOX = "DNAAS-SuperSpine-D04"
@@ -117,7 +117,7 @@ def test_explicit_password_passes_through(lab):
 # --- transport layer: --host X (no -d) authenticates with stored creds ----
 
 def test_transport_registry_resolves_host_only(lab, monkeypatch):
-    from dnctl.cli.core import session
+    from qactl.dnctl.cli.core import session
 
     seen = {}
 
@@ -143,14 +143,14 @@ def test_transport_registry_resolves_host_only(lab, monkeypatch):
 
 @pytest.fixture
 def devtools(monkeypatch):
-    from dnctl.cli.tools import devices as devtools
+    from qactl.dnctl.cli.tools import devices as devtools
 
     monkeypatch.setattr(devtools, "log_request", lambda *a, **k: None)
     return devtools
 
 
 def _capture_probe(devtools, monkeypatch):
-    from dnctl.cli.core.session import ConnectError
+    from qactl.dnctl.cli.core.session import ConnectError
 
     seen = {}
 

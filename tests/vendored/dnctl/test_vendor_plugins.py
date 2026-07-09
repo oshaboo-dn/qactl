@@ -11,11 +11,11 @@ import inspect
 
 import pytest
 
-from dnctl.cli.core import shell
-from dnctl.cli.tools import clear as clear_tool
-from dnctl.cli.tools import devices as devices_tool
-from dnctl.cli.tools import discovery
-from dnctl.cli import vendors as V
+from qactl.dnctl.cli.core import shell
+from qactl.dnctl.cli.tools import clear as clear_tool
+from qactl.dnctl.cli.tools import devices as devices_tool
+from qactl.dnctl.cli.tools import discovery
+from qactl.dnctl.cli import vendors as V
 
 
 @pytest.fixture(autouse=True)
@@ -167,7 +167,7 @@ def test_requires_blocks_unsupported_without_calling(monkeypatch):
         return {"status": "ok"}
 
     monkeypatch.setattr(
-        "dnctl.cli.vendors.gate.plugin_for_device",
+        "qactl.dnctl.cli.vendors.gate.plugin_for_device",
         lambda device, host=None: V.get_plugin("cisco"),
     )
     resp = fake_tool(device="r1")
@@ -184,7 +184,7 @@ def test_requires_allows_supported(monkeypatch):
         return {"status": "ok", "ran": True}
 
     monkeypatch.setattr(
-        "dnctl.cli.vendors.gate.plugin_for_device",
+        "qactl.dnctl.cli.vendors.gate.plugin_for_device",
         lambda device, host=None: V.get_plugin("cisco"),
     )
     assert fake_tool(device="r1")["ran"] is True

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from dnctl.cli.core.session import Transport, TransportRegistry
+from qactl.dnctl.cli.core.session import Transport, TransportRegistry
 
 
 class _FakeTransport:

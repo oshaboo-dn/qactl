@@ -5,7 +5,7 @@ slackbot path and must never raise — a failing notify must not break the
 caller (the event collector stashes the error instead).
 """
 
-from dnctl.cli.core import slack_notify
+from qactl.dnctl.cli.core import slack_notify
 
 
 def test_webhook_preferred_and_posts(monkeypatch):

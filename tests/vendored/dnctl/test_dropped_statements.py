@@ -15,8 +15,8 @@ fail (non-zero) and name each rejected statement. No device required.
 
 from __future__ import annotations
 
-from dnctl.cli.core.edit_helpers import detect_rejected_statements
-from dnctl.cli.core.session import Invocation, StepCapture
+from qactl.dnctl.cli.core.edit_helpers import detect_rejected_statements
+from qactl.dnctl.cli.core.session import Invocation, StepCapture
 
 
 # Two qinq legs after a `no ...` delete: leg A parses, leg B is rejected
@@ -83,7 +83,7 @@ def test_detect_ignores_error_in_commit_step():
 # --------------------------------------------------------------------------
 
 def test_edit_config_dropped_statement_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     steps = [
         _step("configure", _OK),
@@ -121,7 +121,7 @@ def test_edit_config_dropped_statement_is_error(monkeypatch):
 
 
 def test_edit_config_all_clean_stays_ok(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     steps = [
         _step("configure", _OK),
@@ -142,7 +142,7 @@ def test_edit_config_all_clean_stays_ok(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_edit_config_check_dropped_statement_is_error(monkeypatch):
-    from dnctl.cli.tools import edit
+    from qactl.dnctl.cli.tools import edit
 
     check_ok = "Commit check passed successfully"
     steps = [

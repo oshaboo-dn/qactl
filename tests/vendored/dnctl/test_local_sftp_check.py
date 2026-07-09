@@ -11,7 +11,7 @@ from contextlib import closing
 import pytest
 import typer
 
-from dnctl.core import config, local_sftp, setup_cmd
+from qactl.dnctl.core import config, local_sftp, setup_cmd
 
 
 @pytest.fixture

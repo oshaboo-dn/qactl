@@ -6,10 +6,10 @@ surface are tested with monkeypatched seams, mirroring test_raw.py.
 
 import pytest
 
-from dnctl.cli.core import runner as core_runner
-from dnctl.cli.core.session import Invocation, StepCapture, run_probes
-from dnctl.cli.core.shell import send_probe
-from dnctl.cli.tools import probe as probe_tool
+from qactl.dnctl.cli.core import runner as core_runner
+from qactl.dnctl.cli.core.session import Invocation, StepCapture, run_probes
+from qactl.dnctl.cli.core.shell import send_probe
+from qactl.dnctl.cli.tools import probe as probe_tool
 
 
 PROMPT = "SA#"

@@ -18,11 +18,11 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from dnctl.__main__ import app
-from dnctl.cli import app as cli_app
-from dnctl.cli.core import job_store, ts_store
-from dnctl.cli.core.dnftp import DnftpNotConfigured
-from dnctl.cli.tools import devices, techsupport
+from qactl.dnctl.__main__ import app
+from qactl.dnctl.cli import app as cli_app
+from qactl.dnctl.cli.core import job_store, ts_store
+from qactl.dnctl.cli.core.dnftp import DnftpNotConfigured
+from qactl.dnctl.cli.tools import devices, techsupport
 
 runner = CliRunner()
 
@@ -150,7 +150,7 @@ def test_device_add_cli_takes_name_and_host():
 
 def test_manage_device_add_keys_by_name_not_system_name(monkeypatch):
     # name= is now the registry key; the chassis System Name is metadata.
-    from dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnctl.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devices, "probe_device",

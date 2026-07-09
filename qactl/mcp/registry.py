@@ -42,10 +42,10 @@ IXIA_GROUPS = ("ixia",)
 ALL_GROUPS = NATIVE_GROUPS + DNCTL_GROUPS + IXIA_GROUPS
 
 _DNCTL_PKG: Dict[str, str] = {
-    "cli": "dnctl.cli.tools",
-    "nc": "dnctl.nc.tools",
-    "gnmi": "dnctl.gnmi.tools",
-    "rc": "dnctl.rc.tools",
+    "cli": "qactl.dnctl.cli.tools",
+    "nc": "qactl.dnctl.nc.tools",
+    "gnmi": "qactl.dnctl.gnmi.tools",
+    "rc": "qactl.dnctl.rc.tools",
 }
 
 

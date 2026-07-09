@@ -108,7 +108,7 @@ def _run_native(argv: List[str]) -> int:
 
 def _delegate_dnctl(argv: List[str]) -> int:
     """Invoke the vendored dnctl typer app with ``argv`` (group token first)."""
-    from dnctl.__main__ import main as dnctl_main
+    from qactl.dnctl.__main__ import main as dnctl_main
     saved = sys.argv
     sys.argv = ["qactl"] + argv
     try:

@@ -7,7 +7,7 @@ against the real DNOS shapes.
 
 import pytest
 
-from dnctl.cli.tools import cores as cores_tool
+from qactl.dnctl.cli.tools import cores as cores_tool
 
 
 # Verbatim `show file core list` output from the live run.
@@ -288,11 +288,11 @@ def test_mcp_registration_exposes_both_tools():
 
 def test_cli_bt_refuses_without_yes(monkeypatch):
     from typer.testing import CliRunner
-    from dnctl.cli.app import app
+    from qactl.dnctl.cli.app import app
 
     called = {}
     monkeypatch.setattr(
-        "dnctl.cli.app.get_core_backtrace",
+        "qactl.dnctl.cli.app.get_core_backtrace",
         lambda **k: called.setdefault("hit", True) or {"status": "ok"},
     )
     result = CliRunner().invoke(app, ["core", "bt", FULL_NAME, "-d", "sa"])

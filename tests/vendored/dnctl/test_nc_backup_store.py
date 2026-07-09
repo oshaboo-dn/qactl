@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from dnctl.nc.core import backup_store as bs
+from qactl.dnctl.nc.core import backup_store as bs
 
 
 @pytest.fixture

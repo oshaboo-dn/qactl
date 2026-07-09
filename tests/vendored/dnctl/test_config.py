@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from dnctl.core import config
+from qactl.dnctl.core import config
 
 
 @pytest.fixture
@@ -50,8 +50,8 @@ def test_no_secret_baked_into_credentials(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     config.load_config.cache_clear()
 
-    import dnctl.core.credentials as creds
-    import dnctl.core.dnftp as dnftp
+    import qactl.dnctl.core.credentials as creds
+    import qactl.dnctl.core.dnftp as dnftp
     creds = importlib.reload(creds)
     dnftp = importlib.reload(dnftp)
 

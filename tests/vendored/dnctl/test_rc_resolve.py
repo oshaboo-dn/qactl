@@ -19,7 +19,7 @@ def test_seed_mounts_reference_known_devices():
     Guards against re-introducing a stale alias (the bug that left every
     device showing ``mounted: false``).
     """
-    from dnctl.core import paths
+    from qactl.dnctl.core import paths
 
     eps = json.loads((paths.DATA_DIR / "restconf_endpoints.json").read_text())
     devmap = json.loads((paths.DATA_DIR / "devices_mgmt0.json").read_text())
@@ -56,7 +56,7 @@ def rc_env(tmp_path, monkeypatch):
 
     eps = tmp_path / "endpoints.json"
 
-    from dnctl.rc.core import registry
+    from qactl.dnctl.rc.core import registry
 
     monkeypatch.setattr(registry, "_ENDPOINTS_PATH", eps)
     return registry, eps
@@ -95,7 +95,7 @@ def test_resolve_ok_and_missing(rc_env):
     registry, eps = rc_env
     _write_eps(eps, {"BIG-CL": {"device": "BIG-CL"}})
 
-    from dnctl.rc.tools.devices import restconf_resolve
+    from qactl.dnctl.rc.tools.devices import restconf_resolve
 
     ok = restconf_resolve(device="cl")
     assert ok["status"] == "ok"
@@ -115,7 +115,7 @@ def test_mount_status_resolves_device_alias(rc_env, monkeypatch):
     registry, eps = rc_env
     _write_eps(eps, {"CL-RC": {"device": "cl"}})
 
-    from dnctl.rc.tools import mount as mount_tools
+    from qactl.dnctl.rc.tools import mount as mount_tools
 
     queried = []
 

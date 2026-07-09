@@ -10,7 +10,7 @@ module-prefixed one-leaf-per-edit targets and string-quoted scalars.
 
 import pytest
 
-from dnctl.rc.tools import rw
+from qactl.dnctl.rc.tools import rw
 
 
 LEGACY_EP = {"kind": "odl", "base_url": "http://odl:8181/restconf",
@@ -166,7 +166,7 @@ def test_patch_dry_run_shows_yang_patch(monkeypatch, capture):
 
 def test_session_content_type_override(monkeypatch):
     """extra_headers Content-Type wins over the RFC 8040 default."""
-    from dnctl.rc.core import session as sess
+    from qactl.dnctl.rc.core import session as sess
 
     captured = {}
 

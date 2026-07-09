@@ -7,8 +7,8 @@ the env-tunable timeout knobs. No real device — a scripted fake channel.
 
 import pytest
 
-from dnctl.cli.core import session as sess
-from dnctl.cli.core.session import _env_float, _init_channel
+from qactl.dnctl.cli.core import session as sess
+from qactl.dnctl.cli.core.session import _env_float, _init_channel
 
 
 PROMPT = "DNAAS-LEAF-B13#"

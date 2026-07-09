@@ -15,7 +15,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from dnctl.__main__ import _warn_if_standalone as dnctl_warn
+from qactl.dnctl.__main__ import _warn_if_standalone as dnctl_warn
 from ixiactl.__main__ import _warn_if_standalone as ixiactl_warn
 
 

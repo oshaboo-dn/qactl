@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dnctl.cli.core import errors
+from qactl.dnctl.cli.core import errors
 
 
 def _fake_backupfile(device, size):
-    from dnctl.cli.core.backup_store import BackupFile
+    from qactl.dnctl.cli.core.backup_store import BackupFile
 
     return BackupFile(
         filename=f"{device}_20260101-000000.cli",
@@ -27,7 +27,7 @@ def test_backup_next_actions_point_at_local_host():
 
 
 def test_read_backup_rejects_oversize(monkeypatch):
-    from dnctl.cli.tools import backup
+    from qactl.dnctl.cli.tools import backup
 
     monkeypatch.setattr(backup.backup_store, "validate_device", lambda d: None)
     monkeypatch.setattr(backup.backup_store, "validate_bucket", lambda b: None)
@@ -47,7 +47,7 @@ def test_read_backup_rejects_oversize(monkeypatch):
 
 
 def test_read_backup_reads_small(monkeypatch):
-    from dnctl.cli.tools import backup
+    from qactl.dnctl.cli.tools import backup
 
     monkeypatch.setattr(backup.backup_store, "validate_device", lambda d: None)
     monkeypatch.setattr(backup.backup_store, "validate_bucket", lambda b: None)

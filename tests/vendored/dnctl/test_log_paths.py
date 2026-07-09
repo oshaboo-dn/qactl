@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import dnctl
-from dnctl.core.paths import state_dir
+import qactl.dnctl as dnctl
+from qactl.dnctl.core.paths import state_dir
 
 
 PACKAGE_DIR = Path(dnctl.__file__).resolve().parent
@@ -16,11 +16,11 @@ STATE_DIR = state_dir()
 @pytest.mark.parametrize(
     "modname,attr",
     [
-        ("dnctl.gnmi.core.request_log", "MCP_LOG_DIR"),
-        ("dnctl.rc.core.request_log", "MCP_LOG_DIR"),
-        ("dnctl.nc.core.request_log", "MCP_LOG_DIR"),
-        ("dnctl.cli.core.logging", "_MCP_LOGS_DIR"),
-        ("dnctl.cli.core.logging", "_LOGS_DIR"),
+        ("qactl.dnctl.gnmi.core.request_log", "MCP_LOG_DIR"),
+        ("qactl.dnctl.rc.core.request_log", "MCP_LOG_DIR"),
+        ("qactl.dnctl.nc.core.request_log", "MCP_LOG_DIR"),
+        ("qactl.dnctl.cli.core.logging", "_MCP_LOGS_DIR"),
+        ("qactl.dnctl.cli.core.logging", "_LOGS_DIR"),
     ],
 )
 def test_logs_under_state_dir(modname, attr):
