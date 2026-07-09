@@ -30,7 +30,7 @@ from qactl.dnos.cli.core.errors import (
     SHOW_NEXT_ACTION,
     is_incomplete_command,
 )
-from qactl.dnos.cli.core.runner import _run_on_device
+from qactl.dnos.cli.core.runner import _run_on_device, _run_raw_on_device
 from qactl.dnos.cli.core.session import DEFAULT_CMD_TIMEOUT, DEFAULT_PASSWORD, DEFAULT_USER
 from qactl.dnos.cli.vendors import (
     CAP_DISCOVERY,
@@ -347,6 +347,86 @@ def show(
         "show", device, host, user, password,
         full, timeout, SHOW_NEXT_ACTION,
     )
+
+
+def _show_batch(
+    commands: List[str],
+    want_config: bool,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    timeout: int,
+) -> Dict[str, Any]:
+    """Shared body of :func:`show_many` / :func:`show_config_many`.
+
+    Every command is validated up front (same rules as the single-command
+    tools) so a typo can't sneak a non-``show`` line onto the channel; the
+    validated batch then runs on ONE ephemeral channel via
+    :func:`_run_raw_on_device` with ``stop_on_error=False`` — the reads are
+    independent, so one bad command doesn't skip the rest (the envelope
+    still reports ``status="error"`` listing what failed).
+    """
+    tool = "show_config_batch" if want_config else "show_batch"
+    next_action = SHOW_CONFIG_NEXT_ACTION if want_config else SHOW_NEXT_ACTION
+    normalized: List[str] = []
+    for command in commands or []:
+        full, err = _validate_show_command(command, want_config=want_config)
+        if err:
+            return error_response(
+                err, device=device, host=host,
+                command=(command or "").strip(), next_action=next_action,
+            )
+        normalized.append(full)
+    if not normalized:
+        return error_response(
+            "commands must be a non-empty list of full 'show ...' commands.",
+            device=device, host=host, next_action=next_action,
+        )
+    return _run_raw_on_device(
+        tool, device, host, user, password,
+        normalized, timeout, next_action, stop_on_error=False,
+    )
+
+
+@requires(CAP_SHOW)
+def show_many(
+    commands: List[str],
+    device: Optional[str] = None,
+    host: Optional[str] = None,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASSWORD,
+    timeout: int = DEFAULT_CMD_TIMEOUT,
+) -> Dict[str, Any]:
+    """Run several operational ``show`` commands on ONE CLI session.
+
+    Batch counterpart of :func:`show`: each entry in ``commands`` is a full
+    ``show ...`` command (same validation as the single tool — ``show
+    config ...`` entries are redirected to ``show_config_many``). All
+    commands run in order on the same ephemeral channel, so the device is
+    SSH-authenticated once for the whole batch. The envelope carries a
+    per-command ``steps`` transcript plus the joined human transcript in
+    ``stdout``. Commands after a failing one still run (independent reads).
+    """
+    return _show_batch(commands, False, device, host, user, password, timeout)
+
+
+@requires(CAP_SHOW_CONFIG)
+def show_config_many(
+    commands: List[str],
+    device: Optional[str] = None,
+    host: Optional[str] = None,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASSWORD,
+    timeout: int = DEFAULT_CMD_TIMEOUT,
+) -> Dict[str, Any]:
+    """Run several ``show config ...`` commands on ONE CLI session.
+
+    Batch counterpart of :func:`show_config` — same shape and semantics as
+    :func:`show_many`. Note the single-command auto-fallback on
+    "Incomplete command" does NOT apply here; pass complete paths.
+    """
+    return _show_batch(commands, True, device, host, user, password, timeout)
 
 
 def _parent_show_config_command(full: str) -> Optional[str]:

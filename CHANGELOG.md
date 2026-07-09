@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Multi-show batching**: `qactl cli show` / `show-config` accept several
+  full quoted commands (`qactl cli show -d cl "show bgp summary" "show
+  route summary"`) and run them in order on ONE CLI session — one SSH auth
+  for the whole batch. New `show_many` / `show_config_many` tools validate
+  every command up front (read-only, same rules as the single tools) and
+  return a per-command `steps` transcript plus the joined `stdout`; a
+  failing command doesn't skip the rest but still flags `status="error"`.
+  Word-form and single-command calls are unchanged (batch triggers only
+  when ≥2 args are each a full multi-word `show …` command).
 - **Persistent SSH-session daemon**: `qactl cli session on|off|status|stop`.
   Every invocation is a fresh process, so back-to-back qactl calls re-auth
   SSH each time and trip DNOS sshd's connect rate-limit (10/min —
