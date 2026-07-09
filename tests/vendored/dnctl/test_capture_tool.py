@@ -19,10 +19,10 @@ def _one(monkeypatch):
     """Capture _capture_one calls and return a scripted status per target."""
     calls = []
 
-    def _fake(target, *, is_host, mode, duration_s, name, bpf, ncp,
+    def _fake(target, *, is_host, mode, duration_s, name, bpf, iface, ncp,
               user, password, timeout, local_pw):
         calls.append({"target": target, "is_host": is_host, "mode": mode,
-                      "duration_s": duration_s})
+                      "duration_s": duration_s, "iface": iface})
         status = "error" if target == "boom" else "ok"
         sub = {"device": target, "status": status}
         if status == "ok":

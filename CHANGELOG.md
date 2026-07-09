@@ -23,6 +23,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pcap lands already small — a ~180× reduction vs an unfiltered
   whole-control-plane capture; in `datapath` mode (no device BPF knob) it
   filters locally after download (`tcpdump -r`, sibling `*_filtered.pcap`).
+  `--iface <name>` (routing mode) pins the tcpdump interface inside
+  `inband_ns` instead of the default `-i any`; `any` double-counts each
+  packet across netns legs (a sub-if and its parent), so pinning the sub-if
+  (e.g. `g07008.0009` for `ge400-7/0/8.9`) yields exactly one copy per
+  packet — what the CPU actually sent/received, no dedupe/editing needed.
   `--json` envelope
   carries per-device `{pcap_path, bytes, ...}`; non-zero exit if any device
   fails. Mutating (writes device `/tmp`; datapath toggles `wbox-cli`) —

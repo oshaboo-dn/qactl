@@ -552,6 +552,7 @@ def capture(
     duration: Annotated[str, typer.Option("--duration", help="Capture seconds, or 'inf'/'0' for as-long-as-possible (clamped, since a one-shot capture can't be Ctrl+C'd).")] = "30",
     name: Annotated[str, typer.Option("--name", help="pcap filename prefix; final name is <prefix>_<device>_<YYYYmmdd_HHMMSS>.pcap.")] = "capture",
     bpf: Annotated[Optional[str], typer.Option("--filter", help="BPF filter, e.g. 'host 1.2.3.4'. routing: applied ON THE DEVICE so the raw pcap lands already scoped. datapath: applied locally after download (writes a sibling *_filtered.pcap, keeps the raw). Recommended on every routing capture — otherwise it grabs the whole control plane.")] = None,
+    iface: Annotated[str, typer.Option("--iface", help="routing mode only: tcpdump interface inside inband_ns (default 'any'). 'any' double-counts each packet across netns legs (dup-ACKs in Wireshark); pin the sub-if (e.g. g07008.0009 for ge400-7/0/8.9) for exactly one copy per packet = what the CPU sent/received.")] = "any",
     ncp: Annotated[Optional[str], typer.Option("--ncp", help="datapath NCP override; auto-detected from port-mirroring config when unset (falls back to 0).")] = None,
     host: O.Host = None, user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
@@ -562,9 +563,10 @@ def capture(
 
     - routing (default): a `timeout`-bounded tcpdump in the routing-engine
       container's inband_ns — captures in-band control-plane traffic
-      (BGP/179, BFD, ISIS, ICMP, ...). No device config or physical setup.
-      Note: `-i any` double-counts each packet (both legs); dedupe locally
-      with `editcap -d` if wanted.
+      (BGP/179, ISIS, LDP, ICMP, ...). No device config or physical setup.
+      Note: the default `-i any` double-counts each packet across netns
+      legs; pass `--iface <sub-if>` (e.g. g07008.0009) for a single clean
+      copy per packet. (BFD is NCP-offloaded and not seen here.)
     - datapath: the NCP wbox-cli pcap engine, with a /tmp free-space
       preflight and a size cap. LAB PREREQUISITE (not automated): datapath
       capture needs a physical loop cable (or a DNAAS mirror chain)
@@ -582,7 +584,7 @@ def capture(
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(
         O.call(capture_devices, c, devices=device, mode=mode, duration=duration,
-               name=name, bpf_filter=bpf, ncp=ncp),
+               name=name, bpf_filter=bpf, iface=iface, ncp=ncp),
         c,
     )
 

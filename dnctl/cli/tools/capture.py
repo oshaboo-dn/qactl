@@ -150,6 +150,7 @@ def _capture_one(
     duration_s: Optional[int],
     name: str,
     bpf: Optional[str],
+    iface: str,
     ncp: Optional[str],
     user: str,
     password: str,
@@ -199,7 +200,7 @@ def _capture_one(
                 channel, prompt, device_host=chost, password=password,
                 pcap_path=device_pcap, duration=int(duration_s),
                 egress_cmd=egress, egress_password=local_pw, cmd_timeout=timeout,
-                bpf=bpf,
+                bpf=bpf, iface=iface,
             )
         return datapath_capture_on_channel(
             channel, prompt, ncp=str(resolved_ncp), password=password,
@@ -281,6 +282,7 @@ def capture_devices(
     duration: object = 30,
     name: str = "capture",
     bpf_filter: Optional[str] = None,
+    iface: str = "any",
     ncp: Optional[str] = None,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
@@ -307,6 +309,10 @@ def capture_devices(
             already scoped; for **datapath** mode (no device BPF knob) it is
             applied locally after download (``tcpdump -r``), writing a
             sibling ``*_filtered.pcap`` and keeping the raw one.
+        iface: routing mode only — tcpdump interface inside ``inband_ns``
+            (default ``any``). ``any`` double-counts each packet across
+            netns legs; pin the sub-if (e.g. ``g07008.0009``) for one clean
+            copy per packet.
         ncp: datapath NCP override; when unset it is auto-detected from the
             device's port-mirroring config (falling back to 0).
         user/password/timeout: SSH params (per-step timeout).
@@ -364,7 +370,7 @@ def capture_devices(
         tgt, is_host = pair
         return _capture_one(
             tgt, is_host=is_host, mode=mode, duration_s=dp_duration,
-            name=name, bpf=bpf_filter, ncp=ncp,
+            name=name, bpf=bpf_filter, iface=iface, ncp=ncp,
             user=user, password=password, timeout=timeout, local_pw=local_pw,
         )
 

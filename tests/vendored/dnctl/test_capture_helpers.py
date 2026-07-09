@@ -103,6 +103,23 @@ def test_build_re_tcpdump_cmd_blank_bpf_ignored():
     assert cmd.rstrip().endswith("/tmp/x.pcap")
 
 
+def test_build_re_tcpdump_cmd_default_iface_any():
+    cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20)
+    assert "-i any" in cmd
+
+
+def test_build_re_tcpdump_cmd_pinned_iface():
+    cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20, None, "g07008.0009")
+    assert "-i g07008.0009" in cmd
+    assert "-i any" not in cmd
+
+
+def test_build_re_tcpdump_cmd_iface_and_bpf():
+    cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20, "host 1.2.3.4", "g07008.0009")
+    assert "-i g07008.0009" in cmd
+    assert cmd.endswith("'host 1.2.3.4'")
+
+
 def test_build_wbox_open_cmd():
     assert H.build_wbox_open_cmd("/tmp/x.pcap") == \
         "wbox-cli debug open pcap file /tmp/x.pcap"

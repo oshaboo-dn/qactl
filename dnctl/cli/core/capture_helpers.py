@@ -200,13 +200,22 @@ def resolve_ncp_from_port_mirroring(output: str) -> Optional[str]:
 
 
 def build_re_tcpdump_cmd(
-    container: str, pcap_path: str, duration: int, bpf: Optional[str] = None
+    container: str,
+    pcap_path: str,
+    duration: int,
+    bpf: Optional[str] = None,
+    iface: str = "any",
 ) -> str:
     """Control-plane capture line: tcpdump in the RE container's inband_ns.
 
     ``timeout <duration>`` makes it self-terminating (no Ctrl+C needed).
-    ``-i any`` captures all in-band interfaces; note it double-counts each
-    packet (both legs) — dedupe locally with ``editcap -d`` if wanted.
+
+    ``iface`` selects the tcpdump interface (default ``any``). ``any`` sees
+    every in-band interface but **double-counts** each packet — the same
+    frame is recorded on every netns leg it crosses (a sub-if AND its
+    parent, etc.), so Wireshark flags the copies as dup-ACKs. Pin a single
+    interface (e.g. the sub-if ``g07008.0009`` for ``ge400-7/0/8.9``) to get
+    exactly one copy per packet — what the CPU actually sent/received.
 
     ``bpf`` (optional) is appended as the trailing tcpdump filter
     expression, applied **on the device** so the pcap that lands is already
@@ -215,7 +224,8 @@ def build_re_tcpdump_cmd(
     """
     cmd = (
         f"docker exec {shlex.quote(container)} ip netns exec inband_ns "
-        f"timeout {int(duration)} tcpdump -nqe -i any -w {shlex.quote(pcap_path)}"
+        f"timeout {int(duration)} tcpdump -nqe -i {shlex.quote(iface or 'any')} "
+        f"-w {shlex.quote(pcap_path)}"
     )
     if bpf and bpf.strip():
         cmd += f" {shlex.quote(bpf.strip())}"
