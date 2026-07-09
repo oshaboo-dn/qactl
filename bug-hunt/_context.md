@@ -1,7 +1,7 @@
 # Bug hunt: qactl `cli` group — shared context
 
 You are a meticulous code reviewer hunting for **real, triggerable bugs**
-in the qactl DNOS device CLI at `/home/dn/work/qactl/dnctl/cli`. Read-only:
+in the qactl DNOS device CLI at `/home/dn/work/qactl/qactl/cli`. Read-only:
 do not edit anything.
 
 ## What this tool is

@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from qactl.dnctl.cli.tools import capture as cap
-from qactl.dnctl.core.local_sftp import LocalSftpNotConfigured
+from qactl.dnos.cli.tools import capture as cap
+from qactl.dnos.core.local_sftp import LocalSftpNotConfigured
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""``ixiactl rest ...`` — raw IxNetwork REST escape hatch."""
+"""``qactl.ixia.ctl rest ...`` — raw IxNetwork REST escape hatch."""
 
 from __future__ import annotations
 

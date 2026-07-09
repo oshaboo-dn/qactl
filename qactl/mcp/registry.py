@@ -2,7 +2,7 @@
 
 The merged repo has one shared tool layer. Each surface's tools already
 ship a ``register(mcp)`` function (native ``qactl.{jira,confluence,jenkins}
-.tools``; vendored ``dnctl.*.tools`` and ``ixia_tools`` kept theirs from
+.tools``; vendored ``qactl.*.tools`` and ``qactl.ixia.tools`` kept theirs from
 their MCP days). This module re-exposes those over a stdio FastMCP server,
 applying:
 
@@ -37,15 +37,15 @@ from typing import Callable, Dict, List, Optional, Set
 # --- group sets ------------------------------------------------------------
 
 NATIVE_GROUPS = ("jira", "confluence", "jenkins", "arista")
-DNCTL_GROUPS = ("cli", "nc", "gnmi", "rc")
+QACTL_GROUPS = ("cli", "nc", "gnmi", "rc")
 IXIA_GROUPS = ("ixia",)
-ALL_GROUPS = NATIVE_GROUPS + DNCTL_GROUPS + IXIA_GROUPS
+ALL_GROUPS = NATIVE_GROUPS + QACTL_GROUPS + IXIA_GROUPS
 
-_DNCTL_PKG: Dict[str, str] = {
-    "cli": "qactl.dnctl.cli.tools",
-    "nc": "qactl.dnctl.nc.tools",
-    "gnmi": "qactl.dnctl.gnmi.tools",
-    "rc": "qactl.dnctl.rc.tools",
+_QACTL_PKG: Dict[str, str] = {
+    "cli": "qactl.dnos.cli.tools",
+    "nc": "qactl.dnos.nc.tools",
+    "gnmi": "qactl.dnos.gnmi.tools",
+    "rc": "qactl.dnos.rc.tools",
 }
 
 
@@ -116,9 +116,9 @@ def register_group(group: str, mcp, *, wrap: Optional[Callable] = None) -> List[
         sel = _Selector(mcp, wrap=wrap)
         module.register(sel)
         return sel.registered
-    if group in DNCTL_GROUPS:
+    if group in QACTL_GROUPS:
         sel = _Selector(mcp, skip=CLI_ONLY.get(group, set()), wrap=wrap)
-        _register_package(_DNCTL_PKG[group], sel)
+        _register_package(_QACTL_PKG[group], sel)
         return sel.registered
     if group in IXIA_GROUPS:
         sel = _Selector(mcp, wrap=wrap)

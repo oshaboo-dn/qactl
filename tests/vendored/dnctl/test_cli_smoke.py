@@ -5,21 +5,21 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from qactl.dnctl.__main__ import app
+from qactl.dnos.__main__ import app
 
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("DNCTL_DEVICES", raising=False)
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("QACTL_DEVICES", raising=False)
 
 
 def test_version():
     r = runner.invoke(app, ["--version"])
     assert r.exit_code == 0
-    assert "dnctl" in r.stdout
+    assert "qactl" in r.stdout
 
 
 def test_group_help_lists_commands():
@@ -112,7 +112,7 @@ def test_device_alias_roundtrip(tmp_path, monkeypatch):
     devmap.write_text(
         json.dumps({"devices": {"sa": {"mgmt0": "10.0.0.1", "expected_sns": ["SN-SA"]}}})
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
 
     # attach a nickname
     r = runner.invoke(app, ["cli", "device", "alias", "sa", "spine-a", "--yes", "--json"])
@@ -145,7 +145,7 @@ def test_device_rename_in_place(tmp_path, monkeypatch):
             }}}
         )
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
 
     r = runner.invoke(
         app, ["cli", "device", "rename", "Hybrid_Omer", "Hybrid-CL",
@@ -175,7 +175,7 @@ def test_device_rename_drop_old_alias(tmp_path, monkeypatch):
     devmap.write_text(
         json.dumps({"devices": {"old": {"mgmt0": "10.0.0.9", "expected_sns": ["SN"]}}})
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     r = runner.invoke(
         app, ["cli", "device", "rename", "old", "new", "--drop-old-alias",
               "--yes", "--json"]
@@ -188,7 +188,7 @@ def test_device_rename_drop_old_alias(tmp_path, monkeypatch):
 def test_device_rename_refuses_without_yes(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {"a": {"mgmt0": "10.0.0.1"}}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     r = runner.invoke(app, ["cli", "device", "rename", "a", "b", "--json"])
     assert r.exit_code == 2
     assert any("--yes" in n for n in json.loads(r.stdout)["next_actions"])
@@ -201,7 +201,7 @@ def test_device_rename_collision_errors(tmp_path, monkeypatch):
             "a": {"mgmt0": "10.0.0.1"}, "b": {"mgmt0": "10.0.0.2"},
         }})
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     r = runner.invoke(app, ["cli", "device", "rename", "a", "b", "--yes", "--json"])
     assert r.exit_code == 1
     assert json.loads(r.stdout)["status"] == "error"
@@ -214,10 +214,10 @@ def test_device_refresh_warns_on_system_name_drift(tmp_path, monkeypatch):
             "mgmt0": "10.0.0.1", "expected_role": "CL", "expected_sns": ["SN-1"],
         }}})
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
 
-    from qactl.dnctl.cli.tools import devices as devtool
-    from qactl.dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnos.cli.tools import devices as devtool
+    from qactl.dnos.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devtool, "probe_device",
@@ -250,7 +250,7 @@ def test_device_alias_rejects_shadowing_device(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
 
     r = runner.invoke(app, ["cli", "device", "alias", "sa", "cl", "--yes", "--json"])
     assert r.exit_code == 1
@@ -263,7 +263,7 @@ def test_device_alias_rejects_shadowing_device(tmp_path, monkeypatch):
 
 def _gi_probe(**overrides):
     """A DeviceProbe as returned for a box with no System Name (GI mode)."""
-    from qactl.dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnos.core.cli_probe import DeviceProbe
 
     base = dict(
         system_name=None, system_id=None, expected_role=None,
@@ -275,7 +275,7 @@ def _gi_probe(**overrides):
 
 def _stub_add_probe(monkeypatch, probe):
     """Patch the SSH probe + best-effort post-add init out of the add path."""
-    from qactl.dnctl.cli.tools import devices as devtool
+    from qactl.dnos.cli.tools import devices as devtool
 
     monkeypatch.setattr(devtool, "probe_device", lambda *a, **k: probe)
     monkeypatch.setattr(devtool, "_post_add_init", lambda device: (None, []))
@@ -284,7 +284,7 @@ def _stub_add_probe(monkeypatch, probe):
 def test_device_add_defaults_name_to_ssh_host(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_add_probe(monkeypatch, _gi_probe(ncc_serials=["CZ22500CW4"]))
 
     # No explicit --host: the registry key defaults to the SSH host (NAME).
@@ -304,7 +304,7 @@ def test_device_add_defaults_name_to_ssh_host(tmp_path, monkeypatch):
 def test_device_add_explicit_name_with_host(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_add_probe(monkeypatch, _gi_probe())
 
     # NAME is the operator-chosen key; --host is the SSH target.
@@ -325,7 +325,7 @@ def test_device_add_explicit_name_with_host(tmp_path, monkeypatch):
 def test_device_add_unknown_mode_still_registers(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     # No System Name at all: with the operator-chosen key this is fine now.
     _stub_add_probe(monkeypatch, _gi_probe(mode="unknown"))
 
@@ -343,7 +343,7 @@ def test_device_add_unknown_mode_still_registers(tmp_path, monkeypatch):
 def test_device_add_ignores_chassis_system_name(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_add_probe(
         monkeypatch,
         _gi_probe(
@@ -369,7 +369,7 @@ def test_device_add_ignores_chassis_system_name(tmp_path, monkeypatch):
 def test_device_add_attaches_secondary_alias(tmp_path, monkeypatch):
     devmap = tmp_path / "devices.json"
     devmap.write_text(json.dumps({"devices": {}}))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_add_probe(
         monkeypatch,
         _gi_probe(system_name="hcl", mgmt0="100.64.10.252", expected_role="CL"),
@@ -391,8 +391,8 @@ def test_device_add_attaches_secondary_alias(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 def _stub_probe(monkeypatch, system_name):
-    from qactl.dnctl.cli.tools import devices as devtool
-    from qactl.dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnos.cli.tools import devices as devtool
+    from qactl.dnos.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devtool, "probe_device",
@@ -409,7 +409,7 @@ def test_device_name_check_in_sync(tmp_path, monkeypatch):
     devmap.write_text(json.dumps(
         {"devices": {"HCL": {"mgmt0": "10.0.0.9", "expected_sns": ["CZ1"]}}}
     ))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_probe(monkeypatch, "HCL")
 
     r = runner.invoke(app, ["cli", "device", "name-check", "HCL", "--json"])
@@ -425,7 +425,7 @@ def test_device_name_check_drift_reports_warning(tmp_path, monkeypatch):
     devmap.write_text(json.dumps(
         {"devices": {"HCL": {"mgmt0": "10.0.0.9", "expected_sns": ["CZ1"]}}}
     ))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_probe(monkeypatch, "Hybrid-CL")
 
     r = runner.invoke(app, ["cli", "device", "name-check", "HCL", "--json"])
@@ -446,7 +446,7 @@ def test_device_name_check_sync_renames_and_keeps_aliases(tmp_path, monkeypatch)
             "mgmt0": "10.0.0.9", "expected_sns": ["CZ1"], "aliases": ["cl"],
         }}}
     ))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_probe(monkeypatch, "Hybrid-CL")
 
     r = runner.invoke(
@@ -471,7 +471,7 @@ def test_device_name_check_sync_refuses_without_yes(tmp_path, monkeypatch):
     devmap.write_text(json.dumps(
         {"devices": {"HCL": {"mgmt0": "10.0.0.9", "expected_sns": ["CZ1"]}}}
     ))
-    monkeypatch.setenv("DNCTL_DEVICES", str(devmap))
+    monkeypatch.setenv("QACTL_DEVICES", str(devmap))
     _stub_probe(monkeypatch, "Hybrid-CL")
 
     r = runner.invoke(app, ["cli", "device", "name-check", "HCL", "--sync", "--json"])

@@ -27,7 +27,7 @@ Two distinct things wire BFD into a BGP test:
    property in NGPF, not a ``bfdv4Interface`` one, which is why it's
    exposed there.
 
-Implementation mirrors ``ixia_tools.stack``: ``.add()`` the parent then
+Implementation mirrors ``qactl.ixia.tools.stack``: ``.add()`` the parent then
 PATCH ``<mv_href>/singleValue`` for each multivalue via the shared
 :func:`patch_singlevalue` helper (avoids the Batch-Assistance licence
 gate ``mv.Single()`` trips on this lab). Scalars (``aggregateBfdSession``,
@@ -369,7 +369,7 @@ def ixia_get_bfdv4_interface(
 def _build_bfdv4_view(bfd, ixn) -> Dict[str, Any]:
     """Shared read body for the bfdv4Interface inspector.
 
-    Imported lazily by ``ixia_tools.inspect`` so the session/topology
+    Imported lazily by ``qactl.ixia.tools.inspect`` so the session/topology
     describe can embed BFD state per IPv4 stack without re-walking.
     """
     from qactl.ixia.tools.inspect import _mv_scalar, _coerce_int, _safe_bool

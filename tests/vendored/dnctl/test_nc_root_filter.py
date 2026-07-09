@@ -7,7 +7,7 @@ while dn-* / unnamespaced / pre-wrapped filters keep the historical wrap.
 
 from unittest.mock import MagicMock
 
-from qactl.dnctl.nc.core.netconf_rpc import (
+from qactl.dnos.nc.core.netconf_rpc import (
     DN_TOP_NS,
     _build_subtree_filter,
     get,
@@ -100,7 +100,7 @@ def test_get_config_root_none_passthrough():
 # --- tool layer rejects a bad root before connecting ---
 
 def test_netconf_get_rejects_unknown_root():
-    from qactl.dnctl.nc.tools.rw import netconf_get
+    from qactl.dnos.nc.tools.rw import netconf_get
 
     res = netconf_get(xml=OC_NI, device="cl", root="bogus")
     assert res["status"] == "error"

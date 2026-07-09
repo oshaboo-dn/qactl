@@ -9,12 +9,12 @@ device registry mutates on-disk state; restart/switchover is destructive
 and expects the SSH session to drop.
 
 ## Files (read all; follow imports)
-- `dnctl/cli/tools/discovery.py`  (cmd_search / cmd_help / cli_crawler / cli_config_crawler)
-- `dnctl/cli/tools/devices.py`    (list_devices / manage_device add|remove — mutates the device map)
-- `dnctl/cli/tools/restart.py`    (request_system_restart / ncc switchover — destructive, session-drop expected)
-- `dnctl/cli/tools/clear.py`
-- `dnctl/cli/tools/ping.py`
-- `dnctl/cli/tools/gitcommit.py`
+- `qactl/cli/tools/discovery.py`  (cmd_search / cmd_help / cli_crawler / cli_config_crawler)
+- `qactl/cli/tools/devices.py`    (list_devices / manage_device add|remove — mutates the device map)
+- `qactl/cli/tools/restart.py`    (request_system_restart / ncc switchover — destructive, session-drop expected)
+- `qactl/cli/tools/clear.py`
+- `qactl/cli/tools/ping.py`
+- `qactl/cli/tools/gitcommit.py`
 
 ## Focus questions
 - devices add/remove: atomic write of the device map (temp+rename)? Two

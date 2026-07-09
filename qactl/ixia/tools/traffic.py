@@ -2,7 +2,7 @@
 
 First pass: list + glob-find + deep inspect. Mutating ops (start / stop
 / modify-rate / enable / disable / regenerate) land in a follow-up pass
-— they all need the per-session write lock from ``ixia_core.session``.
+— they all need the per-session write lock from ``qactl.ixia.core.session``.
 """
 
 from __future__ import annotations

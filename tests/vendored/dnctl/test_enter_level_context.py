@@ -17,12 +17,12 @@ device required.
 
 from __future__ import annotations
 
-from qactl.dnctl.cli.core.edit_helpers import (
+from qactl.dnos.cli.core.edit_helpers import (
     CONTEXT_RESET,
     build_edit_config_commands,
     detect_rejected_statements,
 )
-from qactl.dnctl.cli.core.session import Invocation, StepCapture
+from qactl.dnos.cli.core.session import Invocation, StepCapture
 
 
 _STMTS = [
@@ -111,7 +111,7 @@ def _capture_steps(monkeypatch, module):
 
 
 def test_edit_config_sends_top_between_statements(monkeypatch):
-    from qactl.dnctl.cli.tools import edit
+    from qactl.dnos.cli.tools import edit
 
     captured = _capture_steps(monkeypatch, edit)
     resp = edit.edit_config(list(_STMTS), device="cl")
@@ -125,7 +125,7 @@ def test_edit_config_sends_top_between_statements(monkeypatch):
 
 
 def test_edit_config_compare_sends_top_between_statements(monkeypatch):
-    from qactl.dnctl.cli.tools import edit
+    from qactl.dnos.cli.tools import edit
 
     captured = _capture_steps(monkeypatch, edit)
     resp = edit.edit_config_compare(list(_STMTS), device="cl")

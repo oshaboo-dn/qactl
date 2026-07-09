@@ -53,7 +53,7 @@ def confirm_guard(
     if confirm is True:
         return None
     # Local import to avoid envelope <-> lookup cycle (envelope is in
-    # ixia_core, lookup is in ixia_tools — unrelated, but kept local
+    # qactl.ixia.core, lookup is in qactl.ixia.tools — unrelated, but kept local
     # for symmetry with the build.py original).
     from qactl.ixia.core.envelope import error_envelope
     return error_envelope(

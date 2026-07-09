@@ -1,4 +1,4 @@
-"""``ixiactl traffic ...`` — traffic item CRUD + run control + stats."""
+"""``qactl.ixia.ctl traffic ...`` — traffic item CRUD + run control + stats."""
 
 from __future__ import annotations
 

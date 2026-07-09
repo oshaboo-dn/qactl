@@ -1,4 +1,4 @@
-"""``ixiactl bfd ...`` — BFD-over-IPv4 interface create/get/delete."""
+"""``qactl.ixia.ctl bfd ...`` — BFD-over-IPv4 interface create/get/delete."""
 
 from __future__ import annotations
 

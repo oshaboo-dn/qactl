@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from qactl.dnctl.cli.core import errors
+from qactl.dnos.cli.core import errors
 
 
 def _fake_backupfile(device, size):
-    from qactl.dnctl.cli.core.backup_store import BackupFile
+    from qactl.dnos.cli.core.backup_store import BackupFile
 
     return BackupFile(
         filename=f"{device}_20260101-000000.cli",
@@ -21,13 +21,13 @@ def _fake_backupfile(device, size):
 
 def test_backup_next_actions_point_at_local_host():
     # The stale text told agents to debug dnftp; config backups go local.
-    assert "DNCTL_LOCAL_SFTP" in errors.BACKUP_NEXT_ACTION
-    assert "DNCTL_LOCAL_SFTP" in errors.RESTORE_NEXT_ACTION
+    assert "QACTL_LOCAL_SFTP" in errors.BACKUP_NEXT_ACTION
+    assert "QACTL_LOCAL_SFTP" in errors.RESTORE_NEXT_ACTION
     assert "THIS host" in errors.BACKUP_NEXT_ACTION
 
 
 def test_read_backup_rejects_oversize(monkeypatch):
-    from qactl.dnctl.cli.tools import backup
+    from qactl.dnos.cli.tools import backup
 
     monkeypatch.setattr(backup.backup_store, "validate_device", lambda d: None)
     monkeypatch.setattr(backup.backup_store, "validate_bucket", lambda b: None)
@@ -47,7 +47,7 @@ def test_read_backup_rejects_oversize(monkeypatch):
 
 
 def test_read_backup_reads_small(monkeypatch):
-    from qactl.dnctl.cli.tools import backup
+    from qactl.dnos.cli.tools import backup
 
     monkeypatch.setattr(backup.backup_store, "validate_device", lambda d: None)
     monkeypatch.setattr(backup.backup_store, "validate_bucket", lambda b: None)

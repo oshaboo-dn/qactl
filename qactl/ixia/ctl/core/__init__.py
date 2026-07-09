@@ -1,1 +1,1 @@
-"""ixiactl core: output rendering, exit codes, payload reading."""
+"""qactl.ixia.ctl core: output rendering, exit codes, payload reading."""

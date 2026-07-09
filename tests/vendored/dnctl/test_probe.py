@@ -6,10 +6,10 @@ surface are tested with monkeypatched seams, mirroring test_raw.py.
 
 import pytest
 
-from qactl.dnctl.cli.core import runner as core_runner
-from qactl.dnctl.cli.core.session import Invocation, StepCapture, run_probes
-from qactl.dnctl.cli.core.shell import send_probe
-from qactl.dnctl.cli.tools import probe as probe_tool
+from qactl.dnos.cli.core import runner as core_runner
+from qactl.dnos.cli.core.session import Invocation, StepCapture, run_probes
+from qactl.dnos.cli.core.shell import send_probe
+from qactl.dnos.cli.tools import probe as probe_tool
 
 
 PROMPT = "SA#"
@@ -165,7 +165,7 @@ class FakeRegistry:
 
 
 def test_run_probes_one_channel_config_mode(monkeypatch):
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
     prefix_help = "protocols bgp 100001 neighbor 1.1.1.1 bfd "
     prefix_tab = "protocols bgp 100001 neighbor 1.1.1.1 bfd str"
     ch = FakeProbeChannel(tab_completions={prefix_tab: "ict-mode "})
@@ -192,7 +192,7 @@ def test_run_probes_one_channel_config_mode(monkeypatch):
 
 
 def test_run_probes_oper_mode_never_enters_configure(monkeypatch):
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
     ch = FakeProbeChannel()
 
     run_probes(

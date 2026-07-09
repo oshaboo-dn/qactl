@@ -14,18 +14,18 @@ SW-279187 HA-escalation episode (request log, 14:45:50). No device traffic.
 import paramiko
 import pytest
 
-from qactl.dnctl.core.cli_probe import (
+from qactl.dnos.core.cli_probe import (
     classify_system_state,
     detect_system_mode,
     parse_system_status,
 )
-from qactl.dnctl.cli.core.session import (
+from qactl.dnos.cli.core.session import (
     ConnectError,
     UnknownDeviceError,
     connect_error_next_actions,
     _is_transient_connect_error,
 )
-from qactl.dnctl.cli.tools.discovery import _annotate_system_mode
+from qactl.dnos.cli.tools.discovery import _annotate_system_mode
 
 
 RUNNING_OUTPUT = """\
@@ -225,7 +225,7 @@ def test_observed_recovery_episode_errors_are_transient(exc):
 
 
 def test_run_on_device_connect_error_sets_unreachable(monkeypatch):
-    from qactl.dnctl.cli.core import runner
+    from qactl.dnos.cli.core import runner
 
     def boom(*args, **kwargs):
         raise ConnectError(

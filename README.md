@@ -13,15 +13,15 @@ executable.
 
 | Group | Domain | Source |
 |---|---|---|
-| `cli` / `nc` / `gnmi` / `rc` / `setup` | DNOS devices (SSH / NETCONF / gNMI / RESTCONF) | vendored `dnctl` |
-| `ixia` | IxNetwork sessions / topology / protocols / traffic | vendored `ixiactl` |
+| `cli` / `nc` / `gnmi` / `rc` / `setup` | DNOS devices (SSH / NETCONF / gNMI / RESTCONF) | vendored `qactl` |
+| `ixia` | IxNetwork sessions / topology / protocols / traffic | vendored `qactl ixia` |
 | `jira` | Jira watchers / attachments / comments / transitions / status | native |
 | `confluence` | Confluence comments / attachments | native |
 | `jenkins` | Jenkins builds: trigger / inspect / stop | native |
 | `arista` | Arista EOS switches: interfaces / lldp / config / version (read-only, SSH) | native |
 
 `qactl` is a thin dispatcher: the `cli/nc/gnmi/rc/setup` and `ixia`
-groups delegate to the bundled `dnctl` / `ixiactl` entrypoints unchanged
+groups delegate to the bundled `qactl` / `qactl ixia` entrypoints unchanged
 (full surface, help, and behaviour preserved), while `jira` /
 `confluence` / `jenkins` / `arista` are implemented natively. All groups share the
 same contract, and the same envelope-returning tool functions back both
@@ -65,7 +65,7 @@ lands on remote `dnftp`, never locally), the cheap read-only / job-poll
 tools, and device + NETCONF **backup/restore** (backups are
 non-destructive; restores execute only with `confirm=true`, otherwise they
 return a dry-run). Config backups land on the **local host** (the device
-SFTPs them back to the machine running `dnctl`); `dnftp` is reserved for
+SFTPs them back to the machine running `qactl`); `dnftp` is reserved for
 the big tech-support tarballs. A tool stays **CLI-only** only when it is *interactive*
 or *destructive without a confirm gate*:
 
@@ -158,7 +158,7 @@ still works.)
 — or export per-vendor env creds (`CISCO_USER`/`CISCO_PASSWORD`,
 `JUNIPER_USER`/`JUNIPER_PASSWORD`, `ARISTA_USER`/`ARISTA_PASSWORD`).
 Resolution per call: explicit `--user`/`--password` > per-device
-(`[devices."<name>"]` in dnctl's `config.toml`) > per-vendor env >
+(`[devices."<name>"]` in qactl's `config.toml`) > per-vendor env >
 global `[auth]`.
 
 Any of these can be overridden per-command (`--email`/`--token`/`--base-url`
@@ -261,11 +261,11 @@ qactl arista lldp arista410 --json | jq '.result.neighbors'
 
 ## DNOS devices & Ixia
 
-These groups are the bundled `dnctl` / `ixiactl` verbatim — same flags,
+These groups are the bundled `qactl` / `qactl ixia` verbatim — same flags,
 same behaviour, same `--json`/`--yes` contract:
 
 ```bash
-qactl setup ...                       # one-time device registry / creds (dnctl)
+qactl setup ...                       # one-time device registry / creds (qactl)
 qactl cli system -d sa --json        # incl. machine state: running|running-degraded|recovery|gi|unreachable|unknown
 qactl cli interfaces -d cl --json    # aggregated per-iface: state+desc+LLDP+IGP
 qactl cli show -d cl 'show bgp summary' --log run.md   # tee raw output → QA evidence
@@ -283,7 +283,7 @@ qactl ixia session connect --host 10.0.0.5 --json   # IXIA_HOST also honoured
 qactl ixia traffic stats --host 10.0.0.5 --json
 ```
 
-Device credentials/registry come from `qactl setup` (dnctl's resolver);
+Device credentials/registry come from `qactl setup` (qactl's resolver);
 Ixia honours `IXIA_HOST` / `IXIA_USER` / `IXIA_PORT`. See
 `qactl <group> --help` for the full surface.
 
@@ -292,7 +292,7 @@ rate-limiting back-to-back calls) are retried automatically: 3 attempts,
 2s/5s backoff. Tune with `QACTL_CONNECT_RETRIES` (total attempts, `1` =
 fail fast) and `QACTL_CONNECT_BACKOFF` (comma-separated seconds). Every
 retry that fires is tallied (JSONL) in
-`~/.local/state/dnctl/cli/connect-retries.jsonl` — `outcome` is
+`~/.local/state/qactl/cli/connect-retries.jsonl` — `outcome` is
 `recovered` (a retry saved the call) or `gave_up` (attempts exhausted).
 
 ### Per-device daily journal
@@ -322,17 +322,17 @@ qactl/
     jenkins/     client.py (REST) + tools.py (envelopes) + cli.py  -> qactl jenkins ...
     arista/      client.py (SSH)  + tools.py (envelopes) + cli.py  -> qactl arista ...
     mcp/         registry.py (group->tool surface map) + server.py -> qactl mcp ...
-    __main__.py  dispatcher: native groups, mcp front, delegation to dnctl / ixiactl
-  dnctl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup (+ MCP tools)
-  ixiactl/ ixia/ ixia_core/ ixia_tools/    vendored Ixia CLI -> qactl ixia (+ MCP tools)
+    __main__.py  dispatcher: native groups, mcp front, delegation to qactl / qactl ixia
+  qactl/         vendored DNOS device CLI  -> qactl cli/nc/gnmi/rc/setup (+ MCP tools)
+  qactl ixia/ ixia/ qactl.ixia.core/ qactl.ixia.tools/    vendored Ixia CLI -> qactl ixia (+ MCP tools)
   mcp.example.json   stdio mcp.json template for MCP clients
-tests/           native CLI tests + MCP front tests + vendored dnctl / ixiactl suites
+tests/           native CLI tests + MCP front tests + vendored qactl / qactl ixia suites
 ```
 
 The `tools.py` layer is the shared "compute an envelope" boundary: each
 function returns the one envelope dict, the CLI prints it via `emit()`,
 and the MCP front serializes it as the tool result. The vendored
-`dnctl/*/tools/*` and `ixia_tools/*` already are this layer (they kept
+`qactl/*/tools/*` and `qactl.ixia.tools/*` already are this layer (they kept
 their `register(mcp)` hooks), so the MCP front re-exposes them directly.
 
 ## Changelog

@@ -1,4 +1,4 @@
-"""``ixiactl session ...`` — session + config lifecycle.
+"""``qactl.ixia.ctl session ...`` — session + config lifecycle.
 
 connect / sessions / describe / chassis / vports / wait-vports / configs /
 new / load / save / apply / clear-stats.

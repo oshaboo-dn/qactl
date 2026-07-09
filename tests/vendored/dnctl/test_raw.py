@@ -5,14 +5,14 @@ device — scripted fakes throughout.
 
 import pytest
 
-from qactl.dnctl.cli.core import runner as core_runner
-from qactl.dnctl.cli.core.session import (
+from qactl.dnos.cli.core import runner as core_runner
+from qactl.dnos.cli.core.session import (
     Invocation,
     StepCapture,
     _init_channel,
     run_sequence,
 )
-from qactl.dnctl.cli.tools import raw as raw_tool
+from qactl.dnos.cli.tools import raw as raw_tool
 
 
 # --- _init_channel knob precedence ----------------------------------------
@@ -56,8 +56,8 @@ class FakeChannel:
 def test_explicit_prompt_timeout_overrides_tiny_env(monkeypatch):
     # Tiny env budget would give up before the box prompts, but an explicit
     # prompt_timeout arg widens the window and detection succeeds.
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "0.2")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "0.2")
     ch = FakeChannel(nudges_needed=5)
 
     assert _init_channel(ch, prompt_timeout=10.0) == PROMPT
@@ -66,8 +66,8 @@ def test_explicit_prompt_timeout_overrides_tiny_env(monkeypatch):
 
 def test_nonpositive_arg_falls_through_to_env(monkeypatch):
     # A bogus (<=0) explicit arg must not shrink the window below the env knob.
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "10")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "10")
     ch = FakeChannel(nudges_needed=4)
 
     assert _init_channel(ch, prompt_timeout=0) == PROMPT
@@ -133,7 +133,7 @@ class FakeRegistry:
 
 
 def test_sequence_auto_confirm_answers_and_hits_prompt(monkeypatch):
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
     ch = ConfirmChannel()
 
     result = run_sequence(
@@ -148,7 +148,7 @@ def test_sequence_auto_confirm_answers_and_hits_prompt(monkeypatch):
 
 
 def test_sequence_confirm_answer_no_is_forwarded(monkeypatch):
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
     ch = ConfirmChannel()
 
     result = run_sequence(
@@ -164,7 +164,7 @@ def test_sequence_confirm_answer_no_is_forwarded(monkeypatch):
 def test_sequence_without_auto_confirm_times_out_at_confirm(monkeypatch):
     # The pre-#82 failure mode: line 1 sits at the confirm, the follow-up
     # 'yes' line is never sent, and the step times out without the prompt.
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
     ch = ConfirmChannel()
 
     result = run_sequence(

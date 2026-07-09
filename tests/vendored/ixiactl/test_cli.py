@@ -1,4 +1,4 @@
-"""CLI-layer tests for ixiactl.
+"""CLI-layer tests for qactl.ixia.ctl.
 
 These exercise everything that does *not* require a live IxNetwork API
 server or ``ixnetwork-restpy``: argument parsing, the destructive-op

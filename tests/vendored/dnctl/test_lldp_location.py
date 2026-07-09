@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from qactl.dnctl.core import devices as dn_devices
-from qactl.dnctl.core.cli_probe import (
+from qactl.dnos.core import devices as dn_devices
+from qactl.dnos.core.cli_probe import (
     DeviceProbe,
     LldpLocation,
     derive_location,
@@ -22,7 +22,7 @@ from qactl.dnctl.core.cli_probe import (
     probe_via,
     rack_from_name,
 )
-from qactl.dnctl.cli.tools.devices import _location_fields
+from qactl.dnos.cli.tools.devices import _location_fields
 
 
 # A plausible DNOS ``show lldp neighbors`` capture, matching the example
@@ -207,13 +207,13 @@ def device_map_env(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(p))
+    monkeypatch.setenv("QACTL_DEVICES", str(p))
     return str(p)
 
 
 def test_list_devices_surfaces_location(device_map_env):
-    from qactl.dnctl.cli.core import session
-    from qactl.dnctl.cli.tools.devices import list_devices
+    from qactl.dnos.cli.core import session
+    from qactl.dnos.cli.tools.devices import list_devices
 
     session.reload_device_hosts()
     resp = list_devices()

@@ -91,11 +91,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ixiactl` → `qactl.ixia.ctl`. Top-level `ixia`/`ixia_core`/`ixia_tools`/
   `ixiactl` shims alias the old names (zero-break). `qactl ixia …`
   unchanged. Only the top-level `qactl` package remains.
+- **Package consolidation (stage 3 — remove old names)**: dropped the
+  back-compat shims and renamed the last old-name package `qactl.dnctl` →
+  `qactl.dnos`. The runtime state/config also moved off the `dnctl` name:
+  `~/.local/state/dnctl` → `~/.local/state/qactl`, `~/.config/dnctl` →
+  `~/.config/qactl`, and the `DNCTL_*` env overrides → `QACTL_*`
+  (`QACTL_STATE_DIR` / `QACTL_DEVICES` / `QACTL_CONFIG`). Deleted the dead
+  standalone-`dnctl`/`ixiactl` deprecation shims. No old package/command/
+  env name remains anywhere in the tree.
 
 ### Fixed
 - `cli capture --filter`: the local BPF re-write now stages through a `/tmp`
   tempdir instead of running `tcpdump -r/-w` directly on the pcap in the
-  `~/.local/state/dnctl/captures/…` dir. The stock Ubuntu `tcpdump` AppArmor
+  `~/.local/state/qactl/captures/…` dir. The stock Ubuntu `tcpdump` AppArmor
   profile (`audit deny @{HOME}/.*/** mrwkl`) denies reading/writing anything
   under a dot-directory in `$HOME`, so `--filter` silently failed with
   "Permission denied" (no `*_filtered.pcap`) on every such host. tcpdump now

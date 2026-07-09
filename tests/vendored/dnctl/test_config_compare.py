@@ -8,8 +8,8 @@ guard without touching a real device.
 
 from __future__ import annotations
 
-from qactl.dnctl.cli.core.session import Invocation, StepCapture
-from qactl.dnctl.cli.tools import edit
+from qactl.dnos.cli.core.session import Invocation, StepCapture
+from qactl.dnos.cli.tools import edit
 
 
 _DIFF = "+ protocols bgp neighbor 1.1.1.1 peer-as 65001"

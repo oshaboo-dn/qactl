@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from qactl.dnctl.nc.core.change_ops import (
+from qactl.dnos.nc.core.change_ops import (
     _op_reject_hint,
     annotate_operation,
     prepare_edit_payload,

@@ -61,7 +61,7 @@ DEFAULT_APPLY_CHANGES_TIMEOUT_S = 60
 
 
 def _run_apply_changes(env: Dict[str, Any], s, *, timeout_s: int) -> bool:
-    """Wrap :func:`ixia_tools.routes.apply_changes` for the start tools.
+    """Wrap :func:`qactl.ixia.tools.routes.apply_changes` for the start tools.
 
     Attaches the result dict to ``env["result"]["apply_changes"]`` so
     callers can see whether anything was actually pushed and how long
@@ -801,7 +801,7 @@ def ixia_apply_changes(
 ) -> Dict[str, Any]:
     """Push every pending NGPF config edit to the test engine.
 
-    Thin wrapper over :func:`ixia_tools.routes.apply_changes` — same
+    Thin wrapper over :func:`qactl.ixia.tools.routes.apply_changes` — same
     operation IxNetwork's GUI exposes as the **Apply Changes** button
     (``POST /…/globals/topology/operations/applyonthefly`` under the
     hood; on IxNetwork 10.x there is no separate ``applychanges``

@@ -17,7 +17,7 @@ alwaysApply: true
 - Native (edit here): `jira` / `confluence` / `jenkins` under `qactl/`.
 - Vendored, delegated by `qactl/__main__.py` (don't refactor their
   internals to "match" — keep them liftable): `cli`/`nc`/`gnmi`/`rc`/
-  `setup` (the `dnctl/` package) and `ixia` (`ixiactl/` + `ixia*/`).
+  `setup` (the `qactl.dnos/` package) and `ixia` (`qactl.ixia.ctl/` + `qactl.ixia.*/`).
   Fixes to those belong upstream conceptually; keep changes minimal and
   isolated to the vendored tree.
 

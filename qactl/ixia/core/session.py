@@ -1,10 +1,10 @@
-"""IxNetwork session opener for ixiactl — reattach-first, CLI-shaped.
+"""IxNetwork session opener for qactl.ixia.ctl — reattach-first, CLI-shaped.
 
 This is the single most important difference from the ixia-mcp server it
 was lifted from. The MCP is a long-lived process: it caches one
 ``IxiaSession`` per ``(host, port, user)`` and reuses it across every
-tool call for the lifetime of the daemon. ``ixiactl`` is the opposite —
-**process-per-invocation**. Every ``ixiactl ...`` command starts cold.
+tool call for the lifetime of the daemon. ``qactl.ixia.ctl`` is the opposite —
+**process-per-invocation**. Every ``qactl.ixia.ctl ...`` command starts cold.
 
 If each invocation blindly opened a brand-new IxNetwork session, it
 would strand (or, with ``ClearConfig``, wipe) the config / traffic /
@@ -19,7 +19,7 @@ here is **reattach**:
   most-recent existing session rather than leaving a duplicate behind.
 
 The CLI front-end records the user's choice once via
-:func:`set_session_policy`; the vendored ``ixia_tools.*`` modules call
+:func:`set_session_policy`; the vendored ``qactl.ixia.tools.*`` modules call
 :func:`get_session` exactly as they did under the MCP, so they need no
 changes. The per-process cache is still useful: a single command (e.g.
 ``proto start-all``) calls ``get_session`` several times (apply-changes,
@@ -163,7 +163,7 @@ def _open(
             import time as _t
             fresh = _new_handle(
                 host, port, user,
-                session_name=f"ixiactl-{int(_t.time())}",
+                session_name=f"qactl.ixia.ctl-{int(_t.time())}",
             )
             fresh.connect()
             return fresh
@@ -189,7 +189,7 @@ def _retarget_most_recent(
 
     No-op on a single-session (Windows) server. On a Linux server where
     several sessions can coexist, this picks the highest id among the
-    ACTIVE ones so consecutive ``ixiactl`` calls converge on the same
+    ACTIVE ones so consecutive ``qactl.ixia.ctl`` calls converge on the same
     "current" session instead of fanning out.
     """
     try:

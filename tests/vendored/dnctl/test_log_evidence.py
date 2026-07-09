@@ -11,9 +11,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from qactl.dnctl.__main__ import app
-from qactl.dnctl.core import options as O
-from qactl.dnctl.core.context import Ctx
+from qactl.dnos.__main__ import app
+from qactl.dnos.core import options as O
+from qactl.dnos.core.context import Ctx
 
 runner = CliRunner()
 

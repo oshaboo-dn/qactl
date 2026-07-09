@@ -10,7 +10,7 @@ a warning. These tests pin that without touching a real device.
 
 from __future__ import annotations
 
-from qactl.dnctl.cli.tools import discovery
+from qactl.dnos.cli.tools import discovery
 
 
 def _fake_run(stdout):

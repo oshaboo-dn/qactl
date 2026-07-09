@@ -7,9 +7,9 @@ no device is touched.
 
 import pytest
 
-from qactl.dnctl.cli.core.session import Invocation, StepCapture
-from qactl.dnctl.cli.tools import interfaces as ifmod
-from qactl.dnctl.cli.tools.interfaces import (
+from qactl.dnos.cli.core.session import Invocation, StepCapture
+from qactl.dnos.cli.tools import interfaces as ifmod
+from qactl.dnos.cli.tools.interfaces import (
     build_interface_view,
     interfaces,
     parse_interfaces_description,

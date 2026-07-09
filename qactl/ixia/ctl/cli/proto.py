@@ -1,4 +1,4 @@
-"""``ixiactl proto ...`` — protocol start/stop/summary + per-line routes."""
+"""``qactl.ixia.ctl proto ...`` — protocol start/stop/summary + per-line routes."""
 
 from __future__ import annotations
 

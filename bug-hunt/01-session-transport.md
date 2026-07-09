@@ -10,12 +10,12 @@ auto-confirm answering the wrong prompt, multi-step sequences aborting
 incorrectly).
 
 ## Files (read all; follow imports)
-- `dnctl/cli/core/session.py`  (run_once / run_sequence, ConnectResult, StepCapture, timeouts, auto_confirm)
-- `dnctl/cli/core/shell.py`    (interactive shell / prompt detection / channel handling)
-- `dnctl/cli/core/shell_exec.py`
-- `dnctl/cli/core/runner.py`
-- `dnctl/cli/core/registry.py` (transport_registry — is it safe across the one-shot CLI vs MCP server?)
-- `dnctl/cli/core/locks.py`
+- `qactl/cli/core/session.py`  (run_once / run_sequence, ConnectResult, StepCapture, timeouts, auto_confirm)
+- `qactl/cli/core/shell.py`    (interactive shell / prompt detection / channel handling)
+- `qactl/cli/core/shell_exec.py`
+- `qactl/cli/core/runner.py`
+- `qactl/cli/core/registry.py` (transport_registry — is it safe across the one-shot CLI vs MCP server?)
+- `qactl/cli/core/locks.py`
 
 ## Focus questions
 - Are paramiko transports/channels/SFTP always closed on every error path

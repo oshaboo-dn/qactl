@@ -1,4 +1,4 @@
-"""``ixiactl bgp ...`` — BGP peer + VRF create/get/delete."""
+"""``qactl.ixia.ctl bgp ...`` — BGP peer + VRF create/get/delete."""
 
 from __future__ import annotations
 

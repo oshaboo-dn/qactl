@@ -24,8 +24,8 @@ Launch a local stdio MCP server exposing the selected groups' tools.
 
 Groups:
   jira confluence jenkins        Atlassian + CI (native)
-  cli nc gnmi rc                 DNOS devices (vendored dnctl)
-  ixia                           IxNetwork traffic (vendored ixiactl)
+  cli nc gnmi rc                 DNOS devices (vendored qactl)
+  ixia                           IxNetwork traffic (vendored qactl.ixia.ctl)
   all                            every group above
 
 Notes:

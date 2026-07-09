@@ -4,12 +4,12 @@ import os
 
 import pytest
 
-from qactl.dnctl.nc.core import backup_store as bs
+from qactl.dnos.nc.core import backup_store as bs
 
 
 @pytest.fixture
 def state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path))
     return tmp_path
 
 

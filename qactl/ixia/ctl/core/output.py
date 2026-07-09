@@ -1,4 +1,4 @@
-"""Rendering, exit codes, and payload reading for ixiactl.
+"""Rendering, exit codes, and payload reading for qactl.ixia.ctl.
 
 Two output modes, selected by the global ``--json`` flag:
 

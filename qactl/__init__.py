@@ -2,8 +2,8 @@
 
 A single executable that unifies every surface a QA engineer drives:
 
-    cli / nc / gnmi / rc / setup   DNOS devices   (vendored dnctl)
-    ixia                           IxNetwork      (vendored ixiactl)
+    cli / nc / gnmi / rc / setup   DNOS devices   (vendored qactl)
+    ixia                           IxNetwork      (vendored qactl.ixia.ctl)
     jira / confluence / jenkins    Atlassian/CI   (native)
     arista                         Arista EOS     (native, read-only SSH)
 

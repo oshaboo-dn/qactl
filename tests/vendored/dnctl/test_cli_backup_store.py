@@ -10,14 +10,14 @@ import os
 
 import pytest
 
-from qactl.dnctl.cli.core import backup_store as bs
-from qactl.dnctl.core import local_sftp
-from qactl.dnctl.core.dnftp import build_download_command, build_upload_command
+from qactl.dnos.cli.core import backup_store as bs
+from qactl.dnos.core import local_sftp
+from qactl.dnos.core.dnftp import build_download_command, build_upload_command
 
 
 @pytest.fixture
 def state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -100,10 +100,10 @@ def test_build_commands_target_self_and_dnftp_default():
     # Local target: explicit user/host stitched into the remote URI.
     up = build_upload_command(
         kind="config", local_name="cl__20260101-000000.md",
-        remote_path="/home/me/.local/state/dnctl/backups/cli/cl/cl__20260101-000000.md",
+        remote_path="/home/me/.local/state/qactl/backups/cli/cl/cl__20260101-000000.md",
         vrf="mgmt0", user="me", host="myhost",
     )
-    assert "me@myhost:/home/me/.local/state/dnctl/backups/cli/cl/" in up
+    assert "me@myhost:/home/me/.local/state/qactl/backups/cli/cl/" in up
     assert up.startswith("request file upload config ")
     assert up.endswith("protocol sftp vrf mgmt0")
 

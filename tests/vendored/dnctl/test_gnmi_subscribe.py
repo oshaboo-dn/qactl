@@ -1,4 +1,4 @@
-"""Tests for `dnctl gnmi subscribe` — bounded gNMI Subscribe capture.
+"""Tests for `qactl gnmi subscribe` — bounded gNMI Subscribe capture.
 
 No real device traffic: ``open_client`` is monkeypatched to hand back a
 fake gRPC client whose ``subscribe_stream`` yields a scripted sequence of
@@ -10,10 +10,10 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from qactl.dnctl.__main__ import app
-from qactl.dnctl.gnmi.core.session import Resolved
-from qactl.dnctl.gnmi.tools import subscribe as sub_mod
-from qactl.dnctl.gnmi.tools.subscribe import gnmi_subscribe
+from qactl.dnos.__main__ import app
+from qactl.dnos.gnmi.core.session import Resolved
+from qactl.dnos.gnmi.tools import subscribe as sub_mod
+from qactl.dnos.gnmi.tools.subscribe import gnmi_subscribe
 
 runner = CliRunner()
 

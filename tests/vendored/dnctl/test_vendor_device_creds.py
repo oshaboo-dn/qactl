@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from qactl.dnctl.core import config, credentials as creds, setup_cmd
+from qactl.dnos.core import config, credentials as creds, setup_cmd
 
 
 VENDOR_ENV_VARS = [v for pair in creds.VENDOR_ENV.values() for v in pair]
@@ -22,7 +22,7 @@ VENDOR_ENV_VARS = [v for pair in creds.VENDOR_ENV.values() for v in pair]
 def lab(tmp_path, monkeypatch):
     """Isolated config + device map with one device per vendor."""
     cfg = tmp_path / "config.toml"
-    monkeypatch.setenv("DNCTL_CONFIG", str(cfg))
+    monkeypatch.setenv("QACTL_CONFIG", str(cfg))
     for var in VENDOR_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     dev_map = tmp_path / "devices_mgmt0.json"
@@ -38,7 +38,7 @@ def lab(tmp_path, monkeypatch):
             "sa": {"expected_sns": ["10.0.0.9"]},  # DNOS (no vendor field)
         }
     }), encoding="utf-8")
-    monkeypatch.setenv("DNCTL_DEVICES", str(dev_map))
+    monkeypatch.setenv("QACTL_DEVICES", str(dev_map))
     config.load_config.cache_clear()
     yield cfg
     config.load_config.cache_clear()
@@ -115,7 +115,7 @@ def test_dnos_and_unknown_devices_untouched(lab, monkeypatch):
 
 
 def test_transport_registry_applies_resolution(lab, monkeypatch):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     lab.write_text(
         '[devices."jun-rt02"]\nuser = "boxuser"\npassword = "boxpw"\n',
@@ -245,7 +245,7 @@ def test_resolve_secret_prompts_hidden_on_tty(monkeypatch):
 
 def test_connect_error_hints_vendor_creds(lab, monkeypatch):
     import paramiko
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     def fail_auth(host, user, password, timeout):
         raise paramiko.AuthenticationException("Authentication failed.")

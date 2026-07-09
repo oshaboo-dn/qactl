@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-from qactl.dnctl.core import devices as dn_devices
+from qactl.dnos.core import devices as dn_devices
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def device_map_env(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setenv("DNCTL_DEVICES", str(p))
+    monkeypatch.setenv("QACTL_DEVICES", str(p))
     return str(p)
 
 
@@ -64,7 +64,7 @@ def test_write_replaces_in_place_valid_json(device_map_env):
 # --- session helpers: canonicalize nickname before mutating ----------------
 
 def test_remove_device_host_by_nickname_removes_canonical(device_map_env):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     changed, remaining = session.remove_device_host("spine-a")
     assert changed is True
@@ -75,7 +75,7 @@ def test_remove_device_host_by_nickname_removes_canonical(device_map_env):
 
 
 def test_remove_single_sn_by_nickname_hits_canonical(device_map_env):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     session.save_device_host("spine-a", "SN-SA2")  # canonical sa now has 2 SNs
     changed, remaining = session.remove_device_host("spine-a", "SN-SA")
@@ -87,7 +87,7 @@ def test_remove_single_sn_by_nickname_hits_canonical(device_map_env):
 
 
 def test_save_device_host_by_nickname_no_ghost(device_map_env):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     added, hosts = session.save_device_host("spine-a", "SN-SA2")
     assert added is True
@@ -97,7 +97,7 @@ def test_save_device_host_by_nickname_no_ghost(device_map_env):
 
 
 def test_save_device_host_new_name_creates_canonical(device_map_env):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     added, hosts = session.save_device_host("brand-new", "SN-NEW")
     assert added is True
@@ -106,7 +106,7 @@ def test_save_device_host_new_name_creates_canonical(device_map_env):
 
 
 def test_refresh_cache_keys_by_canonical(device_map_env):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     session.reload_device_hosts()
     # touching via the nickname must update the canonical cache key, never

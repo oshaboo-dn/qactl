@@ -10,14 +10,14 @@ commit/rollback correctness, candidate-config leakage between sessions,
 sandbox escapes in the generator subprocess, and `--yes` gating.
 
 ## Files (read all; follow imports)
-- `dnctl/cli/tools/edit.py`            (edit_config / edit_config_check / rollback / load override)
-- `dnctl/cli/core/edit_helpers.py`
-- `dnctl/cli/core/configure_commit.py`
-- `dnctl/cli/core/commit_sequence.py`
-- `dnctl/cli/tools/templates.py`       (template store CRUD + render)
-- `dnctl/cli/core/jinja_store.py`      (Jinja render, the generator subprocess, audit dir)
-- `dnctl/cli/core/validation.py`
-- relevant `dnctl/cli/app.py` commands (check `--yes` gates on edit/scale-deploy)
+- `qactl/cli/tools/edit.py`            (edit_config / edit_config_check / rollback / load override)
+- `qactl/cli/core/edit_helpers.py`
+- `qactl/cli/core/configure_commit.py`
+- `qactl/cli/core/commit_sequence.py`
+- `qactl/cli/tools/templates.py`       (template store CRUD + render)
+- `qactl/cli/core/jinja_store.py`      (Jinja render, the generator subprocess, audit dir)
+- `qactl/cli/core/validation.py`
+- relevant `qactl/cli/app.py` commands (check `--yes` gates on edit/scale-deploy)
 
 ## Focus questions
 - commit/rollback: on a failed `commit` or `commit check`, is the shared

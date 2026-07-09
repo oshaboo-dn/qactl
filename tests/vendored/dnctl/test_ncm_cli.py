@@ -2,13 +2,13 @@
 
 import pytest
 
-from qactl.dnctl.cli.core import shell as core_shell
-from qactl.dnctl.cli.core.shell import (
+from qactl.dnos.cli.core import shell as core_shell
+from qactl.dnos.cli.core.shell import (
     _NCM_CONFIRM_RE,
     ends_with_ncm_prompt,
     send_ncm_cli,
 )
-from qactl.dnctl.cli.tools import shell as shell_tool
+from qactl.dnos.cli.tools import shell as shell_tool
 
 
 # --- prompt matcher -------------------------------------------------------

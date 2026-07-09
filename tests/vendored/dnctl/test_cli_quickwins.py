@@ -18,19 +18,19 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from qactl.dnctl.__main__ import app
-from qactl.dnctl.cli import app as cli_app
-from qactl.dnctl.cli.core import job_store, ts_store
-from qactl.dnctl.cli.core.dnftp import DnftpNotConfigured
-from qactl.dnctl.cli.tools import devices, techsupport
+from qactl.dnos.__main__ import app
+from qactl.dnos.cli import app as cli_app
+from qactl.dnos.cli.core import job_store, ts_store
+from qactl.dnos.cli.core.dnftp import DnftpNotConfigured
+from qactl.dnos.cli.tools import devices, techsupport
 
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("DNCTL_DEVICES", raising=False)
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("QACTL_DEVICES", raising=False)
     techsupport._TS_REGISTRY._jobs.clear()
     techsupport._TS_REGISTRY._active.clear()
     yield
@@ -53,7 +53,7 @@ def test_job_store_rejects_unsafe_job_ids(bad):
 def test_job_store_load_traversal_does_not_read_outside(tmp_path, monkeypatch):
     # Plant a JSON file one level above the cache dir; a traversing id
     # must NOT be able to read it.
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path / "state"))
     job_store.save({"job_id": "dev-x-aaaaaa", "device": "dev", "state": "done"})
     outside = tmp_path / "state" / "cli" / "secret.json"
     outside.parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ def test_device_add_cli_takes_name_and_host():
 
 def test_manage_device_add_keys_by_name_not_system_name(monkeypatch):
     # name= is now the registry key; the chassis System Name is metadata.
-    from qactl.dnctl.core.cli_probe import DeviceProbe
+    from qactl.dnos.core.cli_probe import DeviceProbe
 
     monkeypatch.setattr(
         devices, "probe_device",

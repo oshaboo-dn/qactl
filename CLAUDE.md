@@ -30,7 +30,7 @@ contract; keep it short and follow it.
   `qactl/mcp/` maps groups to their MCP tool surface; `qactl/__main__.py` is the
   dispatcher.
 - **Vendored, delegated — keep liftable**: `cli`/`nc`/`gnmi`/`rc`/`setup` (the
-  `dnctl/` package) and `ixia` (`ixiactl/` + `ixia*/`). Don't refactor their
+  `qactl/` package) and `ixia` (`qactl ixia/` + `ixia*/`). Don't refactor their
   internals to "match" native style; keep changes minimal and isolated. Fixes
   there belong upstream conceptually.
 

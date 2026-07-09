@@ -6,9 +6,9 @@ from unittest import mock
 
 import pytest
 
-from qactl.dnctl.core import confirm
-from qactl.dnctl.core import devices as dn_devices
-from qactl.dnctl.core import output, payload
+from qactl.dnos.core import confirm
+from qactl.dnos.core import devices as dn_devices
+from qactl.dnos.core import output, payload
 
 
 def test_exit_code_mapping():
@@ -64,7 +64,7 @@ def test_confirm_yes_proceeds():
 
 def test_confirm_interactive_prompt_to_stderr(monkeypatch, capsys):
     # On a TTY the prompt goes to stderr and stdout stays clean, matching
-    # the native qactl / ixiactl gates (keyed on stdin+stderr).
+    # the native qactl / qactl.ixia.ctl gates (keyed on stdin+stderr).
     err = mock.Mock(isatty=lambda: True)
     monkeypatch.setattr("sys.stdin", mock.Mock(isatty=lambda: True))
     monkeypatch.setattr("sys.stderr", err)

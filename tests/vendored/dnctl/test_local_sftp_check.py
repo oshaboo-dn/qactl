@@ -11,18 +11,18 @@ from contextlib import closing
 import pytest
 import typer
 
-from qactl.dnctl.core import config, local_sftp, setup_cmd
+from qactl.dnos.core import config, local_sftp, setup_cmd
 
 
 @pytest.fixture
 def cfg_file(tmp_path, monkeypatch):
     p = tmp_path / "config.toml"
-    monkeypatch.setenv("DNCTL_CONFIG", str(p))
+    monkeypatch.setenv("QACTL_CONFIG", str(p))
     # Make sure no developer env leaks into the resolution under test.
     for var in (
-        "DNCTL_LOCAL_SFTP_HOST", "DNCTL_LOCAL_SFTP_USER",
-        "DNCTL_LOCAL_SFTP_VRF", "DNCTL_LOCAL_SFTP_PORT",
-        "DNCTL_LOCAL_SFTP_PASSWORD",
+        "QACTL_LOCAL_SFTP_HOST", "QACTL_LOCAL_SFTP_USER",
+        "QACTL_LOCAL_SFTP_VRF", "QACTL_LOCAL_SFTP_PORT",
+        "QACTL_LOCAL_SFTP_PASSWORD",
         "QACTL_LOCAL_SFTP_HOST", "QACTL_LOCAL_SFTP_USER",
         "QACTL_LOCAL_SFTP_VRF", "QACTL_LOCAL_SFTP_PORT",
         "QACTL_LOCAL_SFTP_PASSWORD",

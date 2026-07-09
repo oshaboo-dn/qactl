@@ -3,7 +3,7 @@
 Folded in from the old ``dnos-mcps`` ``dn_common.request_log`` so the
 merged repo keeps one logger. It is the *only* piece of that shared
 package we re-home here: device registry / credential / dnftp helpers are
-already provided by ``dnctl.core`` (the vendored tool tree the MCP front
+already provided by ``qactl.core`` (the vendored tool tree the MCP front
 reuses), so duplicating them would just create drift.
 
 The CLI front stays unlogged (process-per-invocation, output already on

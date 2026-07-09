@@ -1,4 +1,4 @@
-"""ixiactl — a command-line front-end for an IxNetwork REST API server.
+"""qactl.ixia.ctl — a command-line front-end for an IxNetwork REST API server.
 
 A process-per-invocation CLI that drives IxNetwork session / config /
 topology / protocol / traffic / stats operations. It reuses the same

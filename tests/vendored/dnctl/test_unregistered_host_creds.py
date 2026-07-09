@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from qactl.dnctl.core import config, credentials as creds
+from qactl.dnos.core import config, credentials as creds
 
 
 BOX = "DNAAS-SuperSpine-D04"
@@ -28,14 +28,14 @@ def lab(tmp_path, monkeypatch):
         f'[devices."{BOX}"]\nuser = "boxuser"\npassword = "boxpw"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("DNCTL_CONFIG", str(cfg))
+    monkeypatch.setenv("QACTL_CONFIG", str(cfg))
     for var in VENDOR_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     dev_map = tmp_path / "devices_mgmt0.json"
     dev_map.write_text(json.dumps({
         "devices": {"sa": {"expected_sns": ["10.0.0.9"]}}
     }), encoding="utf-8")
-    monkeypatch.setenv("DNCTL_DEVICES", str(dev_map))
+    monkeypatch.setenv("QACTL_DEVICES", str(dev_map))
     config.load_config.cache_clear()
     yield cfg
     config.load_config.cache_clear()
@@ -117,7 +117,7 @@ def test_explicit_password_passes_through(lab):
 # --- transport layer: --host X (no -d) authenticates with stored creds ----
 
 def test_transport_registry_resolves_host_only(lab, monkeypatch):
-    from qactl.dnctl.cli.core import session
+    from qactl.dnos.cli.core import session
 
     seen = {}
 
@@ -143,14 +143,14 @@ def test_transport_registry_resolves_host_only(lab, monkeypatch):
 
 @pytest.fixture
 def devtools(monkeypatch):
-    from qactl.dnctl.cli.tools import devices as devtools
+    from qactl.dnos.cli.tools import devices as devtools
 
     monkeypatch.setattr(devtools, "log_request", lambda *a, **k: None)
     return devtools
 
 
 def _capture_probe(devtools, monkeypatch):
-    from qactl.dnctl.cli.core.session import ConnectError
+    from qactl.dnos.cli.core.session import ConnectError
 
     seen = {}
 

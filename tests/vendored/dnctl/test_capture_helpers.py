@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from qactl.dnctl.cli.core import capture_helpers as H
+from qactl.dnos.cli.core import capture_helpers as H
 
 
 # --- argument validation ---------------------------------------------------

@@ -38,7 +38,7 @@ Implementation notes shared by every tool here
   multivalues; staying consistent with the build.py path means new
   attributes can be added without re-discovering that landmine.
   See lesson ``2026-05-05-route-toggle-resolved.md`` and the
-  shared :func:`ixia_tools._ngpf_lookup.patch_singlevalue` helper.
+  shared :func:`qactl.ixia.tools._ngpf_lookup.patch_singlevalue` helper.
 - **No silent-bounce on plain create.** Adding a stack under a running
   topology is accepted by IxNetwork — the new sub-stack just stays in
   ``notStarted`` until the parent DG is restarted (or

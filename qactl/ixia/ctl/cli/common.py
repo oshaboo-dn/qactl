@@ -1,10 +1,10 @@
 """Shared CLI plumbing: global options, the confirm gate, arg parsers.
 
-Every ``ixiactl`` subcommand inherits the same global option block via an
+Every ``qactl.ixia.ctl`` subcommand inherits the same global option block via an
 argparse *parent* parser (:func:`global_parent`). argparse attaches those
 options to each leaf subparser, which is exactly what lets the global
 flags appear **after** the subcommand on the command line —
-``ixiactl topo list --host X --json`` — the way the acceptance smoke test
+``qactl.ixia.ctl topo list --host X --json`` — the way the acceptance smoke test
 expects.
 
 The destructive-op confirm gate (:func:`confirm_or_exit`) replaces the
@@ -34,7 +34,7 @@ Handler = Callable[[argparse.Namespace], int]
 def _env_host() -> Optional[str]:
     """Default target host for this client, from ``IXIA_HOST``.
 
-    ``ixiactl`` is a general program, but each install ("client") drives
+    ``qactl.ixia.ctl`` is a general program, but each install ("client") drives
     one user against one API server. Rather than bake a site-specific host
     into the source, the per-client default lives in the environment:
     ``export IXIA_HOST=<your-host>`` makes ``--host`` optional for that

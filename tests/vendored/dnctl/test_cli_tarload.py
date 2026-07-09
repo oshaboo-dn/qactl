@@ -26,9 +26,9 @@ import types
 import pytest
 from typer.testing import CliRunner
 
-from qactl.dnctl.__main__ import app
-from qactl.dnctl.cli.core import job_store
-from qactl.dnctl.cli.tools import tarload
+from qactl.dnos.__main__ import app
+from qactl.dnos.cli.core import job_store
+from qactl.dnos.cli.tools import tarload
 
 runner = CliRunner()
 
@@ -97,7 +97,7 @@ def _fake_run_once(stack_output):
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path))
     # Don't let a stale in-memory job from another test leak across.
     tarload._TARLOAD_REGISTRY._jobs.clear()
     tarload._TARLOAD_REGISTRY._active.clear()
@@ -394,7 +394,7 @@ def _capture_tar_load(monkeypatch):
         return {"status": "ok", "state": "done", "job_id": "dev-907-aaa",
                 "device": device}
 
-    from qactl.dnctl.cli import app as cli_app
+    from qactl.dnos.cli import app as cli_app
     monkeypatch.setattr(cli_app, "request_system_tar_load", _stub)
     return captured
 

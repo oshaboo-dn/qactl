@@ -17,16 +17,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from qactl.dnctl.cli import app as cli_app
-from qactl.dnctl.cli.tools import techsupport
+from qactl.dnos.cli import app as cli_app
+from qactl.dnos.cli.tools import techsupport
 
 pytestmark = []
 
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("DNCTL_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("DNCTL_DEVICES", raising=False)
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("QACTL_DEVICES", raising=False)
     techsupport._TS_REGISTRY._jobs.clear()
     techsupport._TS_REGISTRY._active.clear()
     yield

@@ -1,7 +1,7 @@
 """Config-level tools: list / new / load / save.
 
 The three mutating tools (``new`` / ``load`` / ``save``):
-- take the per-session write lock from ``ixia_core.session.write_lock``,
+- take the per-session write lock from ``qactl.ixia.core.session.write_lock``,
 - require ``confirm=True`` before doing anything (there is no undo).
 
 File paths here are **server-local** paths — the filesystem on the

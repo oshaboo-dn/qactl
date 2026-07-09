@@ -9,15 +9,15 @@ classification / request+transcript logging (which must never leak
 secrets).
 
 ## Files (read all; follow imports)
-- `dnctl/cli/tools/log_read.py`   (get_accounting / get_netconf_accounting / get_system_events)
-- `dnctl/cli/tools/traces.py`     (list_traces / get_trace)
-- `dnctl/cli/core/log_filters.py`
-- `dnctl/cli/app.py`              (Typer dispatch, every command's flags/gates)
-- `dnctl/core/options.py`         (build_ctx / call / finish — the kwarg-filtering glue)
-- `dnctl/cli/core/envelope.py`
-- `dnctl/cli/core/errors.py`      (detect_error patterns — false positives/negatives)
-- `dnctl/cli/core/logging.py`     (request log + per-device transcript)
-- `dnctl/cli/core/redact.py`
+- `qactl/cli/tools/log_read.py`   (get_accounting / get_netconf_accounting / get_system_events)
+- `qactl/cli/tools/traces.py`     (list_traces / get_trace)
+- `qactl/cli/core/log_filters.py`
+- `qactl/cli/app.py`              (Typer dispatch, every command's flags/gates)
+- `qactl/core/options.py`         (build_ctx / call / finish — the kwarg-filtering glue)
+- `qactl/cli/core/envelope.py`
+- `qactl/cli/core/errors.py`      (detect_error patterns — false positives/negatives)
+- `qactl/cli/core/logging.py`     (request log + per-device transcript)
+- `qactl/cli/core/redact.py`
 
 ## Focus questions
 - `errors.detect_error`: do the regexes false-positive on legitimate show

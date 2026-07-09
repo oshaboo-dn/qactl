@@ -9,10 +9,10 @@ both destructive and I/O-heavy. Watch for partial-failure-as-success,
 path traversal in filenames/buckets, SFTP leaks, and `--yes` gating.
 
 ## Files (read all; follow imports)
-- `dnctl/cli/tools/backup.py`        (backup_device / restore_device / list_backups / read_backup)
-- `dnctl/cli/core/backup_store.py`   (filename grammar, local/SFTP storage, verification)
-- `dnctl/cli/core/dnftp.py`
-- relevant bits of `dnctl/cli/app.py` (the `cli backup`/`restore` commands — check `--yes` gates)
+- `qactl/cli/tools/backup.py`        (backup_device / restore_device / list_backups / read_backup)
+- `qactl/cli/core/backup_store.py`   (filename grammar, local/SFTP storage, verification)
+- `qactl/cli/core/dnftp.py`
+- relevant bits of `qactl/cli/app.py` (the `cli backup`/`restore` commands — check `--yes` gates)
 
 ## Focus questions
 - Is `restore_device` (destructive: overwrites running config + commit)

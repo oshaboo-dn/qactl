@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from qactl.dnctl.cli.core.shell_exec import is_read_only_shell
+from qactl.dnos.cli.core.shell_exec import is_read_only_shell
 
 
 @pytest.mark.parametrize(

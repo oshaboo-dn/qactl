@@ -1,7 +1,7 @@
 # qactl `cli` bug hunt — consolidated findings
 
-Six read-only review agents covered the whole `dnctl/cli` package (~14.7k
-lines) plus `dnctl/core/options.py` / `devices.py` / `output.py`.
+Six read-only review agents covered the whole `qactl/cli` package (~14.7k
+lines) plus `qactl/core/options.py` / `devices.py` / `output.py`.
 Deduped and ranked below. Line numbers are from the hunt; re-confirm
 before editing.
 

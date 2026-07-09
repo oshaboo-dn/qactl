@@ -7,8 +7,8 @@ the env-tunable timeout knobs. No real device — a scripted fake channel.
 
 import pytest
 
-from qactl.dnctl.cli.core import session as sess
-from qactl.dnctl.cli.core.session import _env_float, _init_channel
+from qactl.dnos.cli.core import session as sess
+from qactl.dnos.cli.core.session import _env_float, _init_channel
 
 
 PROMPT = "DNAAS-LEAF-B13#"
@@ -64,7 +64,7 @@ class NeverPromptChannel(FakeChannel):
 
 def _fast_env(monkeypatch):
     # Keep per-drain windows tiny so the test loop is quick.
-    monkeypatch.setenv("DNCTL_CLI_BANNER_WAIT", "0.05")
+    monkeypatch.setenv("QACTL_CLI_BANNER_WAIT", "0.05")
 
 
 def _nudge_count(ch):
@@ -86,7 +86,7 @@ def test_prompt_in_initial_banner_needs_no_nudge(monkeypatch):
 
 def test_slow_box_recovered_by_nudges(monkeypatch):
     _fast_env(monkeypatch)
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "15")
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "15")
     ch = FakeChannel(nudges_needed=3)
 
     prompt = _init_channel(ch)
@@ -98,7 +98,7 @@ def test_slow_box_recovered_by_nudges(monkeypatch):
 
 def test_gives_up_after_budget_exhausted(monkeypatch):
     _fast_env(monkeypatch)
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "0.2")
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "0.2")
     ch = NeverPromptChannel(nudges_needed=99)
 
     with pytest.raises(RuntimeError, match="Could not detect CLI prompt"):
@@ -110,7 +110,7 @@ def test_longer_timeout_allows_more_nudges(monkeypatch):
     # once the timeout is widened — proving the knob actually extends the
     # detection window.
     _fast_env(monkeypatch)
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "10")
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "10")
     ch = FakeChannel(nudges_needed=5)
 
     assert _init_channel(ch) == PROMPT
@@ -118,20 +118,20 @@ def test_longer_timeout_allows_more_nudges(monkeypatch):
 
 
 def test_env_float_fallbacks(monkeypatch):
-    monkeypatch.delenv("DNCTL_CLI_PROMPT_TIMEOUT", raising=False)
-    assert _env_float("DNCTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
+    monkeypatch.delenv("QACTL_CLI_PROMPT_TIMEOUT", raising=False)
+    assert _env_float("QACTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
 
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "not-a-number")
-    assert _env_float("DNCTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "not-a-number")
+    assert _env_float("QACTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
 
     # Non-positive values must not let detection give up faster than default.
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "0")
-    assert _env_float("DNCTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "-3")
-    assert _env_float("DNCTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "0")
+    assert _env_float("QACTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "-3")
+    assert _env_float("QACTL_CLI_PROMPT_TIMEOUT", 15.0) == 15.0
 
-    monkeypatch.setenv("DNCTL_CLI_PROMPT_TIMEOUT", "42.5")
-    assert _env_float("DNCTL_CLI_PROMPT_TIMEOUT", 15.0) == 42.5
+    monkeypatch.setenv("QACTL_CLI_PROMPT_TIMEOUT", "42.5")
+    assert _env_float("QACTL_CLI_PROMPT_TIMEOUT", 15.0) == 42.5
 
 
 def test_default_prompt_timeout_constant():

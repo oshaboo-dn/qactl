@@ -1,6 +1,6 @@
 """Unit tests for the on-channel capture drivers (scripted fake channel)."""
 
-from qactl.dnctl.cli.core import capture_driver as D
+from qactl.dnos.cli.core import capture_driver as D
 
 SHELL = "\r\n(dev)root@routing_engine:/[2026-01-01 00:00:00][inband_ns]# "
 DNOS = "DEV#"

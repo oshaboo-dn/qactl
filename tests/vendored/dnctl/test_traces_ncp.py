@@ -8,7 +8,7 @@ listing (ls/find stderr in the transcript) yields status=error.
 
 import pytest
 
-from qactl.dnctl.cli.tools import traces as traces_tool
+from qactl.dnos.cli.tools import traces as traces_tool
 
 
 def _ok(stdout=""):

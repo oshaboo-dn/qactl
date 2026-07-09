@@ -1,4 +1,4 @@
-"""``ixiactl topo ...`` — topology / device-group / stack management.
+"""``qactl.ixia.ctl topo ...`` — topology / device-group / stack management.
 
 list / get / create / delete / start / stop, plus the nested
 ``dg``, ``eth``, ``ipv4``, and ``netgroup`` sub-groups.
