@@ -190,6 +190,10 @@ def stop_on_rejected_statement(step: StepCapture) -> bool:
     return detect_error(step.output)[0]
 
 
+# Routable through the session daemon by name (session_daemon.py).
+stop_on_rejected_statement.daemon_name = "rejected_statement"  # type: ignore[attr-defined]
+
+
 def commit_was_attempted(steps: Sequence[StepCapture]) -> bool:
     """True if the executed sequence reached its commit step.
 

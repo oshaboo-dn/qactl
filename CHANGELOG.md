@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Persistent SSH-session daemon**: `qactl cli session on|off|status|stop`.
+  Every invocation is a fresh process, so back-to-back qactl calls re-auth
+  SSH each time and trip DNOS sshd's connect rate-limit (10/min —
+  `TCP_MAXIMUM_CONNECTION_ATTEMPTS_REACHED`, ~100 connect-retries logged in
+  5 days). When enabled (`qactl cli session on` marker file, or
+  `QACTL_SESSION_DAEMON=1`; `=0` force-disables), the five session ops
+  (`run_once` / `run_sequence` / `run_sequence_pw` / `run_probes` /
+  `run_ncm_cli`) route over a per-user unix socket (0600) to a small
+  auto-spawned daemon that keeps one warm `TransportRegistry` transport per
+  `(device, user)` — one SSH auth per device per session instead of per
+  command, and each call skips TCP+auth+banner (~2 s). Zero-break: daemon
+  unreachable / version-skewed / an unroutable callable arg (unnamed
+  `stop_predicate`, `run_capture` drivers) silently falls back to the
+  direct in-process path; errors cross the wire typed (`ConnectError`
+  transient flag, `UnknownDeviceError`) so envelopes are unchanged. A
+  connection that breaks mid-request maps to a transient `ConnectError`
+  instead of a silent rerun (the command may have executed). Daemon
+  idle-exits after 1 h (`QACTL_SESSION_DAEMON_IDLE`), single-instanced via
+  flock, logs to `<state>/cli/session-daemon.log`.
 - **Packet capture**: `qactl cli capture` — native, agent-safe packet
   capture on DNOS devices, replacing the external `dn_capture.py` script.
   Two modes: `routing` (control-plane — a `timeout`-bounded `tcpdump` in

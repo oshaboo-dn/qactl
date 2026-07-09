@@ -80,6 +80,11 @@ backup_app = typer.Typer(no_args_is_help=True, help="Config backups (create / li
 restart_app = typer.Typer(no_args_is_help=True, help="Restart system / node / container / process.")
 monitor_app = typer.Typer(no_args_is_help=True, help="Event collector (system-events → dedupe → Slack).")
 core_app = typer.Typer(no_args_is_help=True, help="Core dumps (list bundles / extract a backtrace).")
+session_app = typer.Typer(
+    no_args_is_help=True,
+    help="Persistent SSH-session daemon (one warm transport per device across invocations).",
+)
+app.add_typer(session_app, name="session")
 app.add_typer(template_app, name="template")
 app.add_typer(device_app, name="device")
 app.add_typer(ts_app, name="techsupport")
@@ -93,30 +98,66 @@ app.add_typer(core_app, name="core")
 # --- reads / discovery -----------------------------------------------------
 
 
+def _batch_show_args(cmd: List[str]) -> Optional[List[str]]:
+    """Detect the multi-command form of `show` / `show-config`.
+
+    Batch iff there are ≥2 arguments and EVERY argument is itself a full
+    multi-word command starting with `show` (i.e. each was quoted whole:
+    `qactl cli show "show bgp summary" "show route summary"`). Anything
+    else — bare words, a single quoted command, mixed args — keeps the
+    legacy join-the-words behaviour, so no existing call changes meaning.
+    """
+    if len(cmd) < 2:
+        return None
+    stripped = [c.strip() for c in cmd]
+    for c in stripped:
+        tokens = c.split()
+        if len(tokens) < 2 or tokens[0].lower() != "show":
+            return None
+    return stripped
+
+
 @app.command()
 def show(
-    cmd: Annotated[List[str], typer.Argument(help="DNOS show command words.")],
+    cmd: Annotated[List[str], typer.Argument(help=(
+        "DNOS show command words, OR several full quoted 'show …' commands "
+        "— those run in order on ONE SSH session (one login, per-command "
+        "transcript)."
+    ))],
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
     log: O.Log = None,
 ):
-    """Run an operational `show` command."""
+    """Run operational `show` command(s); multiple quoted commands share one session."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    batch = _batch_show_args(cmd)
+    if batch is not None:
+        from qactl.dnos.cli.tools.discovery import show_many
+        O.finish(O.call(show_many, c, commands=batch), c)
+        return
     from qactl.dnos.cli.tools.discovery import show as show_tool
     O.finish(O.call(show_tool, c, command=" ".join(cmd)), c)
 
 
 @app.command("show-config")
 def show_config_cmd(
-    cmd: Annotated[List[str], typer.Argument(help="DNOS `show config` command words.")],
+    cmd: Annotated[List[str], typer.Argument(help=(
+        "DNOS `show config` command words, OR several full quoted "
+        "'show config …' commands — those run in order on ONE SSH session."
+    ))],
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
     no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
     log: O.Log = None,
 ):
-    """Run a configuration `show config` command."""
+    """Run configuration `show config` command(s); multiple quoted commands share one session."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    batch = _batch_show_args(cmd)
+    if batch is not None:
+        from qactl.dnos.cli.tools.discovery import show_config_many
+        O.finish(O.call(show_config_many, c, commands=batch), c)
+        return
     O.finish(O.call(show_config, c, command=" ".join(cmd)), c)
 
 
@@ -972,6 +1013,71 @@ def tar_load_pre_check(
 def device_list(as_json: O.Json = False):
     """List devices known to the registry."""
     O.finish(list_devices(), O.build_ctx(as_json=as_json))
+
+
+# --- session daemon ----------------------------------------------------------
+
+
+@session_app.command("status")
+def session_status(as_json: O.Json = False):
+    """Daemon liveness + the transports it currently holds."""
+    from qactl.dnos.cli.core import session_daemon as sd
+
+    result = {
+        "status": "ok",
+        "enabled": sd.enabled(),
+        "socket": sd.socket_path(),
+        "daemon": None,
+    }
+    try:
+        result["daemon"] = sd.call_daemon("status", spawn=False)
+    except sd.DaemonUnavailable:
+        result["warnings"] = ["daemon not running (spawns on the next routed command)"]
+    O.finish(result, O.build_ctx(as_json=as_json))
+
+
+@session_app.command("on")
+def session_on(as_json: O.Json = False):
+    """Enable daemon routing (marker file; QACTL_SESSION_DAEMON=0 still wins)."""
+    from qactl.dnos.cli.core import session_daemon as sd
+
+    marker = sd.set_enabled(True)
+    O.finish(
+        {"status": "ok", "enabled": True, "marker": marker},
+        O.build_ctx(as_json=as_json),
+    )
+
+
+@session_app.command("off")
+def session_off(as_json: O.Json = False):
+    """Disable daemon routing and stop a running daemon."""
+    from qactl.dnos.cli.core import session_daemon as sd
+
+    marker = sd.set_enabled(False)
+    stopped = False
+    try:
+        sd.call_daemon("shutdown", spawn=False)
+        stopped = True
+    except sd.DaemonUnavailable:
+        pass
+    O.finish(
+        {"status": "ok", "enabled": False, "marker": marker, "daemon_stopped": stopped},
+        O.build_ctx(as_json=as_json),
+    )
+
+
+@session_app.command("stop")
+def session_stop(as_json: O.Json = False):
+    """Stop the daemon (routing stays enabled; it respawns on next use)."""
+    from qactl.dnos.cli.core import session_daemon as sd
+
+    try:
+        sd.call_daemon("shutdown", spawn=False)
+        result = {"status": "ok", "daemon_stopped": True}
+    except sd.DaemonUnavailable:
+        result = {"status": "ok", "daemon_stopped": False,
+                  "warnings": ["daemon was not running"]}
+    O.finish(result, O.build_ctx(as_json=as_json))
 
 
 @device_app.command("add")

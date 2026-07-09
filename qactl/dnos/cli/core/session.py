@@ -760,6 +760,32 @@ def _init_channel(
     return prompt
 
 
+def _maybe_daemon(
+    op: str,
+    kwargs: Dict[str, object],
+    stop_predicate: Optional[Callable] = None,
+) -> Optional["Invocation"]:
+    """Route a ``run_*`` call via the persistent-session daemon when enabled.
+
+    Returns the daemon-executed :class:`Invocation`, or ``None`` when the
+    call should run directly in-process (daemon disabled, unreachable, or
+    the call carries an unroutable callable). ``stop_predicate`` crosses
+    the socket by *name* — only predicates tagged with a ``daemon_name``
+    attribute at their definition site are routable. See
+    :mod:`.session_daemon`.
+    """
+    from qactl.dnos.cli.core import session_daemon as _sd
+
+    if not _sd.enabled():
+        return None
+    if stop_predicate is not None:
+        name = getattr(stop_predicate, "daemon_name", None)
+        if not name:
+            return None
+        kwargs = dict(kwargs, stop_predicate=name)
+    return _sd.try_run_via_daemon(op, kwargs)
+
+
 @dataclass
 class StepCapture:
     """One DNOS command's exchange on a shared channel.
@@ -844,6 +870,16 @@ def run_once(
     """
     if mode not in ("command", "help", "config_help", "shell_exec"):
         raise ValueError(f"invalid mode: {mode!r}")
+    routed = _maybe_daemon(
+        "run_once",
+        dict(
+            device=device, host=host, user=user, password=password,
+            command=command, timeout=timeout, mode=mode,
+            shell_entry=shell_entry,
+        ),
+    )
+    if routed is not None:
+        return routed
     # Resolve creds up front so shell_exec's second password prompt uses
     # the same effective password the transport authenticated with.
     user, password = _creds.resolve_device_credentials(
@@ -990,6 +1026,16 @@ def run_ncm_cli(
     """
     if not ncm_commands:
         raise ValueError("ncm_commands must be non-empty")
+    routed = _maybe_daemon(
+        "run_ncm_cli",
+        dict(
+            device=device, host=host, user=user, password=password,
+            ncm_commands=list(ncm_commands), shell_entry=shell_entry,
+            timeout=timeout, answer=answer,
+        ),
+    )
+    if routed is not None:
+        return routed
     # Same up-front cred resolution as run_once — the NCM shell entry
     # re-prompts for the password the transport authenticated with.
     user, password = _creds.resolve_device_credentials(
@@ -1093,6 +1139,18 @@ def run_sequence(
     """
     if not commands:
         raise ValueError("commands must be non-empty")
+    routed = _maybe_daemon(
+        "run_sequence",
+        dict(
+            device=device, host=host, user=user, password=password,
+            commands=list(commands), timeout=timeout,
+            auto_confirm=auto_confirm, confirm_answer=confirm_answer,
+            prompt_timeout=prompt_timeout, banner_wait=banner_wait,
+        ),
+        stop_predicate=stop_predicate,
+    )
+    if routed is not None:
+        return routed
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):
         transport = registry.get(
@@ -1203,6 +1261,16 @@ def run_probes(
     """
     if not probes:
         raise ValueError("probes must be non-empty")
+    routed = _maybe_daemon(
+        "run_probes",
+        dict(
+            device=device, host=host, user=user, password=password,
+            probes=list(probes), config_mode=config_mode, timeout=timeout,
+            prompt_timeout=prompt_timeout, banner_wait=banner_wait,
+        ),
+    )
+    if routed is not None:
+        return routed
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):
         transport = registry.get(
@@ -1334,6 +1402,18 @@ def run_sequence_pw(
     """
     if not commands:
         raise ValueError("commands must be non-empty")
+    routed = _maybe_daemon(
+        "run_sequence_pw",
+        dict(
+            device=device, host=host, user=user, password=password,
+            commands=list(commands), timeout=timeout,
+            capture_all=capture_all,
+            commit_conflict_answer=commit_conflict_answer,
+        ),
+        stop_predicate=stop_predicate,
+    )
+    if routed is not None:
+        return routed
     last_exc: Optional[Exception] = None
     for attempt in (1, 2):
         transport = registry.get(

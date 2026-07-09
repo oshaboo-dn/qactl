@@ -295,6 +295,18 @@ retry that fires is tallied (JSONL) in
 `~/.local/state/qactl/cli/connect-retries.jsonl` — `outcome` is
 `recovered` (a retry saved the call) or `gave_up` (attempts exhausted).
 
+### Persistent session daemon (opt-in)
+
+`qactl cli session on` enables a small per-user daemon that holds one warm
+SSH transport per `(device, user)` across invocations — one SSH auth per
+device per work session instead of per command, so DNOS sshd's 10-conn/min
+rate-limit never fires and every call skips TCP+auth+banner (~2 s). The
+daemon auto-spawns on the first routed command, idle-exits after 1 h, and
+any failure to reach it falls back silently to the normal direct connect.
+`qactl cli session status` shows the held transports; `stop` kills the
+daemon (it respawns on next use); `off` disables routing.
+`QACTL_SESSION_DAEMON=1|0` overrides the marker per-invocation.
+
 ### Per-device daily journal
 
 Every `qactl cli`/`nc`/`gnmi`/`rc` command keyed to a device also tees its

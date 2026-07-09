@@ -140,6 +140,8 @@ def _run_raw_on_device(
     stop_predicate = None
     if stop_on_error:
         stop_predicate = lambda step: detect_error(step.output)[0]  # noqa: E731
+        # Routable through the session daemon by name (session_daemon.py).
+        stop_predicate.daemon_name = "detect_error"
 
     try:
         result = run_sequence(
