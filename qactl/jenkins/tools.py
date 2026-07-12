@@ -21,6 +21,25 @@ from qactl.core.envelope import error_envelope, ok_envelope
 from qactl.jenkins.client import JenkinsClient, branch_to_job_path
 
 
+def _notify(channel: str, text: str, warnings: list) -> None:
+    """Best-effort Slack post about a build; never raises.
+
+    Uses the shared :mod:`qactl.dnos.cli.core.slack_notify` transport, so
+    a configured webhook (``QACTL_SLACK_WEBHOOK_URL`` — the same one the
+    ``cli monitor`` collector uses) is the preferred path, falling back to
+    the MCP slackbot for a named ``channel``. Delivery failures are appended
+    to ``warnings`` and MUST NOT break the build wait.
+    """
+    try:
+        from qactl.dnos.cli.core import slack_notify
+    except Exception as exc:  # noqa: BLE001 — optional dep must not hard-fail
+        warnings.append(f"slack notify unavailable: {type(exc).__name__}: {exc}")
+        return
+    res = slack_notify.post(channel, text)
+    if not res.get("ok"):
+        warnings.append(f"slack notify failed: {res.get('error')}")
+
+
 CHEETAH_DEFAULT_PARAMS: Dict[str, Any] = {
     "HTML_ADDITIONS": "", "SHOULD_LINT": "Yes", "SHOULD_BUILD_DNOS_CONTAINERS": "Yes",
     "SHOULD_BUILD_TARBALLS": "Yes", "SHOULD_BUILD_BASEOS_CONTAINERS": "No",
@@ -141,8 +160,19 @@ def _drive_trigger(
     client: JenkinsClient, *, kind: str, job_path: str, params: Dict[str, Any],
     result_base: Dict[str, Any], warnings: list, console_ref: str,
     wait: bool, wait_timeout: float, poll: float,
+    notify_slack: Optional[str] = None,
 ) -> dict:
-    """Trigger ``job_path`` and, with wait, poll the build to completion."""
+    """Trigger ``job_path`` and, with wait, poll the build to completion.
+
+    When ``notify_slack`` is not ``None`` (``""`` = webhook/default channel,
+    else a channel name), post a Slack update when the build STARTS and when
+    it reaches a terminal state. Notifying implies ``wait`` — the finish
+    update can only be delivered by the process that polled the build.
+    """
+    label = result_base.get("branch") or result_base.get("job_path") or job_path
+    notify = notify_slack is not None
+    if notify:
+        wait = True  # can't post a finish update without polling to completion
     trig = client.trigger_build(job_path, params)
     result: Dict[str, Any] = {
         **result_base,
@@ -162,19 +192,35 @@ def _drive_trigger(
                               kind=kind, result=result)
     q = client.wait_for_build_number(trig["queue_id"], timeout_s=wait_timeout, poll_s=poll)
     if q.get("status") != "started":
+        if notify:
+            _notify(notify_slack, f":warning: cheetah *{label}* did not start "
+                    f"(queue status={q.get('status')}).", warnings)
         return error_envelope(
             f"Build did not start (queue status={q.get('status')}).",
             kind=kind, status="error" if q.get("status") == "timeout" else "aborted",
             result={**result, "queue": q},
         )
     bnum = q["build_number"]
+    build_url = q.get("build_url") or f"{trig['job_url']}/{bnum}/"
+    if notify:
+        _notify(notify_slack, f":hammer_and_wrench: cheetah *{label}* build "
+                f"#{bnum} started\n{build_url}", warnings)
     b = client.wait_for_build_result(job_path, bnum, timeout_s=wait_timeout, poll_s=poll)
     result.update({"build_number": bnum, "build_url": q.get("build_url"), "build": b})
     if b.get("status") == "timeout":
+        if notify:
+            _notify(notify_slack, f":hourglass_flowing_sand: cheetah *{label}* build "
+                    f"#{bnum} still running after {wait_timeout}s\n{build_url}", warnings)
         return error_envelope(f"Build #{bnum} still running after {wait_timeout}s.",
                               kind=kind, status="error", result=result)
     if b.get("result") == "SUCCESS":
+        if notify:
+            _notify(notify_slack, f":white_check_mark: cheetah *{label}* build "
+                    f"#{bnum} *SUCCESS*\n{build_url}", warnings)
         return ok_envelope(kind=kind, result=result, warnings=warnings)
+    if notify:
+        _notify(notify_slack, f":x: cheetah *{label}* build #{bnum} "
+                f"*{b.get('result')}*\n{build_url}", warnings)
     return error_envelope(f"Build #{bnum} finished with result={b.get('result')}.",
                           kind=kind, result=result,
                           next_actions=[console_ref.format(bnum=bnum)])
@@ -328,6 +374,7 @@ def jenkins_trigger(
     slack_channel: str = "", inherit_from: Optional[str] = None,
     extra_params: Optional[Dict[str, Any]] = None, wait: bool = False,
     wait_timeout: float = 4 * 3600, poll: float = 30.0, timeout: float = 30.0,
+    notify_slack: Optional[str] = None,
     user: Optional[str] = None, token: Optional[str] = None, url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Trigger a cheetah build for a branch (destructive; needs confirm=true)."""
@@ -353,7 +400,7 @@ def jenkins_trigger(
             result_base={"branch": branch, "repo": repo, "org": org},
             warnings=[warning] if warning else [],
             console_ref=f"qactl jenkins console {branch} {{bnum}} --tail 300",
-            wait=wait, wait_timeout=wait_timeout, poll=poll,
+            wait=wait, wait_timeout=wait_timeout, poll=poll, notify_slack=notify_slack,
         )
     return _run("jenkins_trigger", fn, timeout=timeout, user=user, token=token, url=url)
 
@@ -361,7 +408,7 @@ def jenkins_trigger(
 def jenkins_trigger_raw(
     job_path: str, params: Optional[Dict[str, Any]] = None, *, confirm: bool = False,
     wait: bool = False, wait_timeout: float = 4 * 3600, poll: float = 30.0,
-    timeout: float = 30.0, user: Optional[str] = None,
+    timeout: float = 30.0, notify_slack: Optional[str] = None, user: Optional[str] = None,
     token: Optional[str] = None, url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Trigger ANY parameterized job by path with raw params (destructive; needs confirm=true)."""
@@ -378,7 +425,7 @@ def jenkins_trigger_raw(
             c, kind="jenkins_trigger_raw", job_path=job_path, params=params,
             result_base={"job_path": job_path}, warnings=[],
             console_ref="inspect the build URL above for failure details (build #{bnum})",
-            wait=wait, wait_timeout=wait_timeout, poll=poll,
+            wait=wait, wait_timeout=wait_timeout, poll=poll, notify_slack=notify_slack,
         )
     return _run("jenkins_trigger_raw", fn, timeout=timeout, user=user, token=token, url=url)
 

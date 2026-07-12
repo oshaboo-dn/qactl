@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Jenkins Slack build updates**: `qactl jenkins trigger` / `trigger-raw`
+  take `--notify-slack [CHANNEL]`. When set, qactl posts a Slack update when
+  the build STARTS (`#N started`) and when it reaches a terminal state
+  (`SUCCESS` / `FAILURE` / timeout), routed through the shared
+  `slack_notify` transport — the bare flag uses the configured webhook
+  (`QACTL_SLACK_WEBHOOK_URL`, same one the `cli monitor` collector posts to);
+  an explicit `CHANNEL` targets the MCP slackbot fallback. Notifying implies
+  `--wait` (the finish update can only come from the process that polled the
+  build). Delivery failures are best-effort and surface as `warnings`, never
+  breaking the build wait.
 - **Multi-show batching**: `qactl cli show` / `show-config` accept several
   full quoted commands (`qactl cli show -d cl "show bgp summary" "show
   route summary"`) and run them in order on ONE CLI session — one SSH auth

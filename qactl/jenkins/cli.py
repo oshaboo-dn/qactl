@@ -101,7 +101,8 @@ def _trigger(args):
         nightly=args.nightly, qa_version=args.qa_version, slack_channel=args.slack_channel,
         inherit_from=args.inherit_from,
         extra_params=json.loads(args.extra_params) if args.extra_params else None,
-        wait=args.wait, wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
+        wait=args.wait, wait_timeout=args.wait_timeout, poll=args.poll,
+        notify_slack=args.notify_slack, **_creds(args),
     ), as_json=args.json)
 
 
@@ -117,7 +118,8 @@ def _trigger_raw(args):
                                    status="bad_argument"), as_json=args.json)
     return emit(tools.jenkins_trigger_raw(
         args.job_path, params, confirm=True, wait=args.wait,
-        wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
+        wait_timeout=args.wait_timeout, poll=args.poll,
+        notify_slack=args.notify_slack, **_creds(args),
     ), as_json=args.json)
 
 
@@ -183,6 +185,10 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     t.add_argument("--wait", action="store_true", help="block until the build finishes")
     t.add_argument("--wait-timeout", type=float, default=4 * 3600, help="seconds to wait (with --wait)")
     t.add_argument("--poll", type=float, default=30.0, help="poll interval seconds (with --wait)")
+    t.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
+                   help="post a Slack update on build start + finish (implies --wait). "
+                        "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL); "
+                        "give a CHANNEL for the MCP slackbot fallback.")
     t.set_defaults(func=_trigger)
 
     tr = sub.add_parser("trigger-raw", parents=[parent],
@@ -198,6 +204,9 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     tr.add_argument("--wait", action="store_true", help="block until the build finishes")
     tr.add_argument("--wait-timeout", type=float, default=4 * 3600)
     tr.add_argument("--poll", type=float, default=30.0)
+    tr.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
+                    help="post a Slack update on build start + finish (implies --wait). "
+                         "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL).")
     tr.set_defaults(func=_trigger_raw)
 
     i = sub.add_parser("info", parents=[parent], help="details on a build (params, result, causes)")

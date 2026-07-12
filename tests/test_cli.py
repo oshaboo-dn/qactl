@@ -90,6 +90,19 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.job_path, "drivenets/myrepo/main")
         self.assertEqual(args.param, ["FOO=1", "BAR=two"])
 
+    def test_jenkins_notify_slack_default_none(self):
+        args = self.parser.parse_args(["jenkins", "trigger", "feature/foo"])
+        self.assertIsNone(args.notify_slack)
+
+    def test_jenkins_notify_slack_bare_flag(self):
+        args = self.parser.parse_args(["jenkins", "trigger", "feature/foo", "--notify-slack"])
+        self.assertEqual(args.notify_slack, "")  # webhook / default channel
+
+    def test_jenkins_notify_slack_with_channel(self):
+        args = self.parser.parse_args(
+            ["jenkins", "trigger", "feature/foo", "--notify-slack", "#builds"])
+        self.assertEqual(args.notify_slack, "#builds")
+
 
 class ExitCodeTests(unittest.TestCase):
     def test_ok_and_warning_zero(self):
@@ -286,6 +299,63 @@ class _FakeJenkins:
 
     def get_artifact_text(self, build_url, relative_path):
         return self._files[relative_path]
+
+
+class _FakeTriggerJenkins:
+    """Stands in for JenkinsClient across a trigger→wait→result flow."""
+
+    def __init__(self, result="SUCCESS"):
+        self._result = result
+
+    @classmethod
+    def make_from_env(cls, result):
+        def _from_env(*a, **k):
+            return cls(result)
+        return _from_env
+
+    def trigger_build(self, job_path, parameters=None):
+        return {"job_url": "https://j/job/x", "queue_id": 99,
+                "queue_url": "https://j/queue/item/99"}
+
+    def wait_for_build_number(self, queue_id, timeout_s=300.0, poll_s=1.0):
+        return {"status": "started", "build_number": 764, "build_url": "https://j/job/x/764/"}
+
+    def wait_for_build_result(self, job_path, build_number, timeout_s=300.0, poll_s=1.0):
+        return {"status": "done", "result": self._result, "building": False}
+
+
+class JenkinsNotifySlackTests(unittest.TestCase):
+    """notify_slack posts start + terminal updates and implies wait."""
+
+    def _drive(self, result="SUCCESS", notify_slack=""):
+        from qactl.jenkins import tools
+        posts = []
+        with mock.patch.object(tools.JenkinsClient, "from_env",
+                               _FakeTriggerJenkins.make_from_env(result)), \
+             mock.patch.object(tools, "_notify",
+                               lambda ch, text, warn: posts.append((ch, text))):
+            env = tools.jenkins_trigger("feature/foo", confirm=True,
+                                        notify_slack=notify_slack, wait=False)
+        return env, posts
+
+    def test_success_posts_start_and_success(self):
+        env, posts = self._drive(result="SUCCESS")
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["build_number"], 764)
+        self.assertEqual(len(posts), 2)  # start + terminal, wait forced on
+        self.assertIn("started", posts[0][1])
+        self.assertIn("SUCCESS", posts[1][1])
+
+    def test_failure_posts_failure(self):
+        env, posts = self._drive(result="FAILURE")
+        self.assertEqual(env["status"], "error")
+        self.assertIn("FAILURE", posts[1][1])
+
+    def test_no_notify_by_default(self):
+        env, posts = self._drive(notify_slack=None)
+        # notify_slack=None + wait=False → return queued, no posts
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(posts, [])
 
 
 class JenkinsArtifactsTests(unittest.TestCase):
