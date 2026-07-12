@@ -8,15 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - **Jenkins Slack build updates**: `qactl jenkins trigger` / `trigger-raw`
-  take `--notify-slack [CHANNEL]`. When set, qactl posts a Slack update when
-  the build STARTS (`#N started`) and when it reaches a terminal state
-  (`SUCCESS` / `FAILURE` / timeout), routed through the shared
-  `slack_notify` transport — the bare flag uses the configured webhook
-  (`QACTL_SLACK_WEBHOOK_URL`, same one the `cli monitor` collector posts to);
-  an explicit `CHANNEL` targets the MCP slackbot fallback. Notifying implies
-  `--wait` (the finish update can only come from the process that polled the
-  build). Delivery failures are best-effort and surface as `warnings`, never
-  breaking the build wait.
+  take `--notify-slack [CHANNEL]`. qactl posts a Slack update when the build
+  STARTS (`#N started`) and when it reaches a terminal state (`SUCCESS` /
+  `FAILURE` / timeout), routed through the shared `slack_notify` transport —
+  the bare flag uses the configured webhook (`QACTL_SLACK_WEBHOOK_URL`, same
+  one the `cli monitor` collector posts to); an explicit `CHANNEL` targets the
+  MCP slackbot fallback. Without `--wait` the command **returns immediately
+  and hands off to a detached background watcher** (a re-invoked
+  `qactl jenkins watch --queue-id …`), so your terminal isn't blocked for the
+  whole build; add `--wait` to notify inline instead. Delivery failures are
+  best-effort `warnings`, never breaking the build.
+- **`qactl jenkins watch <branch>`**: attach to an already-triggered build by
+  `--build-number` (running) or `--queue-id` (still queued) and poll it to a
+  terminal state, with the same `--notify-slack` option. Read-only — never
+  triggers a build. Backs the detached watcher above and is usable standalone
+  to monitor a build someone else kicked off.
 - **Multi-show batching**: `qactl cli show` / `show-config` accept several
   full quoted commands (`qactl cli show -d cl "show bgp summary" "show
   route summary"`) and run them in order on ONE CLI session — one SSH auth

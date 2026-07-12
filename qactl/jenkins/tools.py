@@ -156,57 +156,47 @@ def _run(
         return error_envelope(f"{kind} failed: {e}", kind=kind)
 
 
-def _drive_trigger(
-    client: JenkinsClient, *, kind: str, job_path: str, params: Dict[str, Any],
-    result_base: Dict[str, Any], warnings: list, console_ref: str,
-    wait: bool, wait_timeout: float, poll: float,
-    notify_slack: Optional[str] = None,
+def _watch_build(
+    client: JenkinsClient, *, kind: str, job_path: str, result: Dict[str, Any],
+    warnings: list, console_ref: str, label: str,
+    queue_id: Optional[int], build_number: Optional[int],
+    wait_timeout: float, poll: float, notify_slack: Optional[str],
 ) -> dict:
-    """Trigger ``job_path`` and, with wait, poll the build to completion.
+    """Poll a queued/running build to a terminal state, notifying Slack.
 
-    When ``notify_slack`` is not ``None`` (``""`` = webhook/default channel,
-    else a channel name), post a Slack update when the build STARTS and when
-    it reaches a terminal state. Notifying implies ``wait`` — the finish
-    update can only be delivered by the process that polled the build.
+    Shared by :func:`_drive_trigger` (wait path) and :func:`jenkins_watch`
+    (attach to an already-triggered build). When ``notify_slack`` is not
+    ``None`` (``""`` = webhook/default channel, else a channel name), posts a
+    Slack update when the build STARTS (only if we resolve it from the queue)
+    and when it reaches a terminal state.
     """
-    label = result_base.get("branch") or result_base.get("job_path") or job_path
     notify = notify_slack is not None
-    if notify:
-        wait = True  # can't post a finish update without polling to completion
-    trig = client.trigger_build(job_path, params)
-    result: Dict[str, Any] = {
-        **result_base,
-        "job_url": trig["job_url"], "queue_id": trig["queue_id"],
-        "queue_url": trig["queue_url"], "parameters": params,
-    }
-    if not wait:
-        return ok_envelope(
-            kind=kind, result=result, warnings=warnings,
-            next_actions=[
-                f"Build queued (queue_id={trig['queue_id']}). Poll it with "
-                f"jenkins_info / jenkins_list or re-run with wait=true."
-            ],
-        )
-    if trig["queue_id"] is None:
-        return error_envelope("Triggered but Jenkins returned no queue id to wait on.",
-                              kind=kind, result=result)
-    q = client.wait_for_build_number(trig["queue_id"], timeout_s=wait_timeout, poll_s=poll)
-    if q.get("status") != "started":
+    job_url = result.get("job_url") or client._job_url(job_path)
+    if build_number is None:
+        if queue_id is None:
+            return error_envelope("Nothing to watch: no build_number or queue_id.",
+                                  kind=kind, result=result)
+        q = client.wait_for_build_number(queue_id, timeout_s=wait_timeout, poll_s=poll)
+        if q.get("status") != "started":
+            if notify:
+                _notify(notify_slack, f":warning: cheetah *{label}* did not start "
+                        f"(queue status={q.get('status')}).", warnings)
+            return error_envelope(
+                f"Build did not start (queue status={q.get('status')}).",
+                kind=kind, status="error" if q.get("status") == "timeout" else "aborted",
+                result={**result, "queue": q},
+            )
+        bnum = q["build_number"]
+        build_url = q.get("build_url") or f"{job_url}/{bnum}/"
         if notify:
-            _notify(notify_slack, f":warning: cheetah *{label}* did not start "
-                    f"(queue status={q.get('status')}).", warnings)
-        return error_envelope(
-            f"Build did not start (queue status={q.get('status')}).",
-            kind=kind, status="error" if q.get("status") == "timeout" else "aborted",
-            result={**result, "queue": q},
-        )
-    bnum = q["build_number"]
-    build_url = q.get("build_url") or f"{trig['job_url']}/{bnum}/"
-    if notify:
-        _notify(notify_slack, f":hammer_and_wrench: cheetah *{label}* build "
-                f"#{bnum} started\n{build_url}", warnings)
+            _notify(notify_slack, f":hammer_and_wrench: cheetah *{label}* build "
+                    f"#{bnum} started\n{build_url}", warnings)
+    else:
+        bnum = build_number
+        build_url = f"{job_url}/{bnum}/"
     b = client.wait_for_build_result(job_path, bnum, timeout_s=wait_timeout, poll_s=poll)
-    result.update({"build_number": bnum, "build_url": q.get("build_url"), "build": b})
+    build_url = b.get("url") or build_url
+    result.update({"build_number": bnum, "build_url": build_url, "build": b})
     if b.get("status") == "timeout":
         if notify:
             _notify(notify_slack, f":hourglass_flowing_sand: cheetah *{label}* build "
@@ -224,6 +214,43 @@ def _drive_trigger(
     return error_envelope(f"Build #{bnum} finished with result={b.get('result')}.",
                           kind=kind, result=result,
                           next_actions=[console_ref.format(bnum=bnum)])
+
+
+def _drive_trigger(
+    client: JenkinsClient, *, kind: str, job_path: str, params: Dict[str, Any],
+    result_base: Dict[str, Any], warnings: list, console_ref: str,
+    wait: bool, wait_timeout: float, poll: float,
+    notify_slack: Optional[str] = None,
+) -> dict:
+    """Trigger ``job_path``; with ``wait`` poll to completion (notifying Slack).
+
+    ``notify_slack`` is honoured only on the ``wait`` path (inline). CLI
+    detaches a background :func:`jenkins_watch` instead of blocking — see
+    ``qactl jenkins trigger --notify-slack``.
+    """
+    label = result_base.get("branch") or result_base.get("job_path") or job_path
+    trig = client.trigger_build(job_path, params)
+    result: Dict[str, Any] = {
+        **result_base,
+        "job_url": trig["job_url"], "queue_id": trig["queue_id"],
+        "queue_url": trig["queue_url"], "parameters": params,
+    }
+    if not wait:
+        return ok_envelope(
+            kind=kind, result=result, warnings=warnings,
+            next_actions=[
+                f"Build queued (queue_id={trig['queue_id']}). Poll it with "
+                f"jenkins_info / jenkins_list or re-run with wait=true."
+            ],
+        )
+    if trig["queue_id"] is None:
+        return error_envelope("Triggered but Jenkins returned no queue id to wait on.",
+                              kind=kind, result=result)
+    return _watch_build(
+        client, kind=kind, job_path=job_path, result=result, warnings=warnings,
+        console_ref=console_ref, label=label, queue_id=trig["queue_id"],
+        build_number=None, wait_timeout=wait_timeout, poll=poll, notify_slack=notify_slack,
+    )
 
 
 # ---- read tools ----------------------------------------------------------
@@ -360,6 +387,36 @@ def jenkins_artifacts(
                            warnings=warnings, next_actions=next_actions)
 
     return _run("jenkins_artifacts", fn, timeout=timeout, user=user, token=token, url=url)
+
+
+def jenkins_watch(
+    branch: Optional[str] = None, *, build_number: Optional[int] = None,
+    queue_id: Optional[int] = None, job_path: Optional[str] = None,
+    repo: str = "cheetah", org: str = "drivenets", notify_slack: Optional[str] = None,
+    wait_timeout: float = 4 * 3600, poll: float = 30.0, timeout: float = 30.0,
+    user: Optional[str] = None, token: Optional[str] = None, url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Watch an already-triggered build to a terminal state (optionally Slack-notify).
+
+    Attach by ``build_number`` (a running build) or ``queue_id`` (still
+    queued — resolves to a number, then posts a 'started' update). Read-only:
+    it never triggers. This is the entry point a detached
+    ``trigger --notify-slack`` re-invokes in the background.
+    """
+    jp = job_path or branch_to_job_path(branch, repo=repo, org=org)
+    label = branch or job_path or jp
+
+    def fn(c: JenkinsClient) -> dict:
+        result: Dict[str, Any] = {
+            "branch": branch, "repo": repo, "org": org, "job_url": c._job_url(jp),
+        }
+        return _watch_build(
+            c, kind="jenkins_watch", job_path=jp, result=result, warnings=[],
+            console_ref=f"qactl jenkins console {label} {{bnum}} --tail 300",
+            label=label, queue_id=queue_id, build_number=build_number,
+            wait_timeout=wait_timeout, poll=poll, notify_slack=notify_slack,
+        )
+    return _run("jenkins_watch", fn, timeout=timeout, user=user, token=token, url=url)
 
 
 # ---- write / destructive tools -------------------------------------------

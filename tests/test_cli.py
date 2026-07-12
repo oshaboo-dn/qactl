@@ -103,6 +103,18 @@ class ParserTests(unittest.TestCase):
             ["jenkins", "trigger", "feature/foo", "--notify-slack", "#builds"])
         self.assertEqual(args.notify_slack, "#builds")
 
+    def test_jenkins_watch_by_queue_id(self):
+        args = self.parser.parse_args(
+            ["jenkins", "watch", "feature/foo", "--queue-id", "99", "--notify-slack"])
+        self.assertEqual(args.queue_id, 99)
+        self.assertIsNone(args.build_number)
+        self.assertEqual(args.notify_slack, "")
+
+    def test_jenkins_watch_build_and_queue_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(
+                ["jenkins", "watch", "feature/foo", "--queue-id", "9", "--build-number", "7"])
+
 
 class ExitCodeTests(unittest.TestCase):
     def test_ok_and_warning_zero(self):
@@ -313,6 +325,9 @@ class _FakeTriggerJenkins:
             return cls(result)
         return _from_env
 
+    def _job_url(self, job_path):
+        return "https://j/job/x"
+
     def trigger_build(self, job_path, parameters=None):
         return {"job_url": "https://j/job/x", "queue_id": 99,
                 "queue_url": "https://j/queue/item/99"}
@@ -325,9 +340,9 @@ class _FakeTriggerJenkins:
 
 
 class JenkinsNotifySlackTests(unittest.TestCase):
-    """notify_slack posts start + terminal updates and implies wait."""
+    """notify_slack posts start + terminal updates on the inline --wait path."""
 
-    def _drive(self, result="SUCCESS", notify_slack=""):
+    def _drive(self, result="SUCCESS", notify_slack="", wait=True):
         from qactl.jenkins import tools
         posts = []
         with mock.patch.object(tools.JenkinsClient, "from_env",
@@ -335,27 +350,118 @@ class JenkinsNotifySlackTests(unittest.TestCase):
              mock.patch.object(tools, "_notify",
                                lambda ch, text, warn: posts.append((ch, text))):
             env = tools.jenkins_trigger("feature/foo", confirm=True,
-                                        notify_slack=notify_slack, wait=False)
+                                        notify_slack=notify_slack, wait=wait)
         return env, posts
 
     def test_success_posts_start_and_success(self):
-        env, posts = self._drive(result="SUCCESS")
+        env, posts = self._drive(result="SUCCESS", wait=True)
         self.assertEqual(env["status"], "ok")
         self.assertEqual(env["result"]["build_number"], 764)
-        self.assertEqual(len(posts), 2)  # start + terminal, wait forced on
+        self.assertEqual(len(posts), 2)  # start + terminal
         self.assertIn("started", posts[0][1])
         self.assertIn("SUCCESS", posts[1][1])
 
     def test_failure_posts_failure(self):
-        env, posts = self._drive(result="FAILURE")
+        env, posts = self._drive(result="FAILURE", wait=True)
         self.assertEqual(env["status"], "error")
         self.assertIn("FAILURE", posts[1][1])
 
-    def test_no_notify_by_default(self):
-        env, posts = self._drive(notify_slack=None)
-        # notify_slack=None + wait=False → return queued, no posts
+    def test_no_wait_no_inline_notify(self):
+        # wait=False at the tool layer just returns queued; the CLI arranges
+        # a detached watcher, so the tool itself posts nothing.
+        env, posts = self._drive(notify_slack="", wait=False)
         self.assertEqual(env["status"], "ok")
         self.assertEqual(posts, [])
+
+
+class JenkinsWatchTests(unittest.TestCase):
+    """jenkins_watch attaches to an existing build without re-triggering."""
+
+    def _watch(self, result="SUCCESS", **kw):
+        from qactl.jenkins import tools
+        posts = []
+        with mock.patch.object(tools.JenkinsClient, "from_env",
+                               _FakeTriggerJenkins.make_from_env(result)), \
+             mock.patch.object(tools, "_notify",
+                               lambda ch, text, warn: posts.append((ch, text))):
+            env = tools.jenkins_watch("feature/foo", notify_slack="", **kw)
+        return env, posts
+
+    def test_watch_by_queue_id_posts_start_and_finish(self):
+        env, posts = self._watch(queue_id=99)
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(len(posts), 2)
+        self.assertIn("started", posts[0][1])
+
+    def test_watch_by_build_number_posts_finish_only(self):
+        env, posts = self._watch(build_number=764)
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(len(posts), 1)  # already running → no 'started'
+        self.assertIn("SUCCESS", posts[0][1])
+
+    def test_watch_never_triggers(self):
+        from qactl.jenkins import tools
+        fake = _FakeTriggerJenkins("SUCCESS")
+        fake.trigger_build = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("watch must not trigger a build"))
+        with mock.patch.object(tools.JenkinsClient, "from_env", lambda *a, **k: fake), \
+             mock.patch.object(tools, "_notify", lambda *a, **k: None):
+            env = tools.jenkins_watch("feature/foo", build_number=764)
+        self.assertEqual(env["status"], "ok")
+
+
+class JenkinsTriggerDetachTests(unittest.TestCase):
+    """`trigger --notify-slack` (no --wait) detaches a watcher, returns now."""
+
+    def _args(self, **over):
+        import types
+        base = dict(
+            branch="feature/foo", repo="cheetah", org="drivenets", json=False,
+            sanitizer=False, baseos=False, no_lint=False, no_dnos=False,
+            no_tarballs=False, no_smoke=False, delta_build=False, single_test="",
+            single_test_label="test-tiny", single_test_parallel=1, single_test_loop=1,
+            keep_setup_on_failure=False, nightly=False, qa_version=False,
+            slack_channel="", inherit_from=None, extra_params=None, wait=False,
+            wait_timeout=100.0, poll=5.0, notify_slack="", yes=True, timeout=30.0,
+            user=None, token=None, url=None,
+        )
+        base.update(over)
+        return types.SimpleNamespace(**base)
+
+    def test_detaches_and_passes_notify_none_to_tool(self):
+        from qactl.jenkins import cli
+        queued = {"status": "ok", "kind": "jenkins_trigger",
+                  "result": {"queue_id": 99}, "next_actions": []}
+        captured = {}
+
+        def fake_trigger(branch, **kw):
+            captured.update(kw)
+            return queued
+
+        with mock.patch.object(cli.tools, "jenkins_trigger", fake_trigger), \
+             mock.patch.object(cli, "_spawn_detached_watch", return_value=True) as spawn, \
+             mock.patch.object(cli, "emit", lambda env, as_json=False: env) as _e:
+            env = cli._trigger(self._args())
+        # tool got notify_slack=None (detach owns the notifying), and we spawned
+        self.assertIsNone(captured["notify_slack"])
+        spawn.assert_called_once()
+        self.assertTrue(any("background" in n for n in env["next_actions"]))
+
+    def test_wait_path_notifies_inline_no_spawn(self):
+        from qactl.jenkins import cli
+        done = {"status": "ok", "kind": "jenkins_trigger", "result": {"build_number": 7}}
+        captured = {}
+
+        def fake_trigger(branch, **kw):
+            captured.update(kw)
+            return done
+
+        with mock.patch.object(cli.tools, "jenkins_trigger", fake_trigger), \
+             mock.patch.object(cli, "_spawn_detached_watch") as spawn, \
+             mock.patch.object(cli, "emit", lambda env, as_json=False: env):
+            cli._trigger(self._args(wait=True))
+        self.assertEqual(captured["notify_slack"], "")  # inline notify
+        spawn.assert_not_called()
 
 
 class JenkinsArtifactsTests(unittest.TestCase):

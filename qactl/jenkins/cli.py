@@ -86,12 +86,43 @@ def _artifacts(args):
                                         org=args.org, **_creds(args)), as_json=args.json)
 
 
+def _spawn_detached_watch(args, env: dict) -> Optional[int]:
+    """Fire a detached ``qactl jenkins watch --queue-id …`` for a queued build.
+
+    Returns the child PID (or ``None`` if we couldn't spawn). The child
+    survives this process, polls the build, and posts Slack start+finish.
+    """
+    import os
+    import subprocess
+    import sys
+
+    qid = env.get("result", {}).get("queue_id")
+    if qid is None:
+        return None
+    argv = [sys.executable, "-m", "qactl", "jenkins", "watch", args.branch,
+            "--queue-id", str(qid), "--notify-slack", args.notify_slack,
+            "--repo", args.repo, "--org", args.org,
+            "--poll", str(args.poll), "--wait-timeout", str(args.wait_timeout)]
+    try:
+        subprocess.Popen(  # noqa: S603 — fixed argv, no shell
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+        return True
+    except Exception:  # noqa: BLE001 — detach is best-effort
+        return None
+
+
 def _trigger(args):
     rc = confirm_or_exit(args, kind="jenkins_trigger",
                          action=f"Trigger a {args.repo} build on branch {args.branch!r}.")
     if rc is not None:
         return rc
-    return emit(tools.jenkins_trigger(
+    # notify + no --wait → trigger, then hand off to a DETACHED watcher so the
+    # command returns immediately while Slack still gets start+finish. With
+    # --wait we notify inline (blocking), the classic behavior.
+    detach = args.notify_slack is not None and not args.wait
+    env = tools.jenkins_trigger(
         args.branch, confirm=True, repo=args.repo, org=args.org,
         sanitizer=args.sanitizer, baseos=args.baseos, no_lint=args.no_lint,
         no_dnos=args.no_dnos, no_tarballs=args.no_tarballs, no_smoke=args.no_smoke,
@@ -102,7 +133,23 @@ def _trigger(args):
         inherit_from=args.inherit_from,
         extra_params=json.loads(args.extra_params) if args.extra_params else None,
         wait=args.wait, wait_timeout=args.wait_timeout, poll=args.poll,
-        notify_slack=args.notify_slack, **_creds(args),
+        notify_slack=None if detach else args.notify_slack, **_creds(args),
+    )
+    if detach and env.get("status") in ("ok", "warning"):
+        spawned = _spawn_detached_watch(args, env)
+        note = ("Watching in background; Slack will get build start + finish."
+                if spawned else "WARNING: could not spawn background watcher — no Slack updates.")
+        env.setdefault("next_actions", []).insert(0, note)
+        if not spawned:
+            env.setdefault("warnings", []).append(note)
+    return emit(env, as_json=args.json)
+
+
+def _watch(args):
+    return emit(tools.jenkins_watch(
+        args.branch, build_number=args.build_number, queue_id=args.queue_id,
+        repo=args.repo, org=args.org, notify_slack=args.notify_slack,
+        wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
     ), as_json=args.json)
 
 
@@ -208,6 +255,22 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
                     help="post a Slack update on build start + finish (implies --wait). "
                          "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL).")
     tr.set_defaults(func=_trigger_raw)
+
+    w = sub.add_parser("watch", parents=[parent],
+                       help="watch an already-triggered build to completion (--notify-slack to post)")
+    _add_common(w)
+    w.add_argument("branch")
+    grp_w = w.add_mutually_exclusive_group()
+    grp_w.add_argument("--build-number", type=int, default=None,
+                       help="attach to this running build number")
+    grp_w.add_argument("--queue-id", type=int, default=None,
+                       help="attach to a still-queued item (resolves to a build number)")
+    w.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
+                   help="post a Slack update on start (queued only) + finish. "
+                        "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL).")
+    w.add_argument("--wait-timeout", type=float, default=4 * 3600)
+    w.add_argument("--poll", type=float, default=30.0)
+    w.set_defaults(func=_watch)
 
     i = sub.add_parser("info", parents=[parent], help="details on a build (params, result, causes)")
     _add_common(i)
