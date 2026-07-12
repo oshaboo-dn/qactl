@@ -557,26 +557,51 @@ def test_detach_kickoff_returns_immediately(monkeypatch):
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
-def test_detach_real_fork_runs_load_to_done(monkeypatch):
-    _mock_kickoff_network(monkeypatch)
-    monkeypatch.setattr(tarload, "run_sequence", _clean_sequence())
+def test_detach_real_fork_runs_load_to_done(tmp_path):
+    # Drive the real ``os.fork()`` from a fresh single-threaded subprocess
+    # (``_fork_detach_runner``) — exactly what the one-shot CLI front does in
+    # production — instead of forking out of the thread-laden pytest process.
+    # This exercises the true cross-process contract end-to-end: the detached
+    # worker persists the job envelope under the shared QACTL_STATE_DIR and
+    # this process reads it back like a later ``tar-load show`` would.
+    #
+    # This test previously flaked (``state == 'error'`` in the full suite):
+    # the kickoff parent and the forked worker both write the same job_store
+    # file, and a fast (mock) worker could reach ``done`` before the parent
+    # wrote its ``loading`` snapshot, so the parent clobbered ``done`` back to
+    # ``loading`` — which the disk-fallback reader then orphan-flagged as
+    # ``error``. Fixed at the source by the fork handshake in
+    # ``_spawn_detached_worker`` (parent persists before releasing the child).
+    import subprocess
+    import sys
 
-    env = tarload.request_system_tar_load(
-        jenkins_url=_VALID_URL, device="dev", confirm=True,
-        detach=True, pre_check=False, notify_slack="",
+    runner = os.path.join(os.path.dirname(__file__), "_fork_detach_runner.py")
+    child_env = dict(os.environ)
+    # Same dir the autouse _isolated_state fixture pointed QACTL_STATE_DIR at
+    # (tmp_path is one-per-test), so the persisted envelope lands where this
+    # process's get_tar_load_job disk fallback looks.
+    child_env["QACTL_STATE_DIR"] = str(tmp_path)
+    child_env["QACTL_SESSION_DAEMON"] = "0"
+
+    proc = subprocess.run(
+        [sys.executable, runner, _VALID_URL, "dev"],
+        env=child_env, capture_output=True, text=True, timeout=60,
     )
-    assert env["state"] == "loading"
-    pid = env["worker_pid"]
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+
+    # Successful kickoff exits 0 under the CLI contract; the job itself is
+    # still loading and the detached worker ran to a clean exit.
+    assert result["kickoff_state"] == "loading"
+    pid = result["worker_pid"]
     assert isinstance(pid, int) and pid > 0
+    assert result["child_exit"] == 0
 
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
-
-    # Simulate a fresh process for `show`: the in-memory registry is
-    # stale in the kickoff process (the child owned the job).
-    tarload._TARLOAD_REGISTRY._jobs.clear()
-    tarload._TARLOAD_REGISTRY._active.clear()
-    got = tarload.get_tar_load_job(job_id=env["job_id"])
+    # This process never saw the job (it ran entirely in the subprocess), so
+    # the in-memory registry misses and get_tar_load_job resolves purely from
+    # the on-disk cache the detached worker persisted — the real cross-process
+    # `tar-load show` path.
+    got = tarload.get_tar_load_job(job_id=result["job_id"])
     assert got["state"] == "done"
     assert got["status"] == "ok"
     statuses = {s["command"]: s["status"] for s in got["steps"]}

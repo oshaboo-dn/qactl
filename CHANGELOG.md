@@ -145,6 +145,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   env name remains anywhere in the tree.
 
 ### Fixed
+- **`tar-load --no-wait` detached-worker state clobber**: the detached
+  (`detach=True`) kickoff and its forked worker both persist the same
+  `job_store` job file, with no ordering between them. The parent wrote its
+  `loading` snapshot *after* forking, so if the worker reached a terminal
+  state before the parent got there, the parent's stale `loading` write
+  clobbered it — and a later `tar-load show` (disk fallback) then saw
+  `loading` + a dead worker pid and orphan-flagged the job as `error`. Fixed
+  with a fork handshake in `_spawn_detached_worker`: the parent persists the
+  pre-worker snapshot and only then (via a pipe EOF) releases the child, so
+  every worker write lands strictly after the parent's and can never be
+  regressed. Surfaced as the intermittent `test_detach_real_fork_runs_load_to_done`
+  full-suite failure; that test now also drives the real fork from a fresh
+  single-threaded subprocess (`_fork_detach_runner.py`), mirroring the
+  one-shot CLI front, and reads the envelope back over the cross-process
+  disk path. Test assertions are unchanged.
 - `cli capture --filter`: the local BPF re-write now stages through a `/tmp`
   tempdir instead of running `tcpdump -r/-w` directly on the pcap in the
   `~/.local/state/qactl/captures/…` dir. The stock Ubuntu `tcpdump` AppArmor

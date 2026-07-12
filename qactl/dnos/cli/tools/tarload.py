@@ -544,10 +544,35 @@ def _spawn_detached_worker(
     with it (issue #76). Device-side commands stay strictly serial —
     this only detaches the LOCAL driver.
     """
+    # Fork handshake: parent and child both persist this job's envelope to
+    # the SAME ``job_store`` file, so their writes must be ordered or the
+    # parent's ``loading`` snapshot can clobber a terminal state the child
+    # already wrote (a fast worker can reach ``done`` before the parent runs
+    # its snapshot save, regressing the persisted state to ``loading`` —
+    # which a later reader then orphan-flags as ``error``). The child blocks
+    # on this pipe until the parent has persisted the snapshot and closed the
+    # write end, guaranteeing every child write lands strictly AFTER the
+    # parent's.
+    r, w = os.pipe()
     pid = os.fork()
     if pid > 0:
+        # --- parent: persist the pre-worker snapshot, THEN release child ---
+        os.close(r)
+        job.worker_pid = pid
+        job_store.save(_tarload_job_envelope(job))
+        os.close(w)  # EOF wakes the child
         return pid
     # --- child: never returns ------------------------------------------
+    os.close(w)
+    try:
+        os.read(r, 1)  # blocks until the parent closes w (EOF)
+    except OSError:
+        pass  # fail-open: a broken pipe must never wedge the load
+    finally:
+        try:
+            os.close(r)
+        except OSError:
+            pass
     exit_code = 0
     try:
         os.setsid()
@@ -1288,8 +1313,10 @@ def request_system_tar_load(
     # persists this pre-worker snapshot first so a `tar-load show`
     # racing the child's first save still resolves the job_id.
     if detach:
+        # _spawn_detached_worker sets job.worker_pid and persists the
+        # pre-worker snapshot itself (before releasing the child), so the
+        # child's progress writes can't be clobbered — no extra save here.
         job.worker_pid = _spawn_detached_worker(job, password, list(commands))
-        job_store.save(_tarload_job_envelope(job))
         envelope = _tarload_job_envelope(job)
         # The kickoff itself succeeded — exit 0 under the CLI contract.
         # The job's own progress lives in state/steps via `show`.
