@@ -7,6 +7,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl orc` — build/load/pre-check orchestrator**: a new native group that
+  chains the existing single-purpose surfaces into one pollable job, with the
+  tar-load and the pre-check run as two distinct, ordered phases.
+  - `qactl orc load <build-url> -d <dev>` — tar-load an existing build (with
+    `pre_check=False`), then run the pre-upgrade pre-check. Blocking by default
+    (the load+pre-check is minutes); `--no-wait` detaches it.
+  - `qactl orc build <branch> -d <dev>` — trigger a cheetah Jenkins build, wait
+    for it (`jenkins trigger --wait`), then load its tarballs + pre-check.
+    **Detached by default** (a build can run hours): forks a session-detached
+    worker and returns a job handle immediately, so an agent shell timeout can't
+    take the run down. `--wait` blocks the whole flow inline instead. Common
+    build knobs pass through (`--sanitizer`, `--baseos`, `--no-smoke`,
+    `--nightly`, `--inherit-from`, `--single-test`, `--extra-params`,
+    `--wait-timeout`, `--poll`).
+  - `qactl orc show [job_id] [-d <dev>]` — poll a running/finished orc job. The
+    driver persists a combined envelope (with per-phase sub-envelopes) to the
+    job store after every phase transition, under its own `orc-jobs` namespace;
+    a `running` job whose worker process is gone is reported as `error` (died
+    mid-flight) rather than `running` forever.
+  - Both loading flows are DESTRUCTIVE (`--yes` required). Device work stays
+    inside the tar-load / pre-check tools, so their SSH handling, per-device
+    guard, GI-detection and evidence journaling carry over unchanged.
 - **Per-device custom SSH port**: `qactl cli device add <name> --host <ip>
   --port <N>` stores a `port` on the registry entry, and the transport opener
   uses it (`paramiko connect(port=…)`, previously hardcoded to 22). Lets several
