@@ -118,6 +118,44 @@ def load(job_id: str, subdir: str = _SUBDIR) -> Optional[Dict[str, Any]]:
         return None
 
 
+# The async-job namespaces that hold pollable job envelopes, mapped to the
+# short family label ``qactl jobs`` groups them under. Kept here (next to the
+# store) so the cross-family lister has one authoritative list to walk.
+JOB_FAMILIES: Dict[str, str] = {
+    "tarload-jobs": "tarload",
+    "techsupport-jobs": "techsupport",
+    "orc-jobs": "orc",
+}
+
+
+def list_jobs(subdir: str = _SUBDIR) -> List[tuple]:
+    """Every persisted envelope in ``subdir``, newest-first.
+
+    Returns ``[(mtime, envelope), ...]`` sorted by file mtime descending
+    (mtime tracks the last :func:`save`, i.e. the last state change).
+    Best-effort — unreadable / malformed files are skipped, never raised.
+    """
+    directory = _dir(subdir)
+    out: List[tuple] = []
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        p = os.path.join(directory, name)
+        try:
+            mtime = os.path.getmtime(p)
+            with open(p, encoding="utf-8") as f:
+                env = json.load(f)
+        except (OSError, ValueError):
+            continue
+        out.append((mtime, env))
+    out.sort(key=lambda t: t[0], reverse=True)
+    return out
+
+
 def latest_for_device(device_key: str, subdir: str = _SUBDIR) -> Optional[Dict[str, Any]]:
     """Return the most recent persisted envelope for ``device_key``.
 
@@ -150,4 +188,6 @@ def latest_for_device(device_key: str, subdir: str = _SUBDIR) -> Optional[Dict[s
     return best
 
 
-__all__: List[str] = ["save", "load", "latest_for_device"]
+__all__: List[str] = [
+    "save", "load", "latest_for_device", "list_jobs", "JOB_FAMILIES",
+]

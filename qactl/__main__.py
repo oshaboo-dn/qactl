@@ -27,10 +27,11 @@ from qactl.arista import cli as arista_cli
 from qactl.confluence import cli as confluence_cli
 from qactl.jenkins import cli as jenkins_cli
 from qactl.jira import cli as jira_cli
+from qactl.jobs import cli as jobs_cli
 from qactl.orc import cli as orc_cli
 
 
-NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "orc"}
+NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "orc", "jobs"}
 QACTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
 MCP_GROUP = "mcp"
@@ -58,6 +59,7 @@ Atlassian + CI (native):
   confluence    Confluence comments / attachments
   jenkins       Jenkins builds: trigger / inspect / stop
   orc           orchestrate build/load/pre-check flows (load / build / show)
+  jobs          list / inspect async jobs (tarload / techsupport / orc)
 
 Arista EOS switches (native, read-only over SSH):
   arista        interfaces / lldp / config / version
@@ -79,7 +81,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     """argparse tree for the natively-implemented groups."""
     parser = argparse.ArgumentParser(
         prog="qactl",
-        description="qactl native groups: jira, confluence, jenkins, arista, orc.",
+        description="qactl native groups: jira, confluence, jenkins, arista, orc, jobs.",
     )
     sub = parser.add_subparsers(dest="group", required=True)
     parent = global_parent()
@@ -88,6 +90,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     jenkins_cli.register(sub, parent)
     arista_cli.register(sub, parent)
     orc_cli.register(sub, parent)
+    jobs_cli.register(sub, parent)
     return parser
 
 

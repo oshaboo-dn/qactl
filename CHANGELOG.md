@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl jobs` — cross-family async-job list/inspect**: a new native group
+  that reads across every job-store namespace (`tarload` / `techsupport` /
+  `orc`) so you can see and drill into long-running jobs in one place.
+  - `qactl jobs list [--kind K] [--status S] [-d DEV] [--limit N]` — persisted
+    jobs newest-first as an aligned table (job_id, family, device, status,
+    detail, started, finished); filter by family, status, or device (`total`
+    reports the pre-limit match count).
+  - `qactl jobs show [job_id] [-d DEV] [--kind K]` — the full persisted
+    envelope for one job, looked up by id (searched across families) or the
+    newest on a device.
+  - Read-only (no `--yes`). A job persisted as still-running whose worker
+    process is gone is reported as `error` (died mid-flight), the same orphan
+    rule the per-family `show` commands use. New `job_store.list_jobs()` +
+    `job_store.JOB_FAMILIES` back the enumeration.
 - **`qactl orc` — build/load/pre-check orchestrator**: a new native group that
   chains the existing single-purpose surfaces into one pollable job, with the
   tar-load and the pre-check run as two distinct, ordered phases.
