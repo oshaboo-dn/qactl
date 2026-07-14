@@ -145,6 +145,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   env name remains anywhere in the tree.
 
 ### Fixed
+- **Device added after the session daemon started was unreachable by alias**:
+  `qactl cli device add <name> --host <ip> --yes` writes the entry, but the
+  long-lived session daemon snapshots `DEVICE_HOSTS` at startup, so a later
+  `-d <name>` wrongly failed with "not in the device registry" (while
+  `--host <ip>` worked). The daemon's `_execute` now re-reads a device from the
+  canonical map on a cache miss (targeted `_refresh_alias_in_cache`, no
+  full-reload `clear()` race across handler threads). Surfaced standing up
+  cdnos clab nodes on h263.
 - **`tar-load --no-wait` detached-worker state clobber**: the detached
   (`detach=True`) kickoff and its forked worker both persist the same
   `job_store` job file, with no ordering between them. The parent wrote its

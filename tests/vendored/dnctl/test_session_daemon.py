@@ -214,3 +214,41 @@ def test_daemon_died_mid_request_maps_to_transient_connect_error(daemon, monkeyp
                       password="p", command="show x")
     assert ei.value.transient is True
     assert "mid-request" in str(ei.value)
+
+
+def test_execute_refreshes_device_registered_after_daemon_start(monkeypatch):
+    """A device added *after* the daemon started (e.g. `device add --host`)
+    must resolve: _execute re-reads it from the canonical map on a
+    DEVICE_HOSTS miss instead of wrongly raising 'not in the device registry'.
+    """
+    op = "run_sequence"
+
+    # Stale snapshot: the newcomer isn't cached yet.
+    monkeypatch.setattr(sess, "DEVICE_HOSTS", {}, raising=False)
+
+    refreshed = []
+
+    def fake_refresh(dev):
+        refreshed.append(dev)
+        sess.DEVICE_HOSTS[dev] = ["SN-newcomer"]
+        return ["SN-newcomer"]
+
+    monkeypatch.setattr(sess, "_refresh_alias_in_cache", fake_refresh)
+    monkeypatch.setattr(sess, op, lambda registry, **kw: "ok")
+
+    out = sd._execute(op, {"device": "newcomer", "commands": []})
+    assert out == "ok"
+    assert refreshed == ["newcomer"]
+
+
+def test_execute_skips_refresh_when_device_already_cached(monkeypatch):
+    """No needless map re-read when the device is already in the cache."""
+    op = "run_sequence"
+    monkeypatch.setattr(sess, "DEVICE_HOSTS", {"known": ["SN"]}, raising=False)
+
+    calls = []
+    monkeypatch.setattr(sess, "_refresh_alias_in_cache", lambda d: calls.append(d))
+    monkeypatch.setattr(sess, op, lambda registry, **kw: "ok")
+
+    sd._execute(op, {"device": "known", "commands": []})
+    assert calls == []

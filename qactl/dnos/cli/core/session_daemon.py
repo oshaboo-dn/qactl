@@ -370,6 +370,15 @@ def _execute(op: str, kwargs: Dict[str, Any]) -> Any:
     from qactl.dnos.cli.core.registry import transport_registry
 
     kw = dict(kwargs)
+    # The daemon snapshots DEVICE_HOSTS at startup, so a device registered
+    # *after* it started (e.g. `qactl cli device add <name> --host <ip>`) is
+    # invisible here and resolution wrongly raises "not in the device registry"
+    # even though the canonical map on disk has it. On a miss, re-read just that
+    # device from the map (a targeted refresh — avoids the transient empty window
+    # a full reload_device_hosts() clear() would open across handler threads).
+    dev = kw.get("device")
+    if dev and dev not in _session.DEVICE_HOSTS:
+        _session._refresh_alias_in_cache(dev)
     if "stop_predicate" in kw:
         kw["stop_predicate"] = _resolve_predicate(kw["stop_predicate"])
     if op == "run_sequence_pw":
