@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Per-device custom SSH port**: `qactl cli device add <name> --host <ip>
+  --port <N>` stores a `port` on the registry entry, and the transport opener
+  uses it (`paramiko connect(port=…)`, previously hardcoded to 22). Lets several
+  devices share ONE mgmt IP but differ by port — e.g. cdnos clab nodes fronted
+  by per-node DNAT on the host (`h263:2201/2202/2203 → container:22`). `-d`
+  reads resolve the stored port automatically; the registration probe honours
+  `--port` too. No stored port ⇒ 22 (unchanged for every existing device).
 - **Jenkins Slack build updates**: `qactl jenkins trigger` / `trigger-raw`
   take `--notify-slack [CHANNEL]`. qactl posts a Slack update when the build
   STARTS (`#N started`) and when it reaches a terminal state (`SUCCESS` /

@@ -125,7 +125,7 @@ def test_transport_registry_applies_resolution(lab, monkeypatch):
 
     seen = {}
 
-    def fake_open_transport(device, host, user, password, connect_timeout):
+    def fake_open_transport(device, host, user, password, connect_timeout, port=None):
         seen.update(user=user, password=password)
         raise session.ConnectError("stop here", transient=False)
 
@@ -247,7 +247,7 @@ def test_connect_error_hints_vendor_creds(lab, monkeypatch):
     import paramiko
     from qactl.dnos.cli.core import session
 
-    def fail_auth(host, user, password, timeout):
+    def fail_auth(host, user, password, timeout, port=22):
         raise paramiko.AuthenticationException("Authentication failed.")
 
     monkeypatch.setattr(session, "_try_connect_host", fail_auth)

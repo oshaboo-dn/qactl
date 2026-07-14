@@ -121,7 +121,7 @@ def test_transport_registry_resolves_host_only(lab, monkeypatch):
 
     seen = {}
 
-    def fake_open_transport(device, host, user, password, connect_timeout):
+    def fake_open_transport(device, host, user, password, connect_timeout, port=None):
         seen.update(user=user, password=password)
         raise session.ConnectError("stop here", transient=False)
 

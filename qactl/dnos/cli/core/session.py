@@ -503,8 +503,14 @@ class TransportRegistry:
         user: str = DEFAULT_USER,
         password: str = DEFAULT_PASSWORD,
         connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+        port: Optional[int] = None,
     ) -> Transport:
-        """Return a live transport for the key, opening one if needed."""
+        """Return a live transport for the key, opening one if needed.
+
+        ``port`` overrides the SSH port for a host-only open (the
+        registration probe); registry devices resolve their stored port
+        inside :func:`_open_transport`, so ``-d`` callers need not pass it.
+        """
         if not device and not host:
             raise ValueError("Must provide device or host")
         # Registry devices may carry per-device / per-vendor creds (vendor
@@ -531,6 +537,7 @@ class TransportRegistry:
                 user=user,
                 password=password,
                 connect_timeout=connect_timeout,
+                port=port,
             )
             self._transports[key] = t
             return t
@@ -595,12 +602,14 @@ def _try_connect_host(
     user: str,
     password: str,
     timeout: int,
+    port: int = 22,
 ) -> paramiko.SSHClient:
     key = _creds.SSH_KEY
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
         host,
+        port=port,
         username=user,
         password=password,
         key_filename=key,
@@ -619,12 +628,17 @@ def _open_transport(
     user: str,
     password: str,
     connect_timeout: int,
+    port: Optional[int] = None,
 ) -> Transport:
     """Open TCP+auth only. No channel, no CLI state.
 
     Transient failures (see :func:`_is_transient_connect_error`) retry the
     whole candidate sweep — for dual-NCC devices each retry probes *both*
     NCCs again, so an active-NCC flip mid-retry still lands.
+
+    SSH port: an explicit ``port`` wins (the registration-probe path passes
+    it); otherwise a registry device's stored ``port`` is used; otherwise 22.
+    Lets several aliases share one mgmt IP behind per-node DNAT (cdnos clab).
     """
     if device:
         candidates = DEVICE_HOSTS.get(device)
@@ -636,6 +650,12 @@ def _open_transport(
         assert host
         candidates = [host]
 
+    if port is None and device:
+        from qactl.dnos.core import devices as _dn_devices
+
+        port = _dn_devices.resolve_port(device)
+    eff_port = port or 22
+
     attempts = _connect_attempts()
     backoff = _connect_backoff()
     last_err: Optional[Exception] = None
@@ -645,7 +665,9 @@ def _open_transport(
         transient = False
         for cand in candidates:
             try:
-                client = _try_connect_host(cand, user, password, connect_timeout)
+                client = _try_connect_host(
+                    cand, user, password, connect_timeout, eff_port
+                )
                 chosen_host = cand
                 break
             except Exception as exc:
@@ -837,6 +859,7 @@ def run_once(
     timeout: float = DEFAULT_CMD_TIMEOUT,
     mode: str = "command",
     shell_entry: str = "run start shell",
+    port: Optional[int] = None,
 ) -> Invocation:
     """Open a fresh channel, run ``command``, close the channel.
 
@@ -875,7 +898,7 @@ def run_once(
         dict(
             device=device, host=host, user=user, password=password,
             command=command, timeout=timeout, mode=mode,
-            shell_entry=shell_entry,
+            shell_entry=shell_entry, port=port,
         ),
     )
     if routed is not None:
@@ -895,6 +918,7 @@ def run_once(
     for attempt in (1, 2):
         transport = registry.get(
             device=device, host=host, user=user, password=password,
+            port=port,
         )
         registry._mark(transport, 1)
         channel = None
@@ -1511,6 +1535,7 @@ def probe_device(
     timeout: float = DEFAULT_CMD_TIMEOUT,
     allow_missing_name: bool = False,
     discover_location: bool = False,
+    port: Optional[int] = None,
 ) -> "DeviceProbe":
     """SSH to ``host`` (via the cli-mcp transport pool) and run the canonical probe.
 
@@ -1543,7 +1568,7 @@ def probe_device(
         inv = run_once(
             registry=registry,
             device=None, host=host, user=eff_user, password=eff_pw,
-            command=cmd, timeout=timeout,
+            command=cmd, timeout=timeout, port=port,
         )
         return inv.output
 

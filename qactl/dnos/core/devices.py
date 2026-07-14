@@ -192,6 +192,28 @@ def resolve_mgmt0(device: str, path: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def resolve_port(device: str, path: Optional[str] = None) -> Optional[int]:
+    """Return the custom SSH ``port`` for ``device``, or ``None`` for default 22.
+
+    Accepts a canonical key or a secondary alias. Used when several devices
+    share one mgmt IP but differ by port (e.g. cdnos clab nodes fronted by
+    per-node DNAT on the host — h263:2201/2202/2203 -> container:22).
+    """
+    devices = load_device_map(path).get("devices") or {}
+    entry = devices.get(device)
+    if entry is None:
+        canonical = resolve_canonical(device, path)
+        if canonical is not None:
+            entry = devices.get(canonical)
+    if isinstance(entry, dict):
+        port = entry.get("port")
+        if isinstance(port, bool):  # bool is an int subclass — reject True/False
+            return None
+        if isinstance(port, int) and 0 < port < 65536:
+            return port
+    return None
+
+
 def _bump_generated_at(data: Dict[str, Any]) -> None:
     data["generated_at"] = (
         datetime.now(timezone.utc).replace(microsecond=0).isoformat()

@@ -37,7 +37,7 @@ def _script(monkeypatch, outcomes):
     """Make _try_connect_host pop one scripted outcome per call."""
     calls = []
 
-    def fake(host, user, password, timeout):
+    def fake(host, user, password, timeout, port=22):
         calls.append(host)
         outcome = outcomes.pop(0)
         if isinstance(outcome, Exception):

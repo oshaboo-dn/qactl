@@ -1084,6 +1084,7 @@ def session_stop(as_json: O.Json = False):
 def device_add(
     name: Annotated[str, typer.Argument(help="Registry name for this device (the name you choose). Becomes the key; independent of the chassis System Name.")],
     host: Annotated[Optional[str], typer.Option("--host", help="SSH host / IP / SN to probe. Defaults to NAME.")] = None,
+    port: Annotated[Optional[int], typer.Option("--port", help="Custom SSH port (default 22). Use when several devices share one mgmt IP behind per-node DNAT, e.g. cdnos clab nodes fronted on h263:2201/2202/2203.")] = None,
     alias: Annotated[Optional[List[str]], typer.Option("--alias", help="Secondary nickname to attach (repeatable), e.g. --alias cl.")] = None,
     rack: Annotated[Optional[str], typer.Option("--rack", help="Manual rack override (e.g. B13). Default: auto-discover via LLDP.")] = None,
     no_discover: Annotated[bool, typer.Option("--no-discover", help="Skip LLDP location auto-discovery (rack/mgmt-switch/fabric-leaf).")] = False,
@@ -1118,6 +1119,7 @@ def device_add(
         O.call(
             manage_device, c, operation="add", name=name, sn=host or name,
             aliases=alias, rack=rack, discover=not no_discover, vendor=vendor,
+            port=port,
         ),
         c,
     )

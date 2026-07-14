@@ -250,6 +250,7 @@ def _add_device(
     key_name: Optional[str] = None,
     rack: Optional[str] = None,
     discover: bool = True,
+    port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Implementation of ``manage_device(operation="add")``.
 
@@ -295,6 +296,7 @@ def _add_device(
             user=user, password=password, timeout=float(timeout),
             allow_missing_name=True,
             discover_location=discover,
+            port=port,
         )
     except ConnectError as exc:
         return fail(
@@ -366,6 +368,8 @@ def _add_device(
 
     warnings: List[str] = []
     fields: Dict[str, Any] = {"expected_sns": hosts_after, "vendor": DEFAULT_VENDOR}
+    if port:
+        fields["port"] = int(port)
     if probe.expected_role and (
         not isinstance(existing_entry, dict)
         or not existing_entry.get("expected_role")
@@ -818,6 +822,7 @@ def manage_device(
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASSWORD,
     timeout: int = 20,
+    port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Add, remove, or refresh a device alias in the registry.
 
@@ -1059,6 +1064,7 @@ def manage_device(
                 sn=ssh_host, user=user, password=password,
                 timeout=timeout, request=request, fail=_fail,
                 key_name=key_name, rack=rack, discover=discover,
+                port=port,
             )
         if isinstance(resp, dict) and resp.get("status") == "ok" and aliases:
             attached: List[str] = []
