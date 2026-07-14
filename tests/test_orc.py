@@ -22,13 +22,18 @@ class OrcParserTests(unittest.TestCase):
         args = self.parser.parse_args(["orc", "load", "http://j/42/", "-d", "sa"])
         self.assertEqual(args.group, "orc")
         self.assertEqual(args.build_url, "http://j/42/")
-        self.assertEqual(args.device, "sa")
+        self.assertEqual(args.device, ["sa"])
         self.assertFalse(args.no_wait)  # blocking by default
 
     def test_build_defaults_detached(self):
         args = self.parser.parse_args(["orc", "build", "feature/x", "-d", "cl"])
         self.assertEqual(args.branch, "feature/x")
         self.assertFalse(args.wait)  # detached by default (wait is off)
+
+    def test_build_multi_device_repeatable(self):
+        args = self.parser.parse_args(
+            ["orc", "build", "dev26.3", "-d", "cl", "-d", "sa"])
+        self.assertEqual(args.device, ["cl", "sa"])
 
     def test_build_component_repeatable(self):
         args = self.parser.parse_args(
@@ -157,10 +162,10 @@ def test_orc_build_stops_at_failed_build(monkeypatch, _no_persist):
 def test_orc_build_detached_returns_handle(monkeypatch, _no_persist):
     """detach=True (the orc build default) forks; here we stub the fork out
     and assert we get a pollable kickoff handle, not a terminal envelope."""
-    def fake_spawn(job, drive_kwargs):
-        job["worker_pid"] = 99999
-        job["status"] = "running"
-        job["next_actions"] = ["poll me"]
+    def fake_spawn(specs, **kw):
+        for s in specs:
+            s["job"]["worker_pid"] = 99999
+            s["job"]["status"] = "running"
         return 99999
 
     monkeypatch.setattr(tools, "_spawn_detached", fake_spawn)
@@ -174,6 +179,78 @@ def test_orc_build_detached_returns_handle(monkeypatch, _no_persist):
     assert env["status"] == "running"
     assert env["worker_pid"] == 99999
     assert env["result"]["mode"] == "build"
+
+
+def test_orc_build_fans_out_to_multiple_devices(monkeypatch, _no_persist):
+    """One build, two devices: build triggers ONCE, then load+pre-check runs
+    for each device, and the roll-up lists both."""
+    builds = []
+    loads = []
+
+    def fake_trigger(branch, **kw):
+        builds.append(branch)
+        return {"status": "ok", "errors": [],
+                "result": {"branch": branch, "build_number": 7,
+                           "build_url": "http://j/dev26.3/7/",
+                           "build": {"result": "SUCCESS"}}}
+
+    def fake_tar_load(**kw):
+        loads.append(kw.get("device"))
+        assert kw["jenkins_url"] == "http://j/dev26.3/7/"
+        return _ok(state="done")
+
+    monkeypatch.setattr("qactl.jenkins.tools.jenkins_trigger", fake_trigger)
+    monkeypatch.setattr(
+        "qactl.dnos.cli.tools.tarload.request_system_tar_load", fake_tar_load)
+    monkeypatch.setattr(
+        "qactl.dnos.cli.tools.tarload.request_system_pre_check", lambda **kw: _ok())
+
+    env = tools.orc_build("dev26.3", devices=["cl", "sa"], detach=False)
+
+    assert builds == ["dev26.3"]              # exactly one build
+    assert loads == ["cl", "sa"]              # loaded on both, in order
+    assert env["status"] == "ok"
+    assert env["result"]["devices"] == ["cl", "sa"]
+    assert len(env["result"]["jobs"]) == 2
+    assert all(j["status"] == "ok" for j in env["result"]["jobs"])
+
+
+def test_orc_build_multi_one_device_fails_others_proceed(monkeypatch, _no_persist):
+    def fake_tar_load(**kw):
+        if kw.get("device") == "cl":
+            return {"status": "error", "errors": ["cl load boom"]}
+        return _ok(state="done")
+
+    monkeypatch.setattr(
+        "qactl.jenkins.tools.jenkins_trigger",
+        lambda branch, **kw: {"status": "ok", "errors": [],
+                              "result": {"build_url": "http://j/dev26.3/7/",
+                                         "build": {"result": "SUCCESS"}}})
+    monkeypatch.setattr(
+        "qactl.dnos.cli.tools.tarload.request_system_tar_load", fake_tar_load)
+    monkeypatch.setattr(
+        "qactl.dnos.cli.tools.tarload.request_system_pre_check", lambda **kw: _ok())
+
+    env = tools.orc_build("dev26.3", devices=["cl", "sa"], detach=False)
+
+    by_dev = {j["device"]: j for j in env["result"]["jobs"]}
+    assert by_dev["cl"]["status"] == "error" and by_dev["cl"]["phase"] == "load"
+    assert by_dev["sa"]["status"] == "ok"
+    assert env["status"] == "error"  # roll-up: any device error
+
+
+def test_orc_build_multi_failed_build_fails_all(monkeypatch, _no_persist):
+    monkeypatch.setattr(
+        "qactl.jenkins.tools.jenkins_trigger",
+        lambda branch, **kw: {"status": "error", "errors": ["FAILURE"], "result": {}})
+    monkeypatch.setattr(
+        "qactl.dnos.cli.tools.tarload.request_system_tar_load",
+        lambda **kw: pytest.fail("load ran despite a failed build"))
+
+    env = tools.orc_build("dev26.3", devices=["cl", "sa"], detach=False)
+
+    assert env["status"] == "error"
+    assert all(j["phase"] == "build" for j in env["result"]["jobs"])
 
 
 # --- show / orphan detection ---------------------------------------------

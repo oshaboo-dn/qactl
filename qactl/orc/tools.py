@@ -170,39 +170,35 @@ def _slim_jenkins(env: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _drive(
-    job: Dict[str, Any], *,
-    build_url: Optional[str],
-    branch: Optional[str],
-    trigger_kwargs: Dict[str, Any],
-    tarload_kwargs: Dict[str, Any],
-    precheck_kwargs: Dict[str, Any],
+def _do_build(branch: str, trigger_kwargs: Dict[str, Any]):
+    """Trigger the (single, shared) Jenkins build and wait for it.
+
+    Returns ``(build_url, build_slim, errors)`` — ``build_url`` is ``None``
+    and ``errors`` non-empty on any failure."""
+    from qactl.jenkins import tools as jt
+
+    benv = jt.jenkins_trigger(branch, confirm=True, wait=True, **trigger_kwargs)
+    slim = _slim_jenkins(benv)
+    if benv.get("status") not in ("ok", "warning"):
+        return None, slim, (benv.get("errors") or ["Jenkins build did not succeed."])
+    build_url = (benv.get("result") or {}).get("build_url")
+    if not build_url:
+        return None, slim, ["Build succeeded but no build_url in the Jenkins envelope."]
+    return build_url, slim, []
+
+
+def _drive_device(
+    job: Dict[str, Any], build_url: str, *,
+    tarload_kwargs: Dict[str, Any], precheck_kwargs: Dict[str, Any],
     dev_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Run the phases in order, persisting after each. Returns the terminal
-    envelope. Runs inline (blocking mode) or inside the detached child."""
+    """Run the load + pre-check phases for ONE device's job, persisting after
+    each. The build phase (if any) is done once by the caller and stamped into
+    ``job['phases']['build']`` before this runs."""
     try:
-        # --- phase: build (orc build only) -----------------------------
-        if branch:
-            job["phase"] = "build"
-            job["status"] = "running"
-            _persist(job)
-            from qactl.jenkins import tools as jt
-
-            benv = jt.jenkins_trigger(branch, confirm=True, wait=True, **trigger_kwargs)
-            job["phases"]["build"] = _slim_jenkins(benv)
-            if benv.get("status") not in ("ok", "warning"):
-                return _fail(job, "build",
-                             benv.get("errors") or ["Jenkins build did not succeed."])
-            build_url = (benv.get("result") or {}).get("build_url")
-            job["build_url"] = build_url
-            if not build_url:
-                return _fail(job, "build",
-                             ["Build succeeded but no build_url in the Jenkins envelope."])
-            _persist(job)
-
         # --- phase: load -----------------------------------------------
         job["phase"] = "load"
+        job["status"] = "running"
         _persist(job)
         from qactl.dnos.cli.tools.tarload import request_system_tar_load
 
@@ -233,6 +229,43 @@ def _drive(
         return _fail(job, job.get("phase") or "orc", [f"{type(e).__name__}: {str(e)[:240]}"])
 
 
+def _drive(specs: List[Dict[str, Any]], *, branch: Optional[str],
+           build_url: Optional[str], trigger_kwargs: Dict[str, Any]) -> None:
+    """Drive one or more device jobs: build ONCE (shared), then load +
+    pre-check per device, serially. Each ``spec`` is ``{job, tarload_kwargs,
+    precheck_kwargs, dev_kwargs}``. Persists progress per job; returns
+    nothing (callers read the mutated job dicts / persisted envelopes)."""
+    jobs = [s["job"] for s in specs]
+    shared_url = build_url
+
+    if branch:
+        # A single build feeds every device. Mark all jobs 'build' first.
+        for j in jobs:
+            j["phase"] = "build"
+            j["status"] = "running"
+            _persist(j)
+        shared_url, build_slim, errors = _do_build(branch, trigger_kwargs)
+        for j in jobs:
+            j["phases"]["build"] = build_slim
+        if not shared_url:
+            for j in jobs:
+                _fail(j, "build", errors)
+            return
+        for j in jobs:
+            j["build_url"] = shared_url
+            _persist(j)
+
+    # Load + pre-check each device in turn (serial: per-device tar-load is
+    # already strictly serial; different devices are independent but we keep
+    # one worker simple by sequencing them).
+    for s in specs:
+        _drive_device(
+            s["job"], shared_url,
+            tarload_kwargs=s["tarload_kwargs"], precheck_kwargs=s["precheck_kwargs"],
+            dev_kwargs=s["dev_kwargs"],
+        )
+
+
 def _reset_transports() -> None:
     """After a fork, abandon inherited SSH transports (their reader threads
     don't survive fork) so device phases reconnect fresh."""
@@ -244,30 +277,33 @@ def _reset_transports() -> None:
         pass
 
 
-def _spawn_detached(job: Dict[str, Any], drive_kwargs: Dict[str, Any]) -> Optional[int]:
-    """Fork a session-detached child that runs :func:`_drive` to completion.
+def _spawn_detached(specs: List[Dict[str, Any]], *, branch: Optional[str],
+                    build_url: Optional[str], trigger_kwargs: Dict[str, Any]) -> Optional[int]:
+    """Fork a session-detached child that runs :func:`_drive` over every job.
 
     Returns the child pid (parent side), or ``None`` on a platform without
     ``os.fork`` (the caller then falls back to a blocking run). The child
-    persists progress via :func:`_persist` so ``orc show`` from any later
-    process can poll it, and detaches from the caller's session/TTY so an
-    agent shell timeout killing the parent can't take the run down with it.
-    """
+    persists progress so ``orc show`` from any later process can poll it, and
+    detaches from the caller's session/TTY so an agent shell timeout killing
+    the parent can't take the run down with it."""
     if not hasattr(os, "fork"):
         return None
-    # Ordered handshake: the child blocks until the parent has persisted the
+    # Ordered handshake: the child blocks until the parent has persisted every
     # kickoff snapshot (with worker_pid) and closed the write end, so no child
-    # write can race ahead of the parent's snapshot.
+    # write can race ahead of the parent's snapshots.
     r, w = os.pipe()
     pid = os.fork()
     if pid > 0:
         os.close(r)
-        job["worker_pid"] = pid
-        job["status"] = "running"
-        job["next_actions"] = [
-            f"Poll with: qactl orc show {job['job_id']}  (or: qactl orc show -d {job['device']})",
-        ]
-        _persist(job)
+        for spec in specs:
+            job = spec["job"]
+            job["worker_pid"] = pid
+            job["status"] = "running"
+            job["next_actions"] = [
+                f"Poll with: qactl orc show {job['job_id']}  "
+                f"(or: qactl orc show -d {job['device']})",
+            ]
+            _persist(job)
         os.close(w)  # EOF releases the child
         return pid
     # --- child: never returns ------------------------------------------
@@ -290,7 +326,7 @@ def _spawn_detached(job: Dict[str, Any], drive_kwargs: Dict[str, Any]) -> Option
         os.dup2(devnull, 2)
         os.close(devnull)
         _reset_transports()
-        _drive(job, **drive_kwargs)
+        _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
     except BaseException:  # noqa: BLE001 — nothing may escape past os._exit
         exit_code = 1
     finally:
@@ -298,59 +334,119 @@ def _spawn_detached(job: Dict[str, Any], drive_kwargs: Dict[str, Any]) -> Option
     return 0  # unreachable
 
 
+def _summary_envelope(mode: str, branch: Optional[str], build_url: Optional[str],
+                      jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """A roll-up envelope for a multi-device orc run (one row per device)."""
+    statuses = [j["status"] for j in jobs]
+    if any(s == "running" for s in statuses):
+        status = "running"
+    elif all(s == "ok" for s in statuses):
+        status = "ok"
+    else:
+        status = "error"
+    env = make_envelope(kind=f"orc_{mode}")
+    env["status"] = status
+    env["result"] = {
+        "mode": mode,
+        "branch": branch,
+        "build_url": build_url,
+        "devices": [j["device"] for j in jobs],
+        "jobs": [
+            {"job_id": j["job_id"], "device": j["device"],
+             "phase": j["phase"], "status": j["status"]}
+            for j in jobs
+        ],
+    }
+    env["next_actions"] = [
+        "Poll a device: qactl orc show -d <dev>   |   all: qactl jobs list --kind orc",
+    ]
+    return env
+
+
+def _targets(devices: Optional[List[str]], host: Optional[str],
+             user: Optional[str], password: Optional[str]) -> List[Dict[str, Any]]:
+    """Normalise the requested devices into a list of dev_kwargs dicts (one per
+    target). ``--user`` / ``--password`` apply to every target."""
+    base: Dict[str, Any] = {}
+    if user:
+        base["user"] = user
+    if password:
+        base["password"] = password
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for d in devices or []:
+        if d in seen:
+            continue
+        seen.add(d)
+        out.append({**base, "device": d})
+    if host and host not in seen:
+        out.append({**base, "host": host})
+    return out
+
+
 def _launch(
     *, mode: str, build_url: Optional[str], branch: Optional[str],
-    device: Optional[str], host: Optional[str], user: Optional[str],
+    devices: Optional[List[str]], host: Optional[str], user: Optional[str],
     password: Optional[str], components: Optional[List[str]],
     detach: bool, trigger_kwargs: Dict[str, Any], precheck_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
-    device_key = device or host or ""
-    if not device_key:
+    targets = _targets(devices, host, user, password)
+    if not targets:
         return error_envelope(
-            "orc needs a target device: pass -d/--device (or --host).",
+            "orc needs at least one target device: pass -d/--device (repeatable) or --host.",
             kind=f"orc_{mode}", status="bad_argument",
         )
-    dev_kwargs: Dict[str, Any] = {}
-    if device:
-        dev_kwargs["device"] = device
-    if host:
-        dev_kwargs["host"] = host
-    if user:
-        dev_kwargs["user"] = user
-    if password:
-        dev_kwargs["password"] = password
     tarload_kwargs: Dict[str, Any] = {}
     if components:
         tarload_kwargs["components"] = list(components)
 
-    job = _new_job(mode=mode, device_key=device_key, build_url=build_url, branch=branch)
-    drive_kwargs = dict(
-        build_url=build_url, branch=branch, trigger_kwargs=trigger_kwargs,
-        tarload_kwargs=tarload_kwargs, precheck_kwargs=precheck_kwargs,
-        dev_kwargs=dev_kwargs,
-    )
+    specs: List[Dict[str, Any]] = []
+    for dev_kwargs in targets:
+        device_key = dev_kwargs.get("device") or dev_kwargs.get("host") or ""
+        specs.append({
+            "job": _new_job(mode=mode, device_key=device_key,
+                            build_url=build_url, branch=branch),
+            "dev_kwargs": dev_kwargs,
+            "tarload_kwargs": tarload_kwargs,
+            "precheck_kwargs": precheck_kwargs,
+        })
+    jobs = [s["job"] for s in specs]
+
     if detach:
-        pid = _spawn_detached(job, drive_kwargs)
+        pid = _spawn_detached(specs, branch=branch, build_url=build_url,
+                              trigger_kwargs=trigger_kwargs)
         if pid is None:
             # No os.fork on this platform — fall back to a blocking run.
-            return _drive(job, **drive_kwargs)
-        return _orc_envelope(job)
-    return _drive(job, **drive_kwargs)
+            _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
+    else:
+        _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
+
+    if len(jobs) == 1:
+        return _orc_envelope(jobs[0])
+    return _summary_envelope(mode, branch, build_url, jobs)
 
 
 # ---- public entry points -------------------------------------------------
 
 
+def _device_list(device: Optional[str], devices: Optional[List[str]]) -> List[str]:
+    out = list(devices or [])
+    if device and device not in out:
+        out.insert(0, device)
+    return out
+
+
 def orc_load(
     build_url: str, *,
-    device: Optional[str] = None, host: Optional[str] = None,
-    user: Optional[str] = None, password: Optional[str] = None,
-    components: Optional[List[str]] = None, detach: bool = False,
+    device: Optional[str] = None, devices: Optional[List[str]] = None,
+    host: Optional[str] = None, user: Optional[str] = None,
+    password: Optional[str] = None, components: Optional[List[str]] = None,
+    detach: bool = False,
     pre_check_poll_interval_s: Optional[int] = None,
     pre_check_max_wait_s: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Tar-load an existing build, then run the pre-check. Blocking by
-    default (``detach=True`` forks a session-detached worker)."""
+    """Tar-load an existing build on one or more devices, then pre-check each.
+    Blocking by default (``detach=True`` forks a session-detached worker)."""
     precheck_kwargs: Dict[str, Any] = {}
     if pre_check_poll_interval_s is not None:
         precheck_kwargs["pre_check_poll_interval_s"] = pre_check_poll_interval_s
@@ -358,7 +454,7 @@ def orc_load(
         precheck_kwargs["pre_check_max_wait_s"] = pre_check_max_wait_s
     return _launch(
         mode="load", build_url=build_url, branch=None,
-        device=device, host=host, user=user, password=password,
+        devices=_device_list(device, devices), host=host, user=user, password=password,
         components=components, detach=detach,
         trigger_kwargs={}, precheck_kwargs=precheck_kwargs,
     )
@@ -366,17 +462,18 @@ def orc_load(
 
 def orc_build(
     branch: str, *,
-    device: Optional[str] = None, host: Optional[str] = None,
-    user: Optional[str] = None, password: Optional[str] = None,
-    components: Optional[List[str]] = None, detach: bool = True,
-    repo: str = "cheetah", org: str = "drivenets",
+    device: Optional[str] = None, devices: Optional[List[str]] = None,
+    host: Optional[str] = None, user: Optional[str] = None,
+    password: Optional[str] = None, components: Optional[List[str]] = None,
+    detach: bool = True, repo: str = "cheetah", org: str = "drivenets",
     wait_timeout: float = 4 * 3600, poll: float = 30.0,
     trigger_extra: Optional[Dict[str, Any]] = None,
     pre_check_poll_interval_s: Optional[int] = None,
     pre_check_max_wait_s: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Trigger a cheetah build, wait for it, then tar-load + pre-check.
-    Detached by default (a build can run hours); ``detach=False`` blocks."""
+    """Trigger ONE cheetah build, wait for it, then tar-load + pre-check on
+    every requested device. Detached by default (a build can run hours);
+    ``detach=False`` blocks."""
     trigger_kwargs: Dict[str, Any] = {
         "repo": repo, "org": org, "wait_timeout": wait_timeout, "poll": poll,
     }
@@ -389,7 +486,7 @@ def orc_build(
         precheck_kwargs["pre_check_max_wait_s"] = pre_check_max_wait_s
     return _launch(
         mode="build", build_url=None, branch=branch,
-        device=device, host=host, user=user, password=password,
+        devices=_device_list(device, devices), host=host, user=user, password=password,
         components=components, detach=detach,
         trigger_kwargs=trigger_kwargs, precheck_kwargs=precheck_kwargs,
     )

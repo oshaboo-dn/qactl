@@ -24,28 +24,33 @@ from qactl.core.output import emit
 from qactl.orc import tools
 
 
-def _dev_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
-    """Device/credential kwargs, dropping None so the tool's own defaults and
-    registry resolution win (mirrors the DNOS ``O.call`` glue)."""
+def _cred_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
+    """Shared login kwargs (host/user/password), dropping None so the tool's
+    defaults and per-device registry resolution win."""
     out: Dict[str, Any] = {}
-    for name in ("device", "host", "user", "password"):
+    for name in ("host", "user", "password"):
         val = getattr(args, name, None)
         if val is not None:
             out[name] = val
     return out
 
 
+def _targets_label(args: argparse.Namespace) -> str:
+    return ", ".join((args.device or []) + ([args.host] if args.host else [])) or "?"
+
+
 def _load(args):
     rc = confirm_or_exit(
         args, kind="orc_load",
-        action=f"Load {args.build_url} on {args.device or args.host} + pre-check.",
+        action=f"Load {args.build_url} on {_targets_label(args)} + pre-check.",
     )
     if rc is not None:
         return rc
     return emit(tools.orc_load(
-        args.build_url, components=args.component, detach=args.no_wait,
+        args.build_url, devices=args.device, components=args.component,
+        detach=args.no_wait,
         pre_check_poll_interval_s=args.pre_check_poll,
-        pre_check_max_wait_s=args.pre_check_timeout, **_dev_kwargs(args),
+        pre_check_max_wait_s=args.pre_check_timeout, **_cred_kwargs(args),
     ), as_json=args.json)
 
 
@@ -53,7 +58,7 @@ def _build(args):
     rc = confirm_or_exit(
         args, kind="orc_build",
         action=(f"Build cheetah {args.branch!r}, then load + pre-check on "
-                f"{args.device or args.host}."),
+                f"{_targets_label(args)}."),
     )
     if rc is not None:
         return rc
@@ -76,11 +81,12 @@ def _build(args):
     if trigger_extra:
         extra["extra_params"] = trigger_extra
     return emit(tools.orc_build(
-        args.branch, components=args.component, detach=not args.wait,
+        args.branch, devices=args.device, components=args.component,
+        detach=not args.wait,
         repo=args.repo, org=args.org, wait_timeout=args.wait_timeout, poll=args.poll,
         trigger_extra=extra or None,
         pre_check_poll_interval_s=args.pre_check_poll,
-        pre_check_max_wait_s=args.pre_check_timeout, **_dev_kwargs(args),
+        pre_check_max_wait_s=args.pre_check_timeout, **_cred_kwargs(args),
     ), as_json=args.json)
 
 
@@ -93,7 +99,8 @@ def _show(args):
 
 
 def _add_device(p: argparse.ArgumentParser) -> None:
-    p.add_argument("-d", "--device", default=None, help="device alias from the registry")
+    p.add_argument("-d", "--device", action="append", default=None, metavar="DEVICE",
+                   help="device alias from the registry (repeatable — one build loads all)")
     p.add_argument("--host", default=None, help="override mgmt IP/host (skip alias resolution)")
     p.add_argument("--user", default=None, help="login user (default: registry / dnroot)")
     p.add_argument("--password", default=None, help="login password (default: registry / dnroot)")

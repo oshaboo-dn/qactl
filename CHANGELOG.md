@@ -27,6 +27,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `qactl orc load <build-url> -d <dev>` — tar-load an existing build (with
     `pre_check=False`), then run the pre-upgrade pre-check. Blocking by default
     (the load+pre-check is minutes); `--no-wait` detaches it.
+  - `-d/--device` is **repeatable** on both `orc load` and `orc build`: one
+    build (or one build URL) fans out to every listed device — the Jenkins
+    build runs ONCE, then load + pre-check run per device (each device its own
+    pollable, device-keyed job), e.g. `qactl orc build dev26.3 --sanitizer
+    --baseos -d cl -d sa --yes`. A single device keeps the flat single-job
+    envelope; multiple devices return a roll-up (`result.jobs[]`, one row per
+    device). One failed device doesn't stop the others.
   - `qactl orc build <branch> -d <dev>` — trigger a cheetah Jenkins build, wait
     for it (`jenkins trigger --wait`), then load its tarballs + pre-check.
     **Detached by default** (a build can run hours): forks a session-detached
