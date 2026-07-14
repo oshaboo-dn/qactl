@@ -53,7 +53,8 @@ def _subdirs_for(kind: Optional[str]) -> Optional[List[str]]:
 def _orphaned(env: Dict[str, Any]) -> Dict[str, Any]:
     """Return ``env`` with a dead-worker running-state downgraded to error."""
     state = env.get("status") or env.get("state")
-    if state in _RUNNING and "worker_pid" in env and not _pid_alive(env.get("worker_pid")):
+    pid = env.get("worker_pid")
+    if state in _RUNNING and pid and not _pid_alive(pid):
         env = dict(env)
         env["status"] = "error"
         env["state"] = "error"

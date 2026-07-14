@@ -176,8 +176,11 @@ def test_orc_build_detached_returns_handle(monkeypatch, _no_persist):
 
     env = tools.orc_build("feature/x", device="cl")  # default detach=True
 
-    assert env["status"] == "running"
+    # A successful detached launch reports ok (exit 0); the per-job snapshot
+    # keeps its running state for pollers.
+    assert env["status"] == "ok"
     assert env["worker_pid"] == 99999
+    assert env["state"] == "running"
     assert env["result"]["mode"] == "build"
 
 
@@ -269,6 +272,21 @@ def test_orc_show_marks_dead_worker_as_error(monkeypatch, tmp_path):
 
     assert env["status"] == "error"
     assert any("died mid-flight" in e for e in env["errors"])
+
+
+def test_orc_show_running_without_pid_is_not_downgraded(monkeypatch, tmp_path):
+    """A running envelope with no concrete worker_pid (in-flight, pid not yet
+    recorded) must NOT be falsely flagged dead."""
+    monkeypatch.setenv("QACTL_STATE_DIR", str(tmp_path))
+    job = tools._new_job(mode="load", device_key="sa", build_url="http://j/1/", branch=None)
+    job["status"] = "running"
+    job["worker_pid"] = None
+    tools._persist(job)
+
+    monkeypatch.setattr(tools, "_pid_alive", lambda pid: False)
+    env = tools.orc_show(job_id=job["job_id"])
+
+    assert env["status"] == "running"
 
 
 def test_orc_show_needs_a_selector():

@@ -325,6 +325,12 @@ def _spawn_detached(specs: List[Dict[str, Any]], *, branch: Optional[str],
         os.dup2(devnull, 1)
         os.dup2(devnull, 2)
         os.close(devnull)
+        # This process IS the worker — record our own pid on every job so the
+        # envelopes the child persists carry the LIVE pid (the parent set it on
+        # its own copies before the fork handshake; the child's copies still
+        # held None), letting a later poll tell a live run from a dead one.
+        for spec in specs:
+            spec["job"]["worker_pid"] = os.getpid()
         _reset_transports()
         _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
     except BaseException:  # noqa: BLE001 — nothing may escape past os._exit
@@ -415,12 +421,25 @@ def _launch(
     if detach:
         pid = _spawn_detached(specs, branch=branch, build_url=build_url,
                               trigger_kwargs=trigger_kwargs)
-        if pid is None:
-            # No os.fork on this platform — fall back to a blocking run.
-            _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
+        if pid is not None:
+            # Detached launch SUCCEEDED — the response reports the launch
+            # (status ok / exit 0), while each per-job snapshot keeps its real
+            # ``running`` state for pollers. Otherwise a good kickoff would
+            # exit non-zero just because the job hasn't finished.
+            res = _result(mode, branch, build_url, jobs)
+            res["status"] = "ok"
+            return res
+        # No os.fork on this platform — fall back to a blocking run.
+        _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
     else:
         _drive(specs, branch=branch, build_url=build_url, trigger_kwargs=trigger_kwargs)
 
+    return _result(mode, branch, build_url, jobs)
+
+
+def _result(mode: str, branch: Optional[str], build_url: Optional[str],
+            jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Single device → the flat single-job envelope; multiple → a roll-up."""
     if len(jobs) == 1:
         return _orc_envelope(jobs[0])
     return _summary_envelope(mode, branch, build_url, jobs)
@@ -517,7 +536,12 @@ def orc_show(
             next_actions=["Start one with: qactl orc load <build-url> -d <dev>  "
                           "or  qactl orc build <branch> -d <dev>"],
         )
-    if env.get("status") == "running" and not _pid_alive(env.get("worker_pid")):
+    # Only downgrade when we have a concrete pid that is provably dead. A
+    # missing/None pid means "can't tell" (e.g. an in-flight envelope written
+    # before the worker recorded its pid) — leave it as running rather than
+    # falsely flagging a live run as dead.
+    pid = env.get("worker_pid")
+    if env.get("status") == "running" and pid and not _pid_alive(pid):
         env["status"] = "error"
         env["state"] = "error"
         env.setdefault("errors", []).append(
