@@ -13,7 +13,7 @@ import sys
 from typing import List, Optional
 
 from qactl.spirent.ctl import __version__
-from qactl.spirent.ctl.cli import port_cmds, session_cmds
+from qactl.spirent.ctl.cli import bgp_cmds, device_cmds, port_cmds, session_cmds
 from qactl.spirent.ctl.cli.common import apply_session_policy, global_parent
 
 
@@ -30,6 +30,8 @@ def build_parser(prog: str = "qactl spirent") -> argparse.ArgumentParser:
     parent = global_parent()
     session_cmds.register(sub, parent)
     port_cmds.register(sub, parent)
+    device_cmds.register(sub, parent)
+    bgp_cmds.register(sub, parent)
     return parser
 
 

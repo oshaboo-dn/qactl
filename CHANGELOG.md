@@ -26,8 +26,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     UP, release, and list session ports with link state. `--force` (RevokeOwner)
     and `release` are confirm-gated. Config via `$SPIRENT_HOST` / `SPIRENT_PORT`
     (80) / `SPIRENT_USER` (dn) / `SPIRENT_SESSION`.
+  - `qactl spirent device create|list|start|stop|delete` — build an emulated
+    IPv4 device (`Ipv4If → [VlanIf →] EthIIIf` stack via STC `DeviceCreate`,
+    bound to a reserved port) with `--ip/--prefix/--gateway/--vlan/--mac/
+    --router-id`, then start/stop its protocols.
+  - `qactl spirent bgp add|status` — add a BGP router to a device with
+    `--local-as/--peer-as` (4-byte ASNs auto-encoded to asdot), peer =
+    device gateway (or explicit `--peer`), `--bfd`, and **`--strict`** —
+    BGP-BFD strict-mode via custom capability code 74
+    (draft-ietf-idr-bgp-bfd-strict-mode; `--strict` implies `--bfd` and
+    auto-adds the device's `BfdRouterConfig`). Shared STC helpers (project /
+    device lookup, 4-byte-AS split, strict-cap) live in
+    `qactl/spirent/client/stc_ops.py`.
   - Live-verified 2026-07-16 against labserver `il-auto-containers` + chassis
-    `100.64.3.238` port `6/13` (attach → LinkStatus UP, 100G).
+    `100.64.3.238` port `6/13`: port attach → LinkStatus UP (100G); emulated
+    WAN device `123.4.1.1/24` VLAN 1, iBGP AS 100001 toward `123.4.1.4`, with
+    strict-mode + BFD enabled from the CLI.
   - `stcrestclient>=1.9.0` added as a dependency; imported lazily so parser,
     `--help`, and the offline tests need neither the package nor a live
     server. Ports / config-load / traffic / protocol authoring are the

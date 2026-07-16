@@ -344,6 +344,183 @@ class PortParserTests(unittest.TestCase):
         self.assertTrue(callable(args.func))
 
 
+class FakeDevStc:
+    """Models the project/device/bgp primitives used by tools/device + tools/bgp.
+
+    Mirrors interface config onto the EmulatedDevice convenience attrs the way
+    real STC does (Ipv4If.Address -> device.Ipv4Address, VlanIf.VlanId ->
+    device.Vlan1), so _device_row reads back correctly.
+    """
+
+    def __init__(self):
+        self.attrs = {"system1": {"children-Project": "project1"}, "project1": {}}
+        self.parent = {}
+        self.performed = []
+        self.applied = 0
+        self.deleted = []
+        self._n = 0
+
+    def _new(self, obj_type, under=None):
+        self._n += 1
+        ref = f"{obj_type.lower()}{self._n}"
+        self.attrs.setdefault(ref, {})
+        if under is not None:
+            self.parent[ref] = under
+            key = f"children-{obj_type}"
+            cur = self.attrs.setdefault(under, {}).get(key, "").split()
+            self.attrs[under][key] = " ".join(cur + [ref])
+        return ref
+
+    def get(self, handle, attr):
+        return self.attrs.get(handle, {}).get(attr, "")
+
+    def create(self, obj_type, under=None, **kw):
+        ref = self._new(obj_type, under)
+        self.config(ref, **kw)
+        return ref
+
+    def config(self, ref, **kw):
+        d = self.attrs.setdefault(ref, {})
+        for k, v in kw.items():
+            s = str(v)
+            # STC normalizes boolean literals to lowercase on read-back.
+            d[k] = s.lower() if s in ("TRUE", "FALSE") else s
+        # mirror interface config onto the parent device (STC convenience attrs)
+        dev = self.parent.get(ref)
+        if dev and ref.startswith("ipv4if"):
+            m = {"Address": "Ipv4Address", "PrefixLength": "Ipv4Prefix",
+                 "Gateway": "Ipv4GatewayAddress"}
+            for src, dst in m.items():
+                if src in kw:
+                    self.attrs[dev][dst] = str(kw[src])
+        if dev and ref.startswith("vlanif") and "VlanId" in kw:
+            self.attrs[dev]["Vlan1"] = str(kw["VlanId"])
+
+    def perform(self, command, **kw):
+        self.performed.append((command, kw))
+        if command == "DeviceCreate":
+            dev = self._new("EmulatedDevice", under="project1")
+            self.attrs[dev].update({"Active": "false"})
+            self._new("Ipv4If", under=dev)
+            if "VlanIf" in kw.get("IfStack", ""):
+                self._new("VlanIf", under=dev)
+            self._new("EthIIIf", under=dev)
+            return {"ReturnList": dev}
+        if command in ("DeviceStart", "DeviceStop"):
+            self.attrs[kw["DeviceList"]]["Active"] = \
+                "true" if command == "DeviceStart" else "false"
+        return {}
+
+    def apply(self):
+        self.applied += 1
+
+    def delete(self, ref):
+        self.deleted.append(ref)
+
+
+class DeviceBgpToolTests(unittest.TestCase):
+    def _patch(self, stc):
+        return mock.patch("qactl.spirent.core.session.get_session",
+                          return_value=_StubSession(stc))
+
+    def _reserve_port(self, stc):
+        # tools/device requires a reserved port at the location
+        stc.attrs["project1"]["children-Port"] = "port1"
+        stc.attrs["port1"] = {"Location": "//100.64.3.238/6/13"}
+
+    def test_device_create_builds_stack_and_ip(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            env = spirent_device_create(
+                "h", 80, "dn", port_location="//100.64.3.238/6/13",
+                name="wan-stc-1", ip="123.4.1.1", prefix=24,
+                gateway="123.4.1.4", vlan=1, mac="00:10:94:00:01:01",
+            )
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["ipv4"], "123.4.1.1")
+        self.assertEqual(env["result"]["gateway"], "123.4.1.4")
+        self.assertEqual(env["result"]["vlan"], "1")
+        self.assertIn("DeviceCreate", [c for c, _ in stc.performed])
+
+    def test_device_create_without_reserved_port_errors(self):
+        stc = FakeDevStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            env = spirent_device_create(
+                "h", 80, "dn", port_location="//1.2.3.4/6/13",
+                name="d", ip="1.1.1.1", prefix=24, gateway="1.1.1.2",
+            )
+        self.assertEqual(env["status"], "error")
+
+    def test_bgp_add_4byte_as_and_strict(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            from qactl.spirent.tools.bgp import spirent_bgp_add
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="wan-stc-1", ip="123.4.1.1", prefix=24,
+                                  gateway="123.4.1.4", vlan=1)
+            env = spirent_bgp_add("h", 80, "dn", device="wan-stc-1",
+                                  local_as=100001, bfd=True, strict=True)
+        self.assertEqual(env["status"], "ok")
+        # 100001 -> asdot 1.34465, 4-byte enabled
+        self.assertEqual(env["result"]["local_as"], "1.34465")
+        self.assertTrue(env["result"]["bfd"])
+        self.assertTrue(env["result"]["strict_mode_cap74"])
+        self.assertTrue(env["result"]["use_gateway_as_peer"])
+
+    def test_bgp_add_2byte_as_no_strict(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            from qactl.spirent.tools.bgp import spirent_bgp_add
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="d", ip="10.0.0.1", prefix=30,
+                                  gateway="10.0.0.2")
+            env = spirent_bgp_add("h", 80, "dn", device="d", local_as=65001)
+        self.assertEqual(env["result"]["local_as"], "65001")
+        self.assertFalse(env["result"]["strict_mode_cap74"])
+
+    def test_bgp_add_missing_device_errors(self):
+        stc = FakeDevStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.bgp import spirent_bgp_add
+            env = spirent_bgp_add("h", 80, "dn", device="nope", local_as=100001)
+        self.assertEqual(env["status"], "error")
+
+    def test_device_start_and_list(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import (
+                spirent_device_create, spirent_device_start, spirent_device_list)
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="d", ip="1.1.1.1", prefix=24,
+                                  gateway="1.1.1.2")
+            spirent_device_start("h", 80, "dn", name="d")
+            env = spirent_device_list("h", 80, "dn")
+        self.assertEqual(env["result"]["count"], 1)
+        self.assertTrue(env["result"]["devices"][0]["active"])
+
+
+class DeviceBgpParserTests(unittest.TestCase):
+    def test_new_subcommands_parse(self):
+        p = build_parser()
+        a = p.parse_args(["device", "create", "--host", "h",
+                          "--port-location", "//1.2.3.4/6/13", "--name", "d",
+                          "--ip", "123.4.1.1", "--gateway", "123.4.1.4", "--vlan", "1"])
+        self.assertEqual(a.vlan, 1)
+        self.assertTrue(callable(a.func))
+        a = p.parse_args(["bgp", "add", "--host", "h", "--device", "d",
+                          "--local-as", "100001", "--strict", "--bfd"])
+        self.assertTrue(a.strict and a.bfd)
+        self.assertEqual(a.local_as, 100001)
+        self.assertTrue(callable(p.parse_args(["bgp", "status", "--host", "h"]).func))
+
+
 class DispatchTests(unittest.TestCase):
     def test_top_level_routes_to_spirent(self):
         from qactl.__main__ import main as top_main

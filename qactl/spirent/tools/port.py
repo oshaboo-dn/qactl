@@ -19,17 +19,18 @@ chassis). Example: ``//100.64.3.238/6/13``.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from qactl.spirent.client import SpirentConnectionError
+from qactl.spirent.client.stc_ops import (
+    find_port_by_location as _find_by_location,
+    is_local as _is_local,
+    link_status as _link_status,
+    ports as _ports,
+    project as _project,
+)
 from qactl.spirent.core import session as session_mod
 from qactl.spirent.core.envelope import make_envelope
-
-_OFFLINE_MARKERS = ("localhost", "127.0.0.1", "offline", "null")
-
-
-def _is_local(location: str) -> bool:
-    return any(m in (location or "").lower() for m in _OFFLINE_MARKERS)
 
 
 def _fail(env: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
@@ -41,30 +42,6 @@ def _fail(env: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
             "`pip install qactl[spirent]` if stcrestclient is missing."
         )
     return env
-
-
-def _project(stc: Any) -> str:
-    """Return the project handle, creating one only if none exists."""
-    existing = stc.get("system1", "children-Project")
-    handle = existing.split()[0] if isinstance(existing, str) and existing else ""
-    return handle or stc.create("project", under="system1")
-
-
-def _ports(stc: Any, proj: str) -> List[str]:
-    kids = stc.get(proj, "children-Port")
-    return kids.split() if isinstance(kids, str) and kids else []
-
-
-def _find_by_location(stc: Any, proj: str, location: str) -> Optional[str]:
-    for p in _ports(stc, proj):
-        if stc.get(p, "Location") == location:
-            return p
-    return None
-
-
-def _link_status(stc: Any, port_ref: str) -> Optional[str]:
-    phy = stc.get(port_ref, "activephy-Targets")
-    return stc.get(phy, "LinkStatus") if phy else None
 
 
 def _port_row(stc: Any, port_ref: str) -> Dict[str, Any]:
