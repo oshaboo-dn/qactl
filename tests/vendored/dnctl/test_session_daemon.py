@@ -92,6 +92,33 @@ def test_run_once_routed(daemon, monkeypatch):
     assert kwargs["mode"] == "command"
 
 
+def test_creds_resolved_client_side_before_routing(daemon, monkeypatch):
+    """Per-device creds resolve in the client, before crossing the socket.
+
+    The daemon is long-lived and ``config.load_config`` is ``lru_cache``d for
+    its whole lifetime, so a device whose ``[devices."<name>"]`` creds were
+    added *after* the daemon started is invisible to server-side resolution.
+    ``_maybe_daemon`` must resolve up front (fresh client process) and ship
+    the effective creds, so the daemon authenticates with them rather than
+    its frozen default account.
+    """
+    calls = stub_executor(monkeypatch)
+
+    def fake_resolve(device, user, password, host=None):
+        if device == "dev1":
+            return "ozshaboo", "Drive1234!"
+        return user, password
+
+    monkeypatch.setattr(sess._creds, "resolve_device_credentials", fake_resolve)
+    sess.run_once(
+        SentinelRegistry(), device="dev1", host=None,
+        user="dnroot", password="dnroot", command="show x",
+    )
+    (_, kwargs), = calls
+    assert kwargs["user"] == "ozshaboo"
+    assert kwargs["password"] == "Drive1234!"
+
+
 def test_error_types_survive_the_wire(daemon, monkeypatch):
     stub_executor(monkeypatch, exc=UnknownDeviceError("'x' is not in the device registry."))
     with pytest.raises(UnknownDeviceError):

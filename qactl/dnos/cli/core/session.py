@@ -795,11 +795,31 @@ def _maybe_daemon(
     the socket by *name* — only predicates tagged with a ``daemon_name``
     attribute at their definition site are routable. See
     :mod:`.session_daemon`.
+
+    Credentials are resolved *here*, client-side, before crossing the
+    socket. The daemon is a long-lived process and ``config.load_config``
+    is ``lru_cache``d for the process lifetime, so a device whose
+    per-device creds (``[devices."<name>"]``) were added *after* the
+    daemon started is invisible to server-side resolution — it would fall
+    back to the global default account and fail auth. The client is a
+    fresh process with current config; resolving up front and shipping the
+    effective creds keeps the daemon correct without a restart.
+    ``resolve_device_credentials`` is a no-op passthrough once the
+    password differs from the default, so server-side re-resolution stays
+    idempotent.
     """
     from qactl.dnos.cli.core import session_daemon as _sd
 
     if not _sd.enabled():
         return None
+    if "user" in kwargs and "password" in kwargs:
+        eff_user, eff_password = _creds.resolve_device_credentials(
+            kwargs.get("device"),  # type: ignore[arg-type]
+            str(kwargs["user"]),
+            str(kwargs["password"]),
+            host=kwargs.get("host"),  # type: ignore[arg-type]
+        )
+        kwargs = dict(kwargs, user=eff_user, password=eff_password)
     if stop_predicate is not None:
         name = getattr(stop_predicate, "daemon_name", None)
         if not name:

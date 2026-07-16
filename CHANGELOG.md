@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Persistent-session daemon authenticated devices added after it started
+  with the wrong (default) credentials.** `config.load_config` is
+  `lru_cache`d for a process's whole lifetime, and the session daemon is
+  long-lived, so a device whose per-device creds (`[devices."<name>"]`) were
+  written *after* the daemon started was invisible to server-side credential
+  resolution — the daemon fell back to the global default account and every
+  `qactl cli show/config -d <name>` returned `Authentication failed`, even
+  though `device add`/`refresh` (fresh processes) authenticated fine. Fixed
+  by resolving credentials **client-side in `_maybe_daemon`**, before routing
+  across the socket: the client is a fresh process with current config, so it
+  ships the effective creds and the daemon's frozen config no longer matters.
+  `resolve_device_credentials` is an idempotent passthrough once the password
+  differs from the default, so the daemon's server-side re-resolution is a
+  no-op. Mirrors the existing targeted-`DEVICE_HOSTS`-refresh fix for the same
+  class of daemon staleness. Regression test in `test_session_daemon.py`.
+
 ### Added
 - **`qactl spirent` — Spirent TestCenter (STC REST) traffic group (scaffold)**:
   a new sibling of `qactl ixia` that drives a Spirent TestCenter REST server
