@@ -37,6 +37,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
+from qactl.dnos.cli.core import capture_dedup
 from qactl.dnos.cli.core import capture_helpers as H
 from qactl.dnos.cli.core import capture_store
 from qactl.dnos.cli.core.capture_driver import (
@@ -140,6 +141,43 @@ def _apply_local_filter(src: str, bpf: str) -> tuple[Optional[str], Optional[str
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"local --filter failed: {exc}"
     return dst, None
+
+
+def _apply_dedup(src: str) -> tuple[Optional[str], Optional[str]]:
+    """Collapse ``-i any`` netns-leg copies in the landed routing pcap.
+
+    ``tcpdump -i any`` in the RE ``inband_ns`` records each control-plane
+    frame 2-3× (once per netns leg it crosses), which Wireshark flags as
+    dup-ACKs. This writes a de-duplicated sibling ``<stem>_dedup.pcap``
+    (raw always kept) and returns ``(dedup_path, warning)``. When nothing
+    was duplicated no sibling is written and ``(None, None)`` is returned.
+
+    Pure Python file I/O (no ``tcpdump``), so — unlike ``_apply_local_filter``
+    — it is not AppArmor-confined and can read/write the ``~/.local/state``
+    captures dir directly.
+    """
+    try:
+        with open(src, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        return None, f"dedup skipped: could not read pcap ({exc})."
+    try:
+        deduped, _kept, dropped = capture_dedup.dedup_pcap_bytes(raw)
+    except Exception as exc:  # noqa: BLE001 - never fail the capture on dedup
+        return None, f"dedup skipped: {exc}."
+    if dropped == 0:
+        return None, None
+    stem, ext = os.path.splitext(src)
+    dst = f"{stem}_dedup{ext or '.pcap'}"
+    try:
+        with open(dst, "wb") as fh:
+            fh.write(deduped)
+    except OSError as exc:
+        return None, f"dedup sibling not written ({exc})."
+    return dst, (
+        f"-i any recorded {dropped} duplicate netns-leg frame(s); wrote a "
+        f"de-duplicated copy alongside the raw pcap ({os.path.basename(dst)})."
+    )
 
 
 def _capture_one(
@@ -258,10 +296,20 @@ def _capture_one(
         if filt_warn:
             warnings.append(filt_warn)
 
+    # routing mode captures `-i any`, which double-counts each frame across
+    # netns legs. When the leg isn't pinned via --iface, write a de-duplicated
+    # sibling so Wireshark isn't drowned in dup-ACKs. A pinned iface already
+    # yields one clean copy, so there's nothing to collapse.
+    dedup_path = None
+    if mode == "routing" and (iface or "any") == "any":
+        dedup_path, dedup_warn = _apply_dedup(stat.path)
+        if dedup_warn:
+            warnings.append(dedup_warn)
+
     return _sub(
         folder, "ok",
         pcap_path=stat.path, bytes=stat.size_bytes,
-        filtered_path=filtered_path, filter=bpf,
+        filtered_path=filtered_path, filter=bpf, dedup_path=dedup_path,
         mode=mode, ncp=(str(resolved_ncp) if mode == "datapath" else None),
         warnings=warnings, stages=result.get("stages"),
     )
@@ -310,9 +358,15 @@ def capture_devices(
             applied locally after download (``tcpdump -r``), writing a
             sibling ``*_filtered.pcap`` and keeping the raw one.
         iface: routing mode only — tcpdump interface inside ``inband_ns``
-            (default ``any``). ``any`` double-counts each packet across
-            netns legs; pin the sub-if (e.g. ``g07008.0009``) for one clean
-            copy per packet.
+            (default ``any``). ``any`` double-counts each packet across netns
+            legs, so with the default a de-duplicated ``*_dedup.pcap`` sibling
+            is written next to the raw pcap (raw always kept). To capture a
+            single leg directly, pin the sub-if by its **internal**
+            ``inband_ns`` name, not the DNOS CLI name: ``ge400-7/0/8.9`` →
+            ``g07008.0009`` (``g`` + slot + pic + port, then ``.`` + 4-digit
+            unit); find it with ``docker exec <re> ip netns exec inband_ns ip
+            -br link``. A pinned iface yields one clean copy, so no dedup
+            sibling is produced.
         ncp: datapath NCP override; when unset it is auto-detected from the
             device's port-mirroring config (falling back to 0).
         user/password/timeout: SSH params (per-step timeout).

@@ -167,3 +167,36 @@ def test_apply_local_filter_tcpdump_error(monkeypatch, tmp_path):
     dst, warn = cap._apply_local_filter(str(src), "bad bpf")
     assert dst is None
     assert "syntax error" in warn
+
+
+# --- routing -i any de-duplication -----------------------------------------
+
+
+def test_apply_dedup_writes_sibling(monkeypatch, tmp_path):
+    src = tmp_path / "cap.pcap"
+    src.write_bytes(b"RAW-WITH-DUPES")
+    monkeypatch.setattr(
+        cap.capture_dedup, "dedup_pcap_bytes",
+        lambda data, **k: (b"DEDUPED", 3, 2),
+    )
+    dst, warn = cap._apply_dedup(str(src))
+    assert dst.endswith("cap_dedup.pcap")
+    assert os.path.exists(dst)
+    with open(dst, "rb") as fh:
+        assert fh.read() == b"DEDUPED"
+    # raw is preserved untouched
+    with open(src, "rb") as fh:
+        assert fh.read() == b"RAW-WITH-DUPES"
+    assert "2 duplicate" in warn
+
+
+def test_apply_dedup_noop_when_nothing_dropped(monkeypatch, tmp_path):
+    src = tmp_path / "cap.pcap"
+    src.write_bytes(b"CLEAN")
+    monkeypatch.setattr(
+        cap.capture_dedup, "dedup_pcap_bytes",
+        lambda data, **k: (data, 5, 0),
+    )
+    dst, warn = cap._apply_dedup(str(src))
+    assert dst is None and warn is None
+    assert not os.path.exists(str(src)[:-5] + "_dedup.pcap")

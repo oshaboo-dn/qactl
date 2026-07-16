@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`qactl cli capture --mode routing` double-counted every frame.**
+  `tcpdump -i any` in the routing-engine `inband_ns` records each control-plane
+  frame 2-3× — once per netns leg it crosses (a sub-interface AND its parent) —
+  so Wireshark flagged the copies as dup-ACKs and each dissection had to be
+  hand-deduped by (timestamp, direction, message). The default `-i any` capture
+  now writes a de-duplicated sibling `<name>_dedup.pcap` next to the raw pcap
+  (raw always kept): a pure-Python pass strips the SLL/SLL2/Ethernet link-layer
+  header off each record (so the per-leg `ifindex`/packet-type differences don't
+  defeat the match) and drops any frame whose network-layer payload is
+  byte-identical to one already kept within ~1 ms. Pinning a single leg with
+  `--iface` still yields one clean copy (no dedup sibling); the `--iface`
+  help now documents the DNOS-CLI→`inband_ns` name mapping
+  (`ge400-7/0/8.9` → `g07008.0009`) and how to look it up. New
+  `dedup_pcap_bytes` helper with unit tests in `test_capture_dedup.py`
+  (`--duration` was verified correct and is unchanged).
 - **`qactl spirent bgp add --strict` produced a non-conformant BGP-BFD
   strict-mode peer that never negotiated.** The tool advertised Cap-74 as a
   `BgpCustomCapability` with `CapLength=1` (a 1-octet value); a spec-correct DUT
