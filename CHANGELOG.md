@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Long-running jobs now Slack-notify by DEFAULT.** `qactl jenkins trigger` /
+  `trigger-raw` / `watch` previously only posted with an explicit
+  `--notify-slack`; they now default-on (a plain `qactl jenkins trigger` spawns
+  the background watcher and DMs build start + finish). Destination is resolved
+  by the new `slack_notify.default_channel()`: `$QACTL_NOTIFY_CHANNEL` if set,
+  else the built-in `@oshaboo`. Set `QACTL_NOTIFY_CHANNEL=""` as a global
+  kill-switch, or pass per-command `--no-notify` to silence one build. An
+  explicit `--notify-slack [CHANNEL]` still wins (bare flag = configured
+  webhook). `cli tar-load` / `techsupport create` / `tar-load pre-check` kept
+  their default `@oshaboo` but now route through the same
+  `QACTL_NOTIFY_CHANNEL` toggle. (`monitor tick`/`watch` stay explicit
+  opt-in — they post per-event, not per-job, and are `--yes`-gated.)
+
 ### Added
 - **`qactl spirent bgp send-pdu --device D --hex <PDU>`** — send a raw,
   hand-crafted BGP PDU over an emulated router's session (full message hex,

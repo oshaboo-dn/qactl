@@ -115,6 +115,54 @@ class ParserTests(unittest.TestCase):
             self.parser.parse_args(
                 ["jenkins", "watch", "feature/foo", "--queue-id", "9", "--build-number", "7"])
 
+    def test_jenkins_no_notify_flag_parses(self):
+        args = self.parser.parse_args(["jenkins", "trigger", "feature/foo", "--no-notify"])
+        self.assertTrue(args.no_notify)
+
+
+class JenkinsEffectiveNotifyTests(unittest.TestCase):
+    """The default-on Slack resolution for jenkins build commands."""
+
+    def setUp(self):
+        self.parser = build_native_parser()
+
+    def _resolve(self, argv, env):
+        from qactl.jenkins.cli import _effective_notify
+        args = self.parser.parse_args(argv)
+        with mock.patch.dict(os.environ, env, clear=False):
+            return _effective_notify(args)
+
+    def test_default_on_no_flag(self):
+        # No flag, no env override → default-on to @oshaboo.
+        env = {k: v for k, v in os.environ.items() if k != "QACTL_NOTIFY_CHANNEL"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                self._resolve(["jenkins", "trigger", "feature/foo"], {}), "@oshaboo")
+
+    def test_no_notify_disables(self):
+        self.assertIsNone(
+            self._resolve(["jenkins", "trigger", "feature/foo", "--no-notify"], {}))
+
+    def test_explicit_channel_wins(self):
+        self.assertEqual(
+            self._resolve(["jenkins", "trigger", "feature/foo", "--notify-slack", "#builds"], {}),
+            "#builds")
+
+    def test_bare_flag_preserved_as_webhook_marker(self):
+        # Bare --notify-slack ("") means "use the configured webhook" and must
+        # NOT be collapsed to None by the default resolver.
+        self.assertEqual(
+            self._resolve(["jenkins", "trigger", "feature/foo", "--notify-slack"], {}), "")
+
+    def test_env_override_channel(self):
+        self.assertEqual(
+            self._resolve(["jenkins", "trigger", "feature/foo"], {"QACTL_NOTIFY_CHANNEL": "#ci"}),
+            "#ci")
+
+    def test_env_empty_disables_default(self):
+        self.assertIsNone(
+            self._resolve(["jenkins", "trigger", "feature/foo"], {"QACTL_NOTIFY_CHANNEL": ""}))
+
 
 class ExitCodeTests(unittest.TestCase):
     def test_ok_and_warning_zero(self):

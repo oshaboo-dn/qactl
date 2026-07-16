@@ -694,7 +694,7 @@ def request_system_tar_load(
     fetch_timeout: int = 30,
     pre_check_poll_interval_s: int = _DEFAULT_PRECHECK_POLL_S,
     pre_check_max_wait_s: int = _DEFAULT_PRECHECK_WAIT_S,
-    notify_slack: str = "@oshaboo",
+    notify_slack: Optional[str] = None,
     block: bool = False,
     detach: bool = False,
 ) -> Dict[str, Any]:
@@ -1298,7 +1298,7 @@ def request_system_tar_load(
         step_timeout=step_timeout,
         pre_check_poll_interval_s=pre_check_poll_interval_s,
         pre_check_max_wait_s=pre_check_max_wait_s,
-        notify_channel=notify_slack,
+        notify_channel=(slack_notify.default_channel() if notify_slack is None else notify_slack),
     )
     _TARLOAD_REGISTRY.register(job)
     _tarload_notify_kickoff(job)
@@ -1850,7 +1850,7 @@ def request_system_pre_check(
     password: str = DEFAULT_PASSWORD,
     pre_check_poll_interval_s: int = _DEFAULT_PRECHECK_POLL_S,
     pre_check_max_wait_s: int = _DEFAULT_PRECHECK_WAIT_S,
-    notify_slack: str = "@oshaboo",
+    notify_slack: Optional[str] = None,
     block: bool = False,
 ) -> Dict[str, Any]:
     """Kick off ``request system target-stack pre-check`` on a device
@@ -1911,8 +1911,10 @@ def request_system_pre_check(
         pre_check_max_wait_s: Hard cap on total polling time, in
             seconds. Default 600, clamped to [60, 3600].
         notify_slack: Slack channel/user for kickoff + terminal
-            notifications, threaded under the kickoff message. Default
-            ``"@oshaboo"``; pass ``""`` to disable.
+            notifications, threaded under the kickoff message. ``None``
+            (the default) resolves to ``slack_notify.default_channel()``
+            (built-in ``@oshaboo``, overridable via
+            ``QACTL_NOTIFY_CHANNEL``); pass ``""`` to disable.
         block: Run the pre-check sequence + poll SYNCHRONOUSLY and return
             the terminal envelope. Default ``False`` (async — the MCP
             server shape). The one-shot CLI front passes ``True`` so the
@@ -2091,7 +2093,7 @@ def request_system_pre_check(
         step_timeout=_DEFAULT_TAR_STEP_TIMEOUT,
         pre_check_poll_interval_s=pre_check_poll_interval_s,
         pre_check_max_wait_s=pre_check_max_wait_s,
-        notify_channel=notify_slack,
+        notify_channel=(slack_notify.default_channel() if notify_slack is None else notify_slack),
     )
     _TARLOAD_REGISTRY.register(job)
     _tarload_notify_kickoff(job)

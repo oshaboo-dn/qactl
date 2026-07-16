@@ -8,6 +8,23 @@ caller (the event collector stashes the error instead).
 from qactl.dnos.cli.core import slack_notify
 
 
+def test_default_channel_builtin(monkeypatch):
+    """No override → the built-in @oshaboo default."""
+    monkeypatch.delenv("QACTL_NOTIFY_CHANNEL", raising=False)
+    assert slack_notify.default_channel() == "@oshaboo"
+
+
+def test_default_channel_env_override(monkeypatch):
+    monkeypatch.setenv("QACTL_NOTIFY_CHANNEL", "#ci-builds")
+    assert slack_notify.default_channel() == "#ci-builds"
+
+
+def test_default_channel_empty_env_disables(monkeypatch):
+    """An explicitly empty override is the global kill-switch."""
+    monkeypatch.setenv("QACTL_NOTIFY_CHANNEL", "")
+    assert slack_notify.default_channel() == ""
+
+
 def test_webhook_preferred_and_posts(monkeypatch):
     """With a webhook set, ``post`` uses it (not the MCP path) and reports ok."""
     captured = {}

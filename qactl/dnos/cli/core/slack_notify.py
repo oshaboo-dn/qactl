@@ -1,8 +1,10 @@
 """Best-effort Slack notify via the dn-mcp-server slackbot.
 
-Opt-in helper: long-running tools take a ``notify_slack=<channel>``
-kwarg and call :func:`post` at kickoff (creates the thread) and at
-terminal state (replies in the thread). An empty channel disables.
+Long-running tools take a ``notify_slack=<channel>`` kwarg and call
+:func:`post` at kickoff (creates the thread) and at terminal state
+(replies in the thread). An empty channel disables. Jobs that notify by
+DEFAULT resolve an unset channel via :func:`default_channel` (built-in
+``@oshaboo``, overridable/disable-able via ``QACTL_NOTIFY_CHANNEL``).
 
 Failures are silent — they MUST NOT break the actual task. Errors
 are returned in the result dict so the caller can stash them in
@@ -53,6 +55,24 @@ SLACK_WEBHOOK_URL = (
     or ""
 )
 DEFAULT_TIMEOUT_S = 10.0
+
+# The default Slack destination for long-running jobs (tar-load, techsupport,
+# pre-check, jenkins builds). These notify by DEFAULT — the operator gets a
+# ping when a slow job finishes without having to remember a flag.
+DEFAULT_NOTIFY_CHANNEL = "@oshaboo"
+
+
+def default_channel() -> str:
+    """Default Slack destination for long-running jobs — read per-call.
+
+    ``QACTL_NOTIFY_CHANNEL`` overrides the built-in ``@oshaboo`` default and
+    is the single global kill-switch: set it to the empty string to turn
+    default notify OFF everywhere (long jobs then only notify when a channel
+    is passed explicitly). A configured webhook
+    (``QACTL_SLACK_WEBHOOK_URL``) still decides the *transport* regardless of
+    the channel value — see :func:`post`.
+    """
+    return os.environ.get("QACTL_NOTIFY_CHANNEL", DEFAULT_NOTIFY_CHANNEL)
 
 
 def post(

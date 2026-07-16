@@ -86,7 +86,27 @@ def _artifacts(args):
                                         org=args.org, **_creds(args)), as_json=args.json)
 
 
-def _spawn_detached_watch(args, env: dict) -> Optional[int]:
+def _effective_notify(args) -> Optional[str]:
+    """Resolve the effective Slack destination for a build command.
+
+    Precedence: ``--no-notify`` (off) > an explicit ``--notify-slack`` (used
+    verbatim, incl. bare ``""`` = the configured webhook) > default-on via
+    ``slack_notify.default_channel()`` (built-in ``@oshaboo``, disabled when
+    ``QACTL_NOTIFY_CHANNEL`` is set empty). So a plain ``qactl jenkins
+    trigger`` notifies by default without any flag.
+    """
+    if getattr(args, "no_notify", False):
+        return None
+    if getattr(args, "notify_slack", None) is not None:
+        return args.notify_slack
+    try:
+        from qactl.dnos.cli.core import slack_notify
+    except Exception:  # noqa: BLE001 — notify is best-effort, never fatal
+        return None
+    return slack_notify.default_channel() or None
+
+
+def _spawn_detached_watch(args, env: dict, notify: str) -> Optional[int]:
     """Fire a detached ``qactl jenkins watch --queue-id …`` for a queued build.
 
     Returns the child PID (or ``None`` if we couldn't spawn). The child
@@ -100,7 +120,7 @@ def _spawn_detached_watch(args, env: dict) -> Optional[int]:
     if qid is None:
         return None
     argv = [sys.executable, "-m", "qactl", "jenkins", "watch", args.branch,
-            "--queue-id", str(qid), "--notify-slack", args.notify_slack,
+            "--queue-id", str(qid), "--notify-slack", notify,
             "--repo", args.repo, "--org", args.org,
             "--poll", str(args.poll), "--wait-timeout", str(args.wait_timeout)]
     try:
@@ -120,8 +140,10 @@ def _trigger(args):
         return rc
     # notify + no --wait → trigger, then hand off to a DETACHED watcher so the
     # command returns immediately while Slack still gets start+finish. With
-    # --wait we notify inline (blocking), the classic behavior.
-    detach = args.notify_slack is not None and not args.wait
+    # --wait we notify inline (blocking), the classic behavior. Notify is
+    # default-on (resolved here) unless --no-notify / QACTL_NOTIFY_CHANNEL="".
+    notify = _effective_notify(args)
+    detach = notify is not None and not args.wait
     env = tools.jenkins_trigger(
         args.branch, confirm=True, repo=args.repo, org=args.org,
         sanitizer=args.sanitizer, baseos=args.baseos, no_lint=args.no_lint,
@@ -133,10 +155,10 @@ def _trigger(args):
         inherit_from=args.inherit_from,
         extra_params=json.loads(args.extra_params) if args.extra_params else None,
         wait=args.wait, wait_timeout=args.wait_timeout, poll=args.poll,
-        notify_slack=None if detach else args.notify_slack, **_creds(args),
+        notify_slack=None if detach else notify, **_creds(args),
     )
     if detach and env.get("status") in ("ok", "warning"):
-        spawned = _spawn_detached_watch(args, env)
+        spawned = _spawn_detached_watch(args, env, notify)
         note = ("Watching in background; Slack will get build start + finish."
                 if spawned else "WARNING: could not spawn background watcher — no Slack updates.")
         env.setdefault("next_actions", []).insert(0, note)
@@ -148,7 +170,7 @@ def _trigger(args):
 def _watch(args):
     return emit(tools.jenkins_watch(
         args.branch, build_number=args.build_number, queue_id=args.queue_id,
-        repo=args.repo, org=args.org, notify_slack=args.notify_slack,
+        repo=args.repo, org=args.org, notify_slack=_effective_notify(args),
         wait_timeout=args.wait_timeout, poll=args.poll, **_creds(args),
     ), as_json=args.json)
 
@@ -166,7 +188,7 @@ def _trigger_raw(args):
     return emit(tools.jenkins_trigger_raw(
         args.job_path, params, confirm=True, wait=args.wait,
         wait_timeout=args.wait_timeout, poll=args.poll,
-        notify_slack=args.notify_slack, **_creds(args),
+        notify_slack=_effective_notify(args), **_creds(args),
     ), as_json=args.json)
 
 
@@ -233,9 +255,12 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     t.add_argument("--wait-timeout", type=float, default=4 * 3600, help="seconds to wait (with --wait)")
     t.add_argument("--poll", type=float, default=30.0, help="poll interval seconds (with --wait)")
     t.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
-                   help="post a Slack update on build start + finish (implies --wait). "
+                   help="override the default-on Slack update on build start + finish. "
                         "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL); "
-                        "give a CHANNEL for the MCP slackbot fallback.")
+                        "give a CHANNEL for the MCP slackbot. Default destination is "
+                        "$QACTL_NOTIFY_CHANNEL (else @oshaboo).")
+    t.add_argument("--no-notify", action="store_true",
+                   help="disable the default-on Slack notification for this build.")
     t.set_defaults(func=_trigger)
 
     tr = sub.add_parser("trigger-raw", parents=[parent],
@@ -252,8 +277,11 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     tr.add_argument("--wait-timeout", type=float, default=4 * 3600)
     tr.add_argument("--poll", type=float, default=30.0)
     tr.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
-                    help="post a Slack update on build start + finish (implies --wait). "
-                         "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL).")
+                    help="override the default-on Slack update on build finish (honoured on "
+                         "--wait). Bare flag uses the configured webhook "
+                         "($QACTL_SLACK_WEBHOOK_URL). Default: $QACTL_NOTIFY_CHANNEL (else @oshaboo).")
+    tr.add_argument("--no-notify", action="store_true",
+                    help="disable the default-on Slack notification for this build.")
     tr.set_defaults(func=_trigger_raw)
 
     w = sub.add_parser("watch", parents=[parent],
@@ -266,8 +294,11 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     grp_w.add_argument("--queue-id", type=int, default=None,
                        help="attach to a still-queued item (resolves to a build number)")
     w.add_argument("--notify-slack", nargs="?", const="", default=None, metavar="CHANNEL",
-                   help="post a Slack update on start (queued only) + finish. "
-                        "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL).")
+                   help="override the default-on Slack update on start (queued only) + finish. "
+                        "Bare flag uses the configured webhook ($QACTL_SLACK_WEBHOOK_URL). "
+                        "Default: $QACTL_NOTIFY_CHANNEL (else @oshaboo).")
+    w.add_argument("--no-notify", action="store_true",
+                   help="disable the default-on Slack notification.")
     w.add_argument("--wait-timeout", type=float, default=4 * 3600)
     w.add_argument("--poll", type=float, default=30.0)
     w.set_defaults(func=_watch)

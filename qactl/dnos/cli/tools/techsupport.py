@@ -640,7 +640,7 @@ def create_techsupport(
     poll_interval_s: int = _TS_DEFAULT_POLL_S,
     max_wait_s: int = _TS_DEFAULT_MAX_WAIT_S,
     timeout: int = 120,
-    notify_slack: str = "@oshaboo",
+    notify_slack: Optional[str] = None,
     block: bool = False,
 ) -> Dict[str, Any]:
     """Start a tech-support tarball generation on a device; returns IMMEDIATELY (unless ``block=True``).
@@ -926,7 +926,7 @@ def create_techsupport(
         poll_interval_s=poll_interval_s,
         max_wait_s=max_wait_s,
         timeout=timeout,
-        notify_channel=notify_slack,
+        notify_channel=(slack_notify.default_channel() if notify_slack is None else notify_slack),
     )
     _TS_REGISTRY.register(job)
     _ts_notify_kickoff(job)
