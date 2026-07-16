@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from qactl.spirent.ctl.core.output import emit
 
@@ -25,6 +26,16 @@ def _status(args: argparse.Namespace) -> int:
     from qactl.spirent.tools.bgp import spirent_bgp_status
     env = spirent_bgp_status(host=args.host, port=args.port, user=args.user,
                              device=args.device)
+    return emit(env, as_json=args.json)
+
+
+def _send_pdu(args: argparse.Namespace) -> int:
+    from qactl.spirent.tools.bgp import spirent_bgp_send_pdu
+    pdu = args.hex
+    if pdu == "-":
+        pdu = sys.stdin.read()
+    env = spirent_bgp_send_pdu(host=args.host, port=args.port, user=args.user,
+                               device=args.device, pdu_hex=pdu)
     return emit(env, as_json=args.json)
 
 
@@ -52,3 +63,12 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     s = sub.add_parser("status", parents=[parent], help="BGP router state per device")
     s.add_argument("--device", default=None, help="limit to one device name")
     s.set_defaults(func=_status)
+
+    p = sub.add_parser("send-pdu", parents=[parent],
+                       help="send a raw, hand-crafted BGP PDU over the session "
+                            "(negative testing / fuzzing)")
+    p.add_argument("--device", required=True, help="target device name")
+    p.add_argument("--hex", required=True, metavar="HEX",
+                   help="full BGP PDU as hex (16-byte marker included), "
+                        "e.g. an OPEN with a malformed capability; '-' reads stdin")
+    p.set_defaults(func=_send_pdu)

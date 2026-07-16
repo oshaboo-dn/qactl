@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`qactl spirent bgp send-pdu --device D --hex <PDU>`** — send a raw,
+  hand-crafted BGP PDU over an emulated router's session (full message hex,
+  16-byte marker included; `-` reads stdin). Builds an STC `BgpCustomPdu`
+  (uint8 byte-array) and fires `BgpSendCustomPduCommand`. The negative-testing
+  workhorse: fuzz the DUT with byte shapes the object model can't express
+  (malformed capabilities/attributes, bad lengths, truncated messages) and
+  confirm bgpd survives. Caveat documented in the tool: STC does not suppress
+  its own OPEN, so against an already-Established peer the inject resets the TCP
+  rather than being parsed as the session's OPEN.
+
 ### Fixed
 - **`qactl spirent bgp add` left a running device's BFD TX stalled after a
   reconfigure.** An STC config apply re-stages the device's protocol block,

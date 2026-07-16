@@ -531,6 +531,37 @@ class DeviceBgpToolTests(unittest.TestCase):
         self.assertFalse(env.get("restarted_device"))
         self.assertNotIn("DeviceStop", [c for c, _ in stc.performed])
 
+    def test_bgp_send_pdu_crafts_byte_array_and_sends(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            from qactl.spirent.tools.bgp import spirent_bgp_add, spirent_bgp_send_pdu
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="wan-stc-1", ip="123.4.1.1", prefix=24,
+                                  gateway="123.4.1.4", vlan=205)
+            spirent_bgp_add("h", 80, "dn", device="wan-stc-1", local_as=100001)
+            env = spirent_bgp_send_pdu("h", 80, "dn", device="wan-stc-1",
+                                       pdu_hex="FFFF 0011 01 04")  # spaces + case tolerated
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["bytes"], 6)
+        # hex normalized to a space-separated 0xNN uint8 array on the PDU object
+        pdu_ref = next(h for h, a in stc.attrs.items() if "Pdu" in a and a.get("Pdu"))
+        self.assertEqual(stc.attrs[pdu_ref]["Pdu"], "0xff 0xff 0x00 0x11 0x01 0x04")
+        self.assertIn("BgpSendCustomPduCommand", [c for c, _ in stc.performed])
+
+    def test_bgp_send_pdu_rejects_bad_hex(self):
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            from qactl.spirent.tools.bgp import spirent_bgp_add, spirent_bgp_send_pdu
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="d", ip="10.0.0.1", prefix=30, gateway="10.0.0.2")
+            spirent_bgp_add("h", 80, "dn", device="d", local_as=65001)
+            env = spirent_bgp_send_pdu("h", 80, "dn", device="d", pdu_hex="abc")  # odd length
+        self.assertEqual(env["status"], "bad_argument")
+
     def test_bgp_add_2byte_as_no_strict(self):
         stc = FakeDevStc(); self._reserve_port(stc)
         with self._patch(stc):

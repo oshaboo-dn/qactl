@@ -189,6 +189,63 @@ def spirent_bgp_add(
     return env
 
 
+def spirent_bgp_send_pdu(host: str, port: int, user: str,
+                         *, device: str, pdu_hex: str) -> Dict[str, Any]:
+    """Send a raw, hand-crafted BGP PDU over an emulated router's session.
+
+    The negative-testing workhorse: ``pdu_hex`` is a full BGP message as hex
+    (16-byte marker included) — e.g. an OPEN with a malformed capability, a bad
+    length, a truncated attribute — that STC transmits verbatim over the BGP TCP
+    session via ``BgpCustomPdu`` + ``BgpSendCustomPduCommand``. Lets us fuzz the
+    DUT's parser with byte shapes the object model can't express.
+
+    Caveat (observed 2026-07-16): STC does NOT suppress its normal BGP while
+    sending a custom PDU, so against an already-Established peer the inject tends
+    to reset the TCP rather than be parsed as the session's OPEN. To land a
+    crafted OPEN on the DUT's OpenSent parser, drive the peer so the DUT is
+    mid-setup (or suppress the emulated router's own OPEN) before sending.
+    """
+    env = make_envelope(kind="spirent_bgp_send_pdu", host=host, port=port,
+                        request={"device": device, "pdu_hex": pdu_hex})
+    clean = "".join((pdu_hex or "").split()).lower()
+    if clean.startswith("0x"):
+        clean = clean[2:]
+    if not clean or len(clean) % 2 or any(c not in "0123456789abcdef" for c in clean):
+        env["status"] = "bad_argument"
+        env["errors"].append("pdu_hex must be a non-empty, even-length hex string")
+        return env
+    byte_array = " ".join("0x" + clean[i:i + 2] for i in range(0, len(clean), 2))
+    try:
+        sess = session_mod.get_session(host, port, user)
+        env["session"] = sess.full_name
+        stc = sess.stc
+        proj = stc_ops.project(stc)
+        dev = stc_ops.find_device_by_name(stc, proj, device)
+        if dev is None:
+            env["status"] = "error"
+            env["errors"].append(f"no device named {device!r}")
+            return env
+        bgps = stc_ops.children(stc, dev, "BgpRouterConfig")
+        if not bgps:
+            env["status"] = "error"
+            env["errors"].append(f"device {device!r} has no BGP router")
+            return env
+        bgp = bgps[0]
+        # fresh custom-PDU object each call (don't accumulate)
+        for old in stc_ops.children(stc, bgp, "BgpCustomPdu"):
+            stc.delete(old)
+        pdu = stc.create("BgpCustomPdu", under=bgp)
+        stc.config(pdu, Pdu=byte_array, Active="TRUE")
+        stc.apply()
+        result = stc.perform("BgpSendCustomPduCommand", CustomPduList=pdu)
+        state = result.get("State") if isinstance(result, dict) else None
+        env["result"] = {"device": device, "bytes": len(clean) // 2,
+                         "state": state, "pdu_hex": clean}
+    except Exception as exc:
+        return _fail(env, exc)
+    return env
+
+
 def spirent_bgp_status(host: str, port: int, user: str,
                        *, device: Optional[str] = None) -> Dict[str, Any]:
     """Report BGP router state for one device or all devices in the session."""
