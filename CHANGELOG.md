@@ -19,10 +19,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (`"<name> - <user>"`, default `qactl-session`) if it exists, else creates
     it; `--new-session` forces a fresh one. Mirrors cheetah's proven
     `dnstc` `connect_to_session`.
-  - Commands (scaffold surface): `qactl spirent session connect` (reattach
-    probe), `session sessions` (list, no join), `session describe`
-    (server/system/BLL snapshot). Config via `$SPIRENT_HOST` / `SPIRENT_PORT`
+  - Commands: `qactl spirent session connect` (reattach probe), `session
+    sessions` (list, no join), `session describe` (server/system/BLL snapshot);
+    and `qactl spirent port reserve|release|status` — reserve (attach) a
+    physical port by location (`//<chassis-ip>/<slot>/<port>`), wait for link
+    UP, release, and list session ports with link state. `--force` (RevokeOwner)
+    and `release` are confirm-gated. Config via `$SPIRENT_HOST` / `SPIRENT_PORT`
     (80) / `SPIRENT_USER` (dn) / `SPIRENT_SESSION`.
+  - Live-verified 2026-07-16 against labserver `il-auto-containers` + chassis
+    `100.64.3.238` port `6/13` (attach → LinkStatus UP, 100G).
   - `stcrestclient>=1.9.0` added as a dependency; imported lazily so parser,
     `--help`, and the offline tests need neither the package nor a live
     server. Ports / config-load / traffic / protocol authoring are the

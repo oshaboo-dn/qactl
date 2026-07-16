@@ -195,6 +195,155 @@ class DiagToolTests(unittest.TestCase):
         self.assertTrue(env["next_actions"])
 
 
+class FakePortStc:
+    """A richer fake modelling the project/port primitives used by tools/port."""
+
+    def __init__(self, attach_link="UP"):
+        self.attrs = {"system1": {"children-Project": "project1"},
+                      "project1": {"children-Port": ""}}
+        self.performed = []
+        self.applied = 0
+        self.deleted = []
+        self._n = 0
+        self._attach_link = attach_link
+
+    def get(self, handle, attr):
+        return self.attrs.get(handle, {}).get(attr, "")
+
+    def create(self, obj_type, under=None, **kw):
+        self._n += 1
+        ref = f"{obj_type}{self._n}"
+        self.attrs.setdefault(ref, {}).update({k: str(v) for k, v in kw.items()})
+        if obj_type == "port":
+            cur = self.attrs["project1"]["children-Port"].split()
+            self.attrs["project1"]["children-Port"] = " ".join(cur + [ref])
+            self.attrs[ref].setdefault("Online", "false")
+            self.attrs[ref].setdefault("Active", "true")
+            self.attrs[ref].setdefault("activephy-Targets", "")
+        return ref
+
+    def config(self, ref, **kw):
+        self.attrs.setdefault(ref, {}).update({k: str(v) for k, v in kw.items()})
+
+    def perform(self, command, **kw):
+        self.performed.append((command, kw))
+        if command == "AttachPorts":
+            ref = kw["PortList"]
+            phy = f"phy_{ref}"
+            self.attrs[ref]["activephy-Targets"] = phy
+            self.attrs.setdefault(phy, {})["LinkStatus"] = self._attach_link
+            self.attrs[ref]["Online"] = "true"
+        elif command == "ReleasePort":
+            ref = kw["portList"]
+            self.attrs[ref]["activephy-Targets"] = ""
+            self.attrs[ref]["Online"] = "false"
+        return {}
+
+    def apply(self):
+        self.applied += 1
+
+    def delete(self, ref):
+        self.deleted.append(ref)
+
+
+class _StubSession:
+    def __init__(self, stc):
+        self.stc = stc
+        self.full_name = "qactl-session - dn"
+
+
+class PortToolTests(unittest.TestCase):
+    def _patch(self, stc):
+        return mock.patch(
+            "qactl.spirent.core.session.get_session",
+            return_value=_StubSession(stc),
+        )
+
+    def test_reserve_attaches_and_reports_up(self):
+        stc = FakePortStc(attach_link="UP")
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port
+            env = spirent_reserve_port(
+                "h", 80, "dn", location="//100.64.3.238/6/13", timeout=2,
+            )
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["link_status"], "UP")
+        self.assertTrue(env["result"]["online"])
+        cmds = [c for c, _ in stc.performed]
+        self.assertIn("AttachPorts", cmds)
+        self.assertGreaterEqual(stc.applied, 1)
+
+    def test_reserve_force_sets_revokeowner(self):
+        stc = FakePortStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port
+            spirent_reserve_port("h", 80, "dn",
+                                 location="//1.2.3.4/6/13", force=True, timeout=1)
+        _, kw = next(kv for kv in stc.performed if kv[0] == "AttachPorts")
+        self.assertEqual(kw["RevokeOwner"], "TRUE")
+
+    def test_reserve_link_down_is_warning(self):
+        stc = FakePortStc(attach_link="DOWN")
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port
+            env = spirent_reserve_port("h", 80, "dn",
+                                       location="//1.2.3.4/6/13", timeout=1)
+        self.assertEqual(env["status"], "warning")
+        self.assertTrue(env["warnings"])
+
+    def test_reserve_reuses_existing_port_by_location(self):
+        stc = FakePortStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port
+            spirent_reserve_port("h", 80, "dn", location="//1.2.3.4/6/13", timeout=1)
+            spirent_reserve_port("h", 80, "dn", location="//1.2.3.4/6/13", timeout=1)
+        # Only one port object created for the same location.
+        self.assertEqual(stc.attrs["project1"]["children-Port"].split().count("port1"), 1)
+        self.assertEqual(len(stc.attrs["project1"]["children-Port"].split()), 1)
+
+    def test_release_missing_port_is_warning(self):
+        stc = FakePortStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_release_port
+            env = spirent_release_port("h", 80, "dn", location="//1.2.3.4/6/13")
+        self.assertEqual(env["status"], "warning")
+        self.assertFalse(env["result"]["released"])
+
+    def test_release_existing_port(self):
+        stc = FakePortStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port, spirent_release_port
+            spirent_reserve_port("h", 80, "dn", location="//1.2.3.4/6/13", timeout=1)
+            env = spirent_release_port("h", 80, "dn", location="//1.2.3.4/6/13")
+        self.assertEqual(env["status"], "ok")
+        self.assertTrue(env["result"]["released"])
+        self.assertIn("ReleasePort", [c for c, _ in stc.performed])
+
+    def test_status_lists_ports(self):
+        stc = FakePortStc()
+        with self._patch(stc):
+            from qactl.spirent.tools.port import spirent_reserve_port, spirent_port_status
+            spirent_reserve_port("h", 80, "dn", location="//1.2.3.4/6/13", timeout=1)
+            env = spirent_port_status("h", 80, "dn")
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["count"], 1)
+        self.assertEqual(env["result"]["ports"][0]["location"], "//1.2.3.4/6/13")
+
+
+class PortParserTests(unittest.TestCase):
+    def test_port_subcommands(self):
+        p = build_parser()
+        args = p.parse_args(["port", "reserve", "--host", "h",
+                             "--location", "//1.2.3.4/6/13"])
+        self.assertEqual(args.location, "//1.2.3.4/6/13")
+        self.assertTrue(callable(args.func))
+        args = p.parse_args(["port", "status", "--host", "h"])
+        self.assertTrue(callable(args.func))
+        args = p.parse_args(["port", "release", "--host", "h",
+                             "--location", "//1.2.3.4/6/13"])
+        self.assertTrue(callable(args.func))
+
+
 class DispatchTests(unittest.TestCase):
     def test_top_level_routes_to_spirent(self):
         from qactl.__main__ import main as top_main
