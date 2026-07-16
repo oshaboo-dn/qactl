@@ -15,6 +15,12 @@ _OFFLINE_MARKERS = ("localhost", "127.0.0.1", "offline", "null")
 # must go in the ``*4Byte`` attribute (asdot notation) with the 4-byte flag on.
 AS_2BYTE_MAX = 65535
 
+# RFC 6793 AS_TRANS — the reserved 2-byte AS a 4-byte speaker puts in the OPEN's
+# 16-bit My-AS field (the real 4-byte AS travels in the AS4 capability). STC does
+# NOT auto-substitute this, so a stale 2-byte ``AsNum`` would be sent verbatim and
+# the DNOS peer rejects with NOTIFICATION 2/2 "Bad Peer AS" (verified 2026-07-16).
+AS_TRANS = 23456
+
 
 def is_local(location: str) -> bool:
     return any(m in (location or "").lower() for m in _OFFLINE_MARKERS)
@@ -74,7 +80,10 @@ def apply_as(stc: Any, bgp_ref: str, *, local: bool, asn: int) -> None:
     else:
         num_attr, num4_attr, flag_attr = "DutAsNum", "DutAsNum4Byte", "Enable4ByteDutAsNum"
     if asn > AS_2BYTE_MAX:
-        stc.config(bgp_ref, **{flag_attr: "TRUE", num4_attr: as_dot(asn)})
+        # 4-byte AS: real value in *4Byte, AS_TRANS in the 2-byte field so a
+        # stale AsNum isn't sent in the OPEN's 16-bit My-AS.
+        stc.config(bgp_ref, **{flag_attr: "TRUE", num4_attr: as_dot(asn),
+                               num_attr: str(AS_TRANS)})
     else:
         stc.config(bgp_ref, **{flag_attr: "FALSE", num_attr: str(asn)})
 

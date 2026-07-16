@@ -70,7 +70,7 @@ from qactl.dnos.cli.tools.templates import (
     template_get,
     template_list,
 )
-from qactl.dnos.cli.tools.traces import get_trace, list_traces
+from qactl.dnos.cli.tools.traces import _TRACE_TARGET_NAMES, get_trace, list_traces
 
 # Help-panel groups (`--help` scannability only — invocation stays flat, e.g.
 # `qactl cli show`, NOT `qactl cli reads show`). Each command/sub-group is
@@ -573,6 +573,12 @@ def trace(
 ):
     """Read a trace file with filters."""
     c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    # UX guard: a bare `trace bgp` passes "bgp" as the positional filename, which
+    # used to silently read a nonexistent file named "bgp" and return empty
+    # (the live file is `bgpd_traces`). If the positional name is actually a
+    # known subsystem preset and --target wasn't given, treat it as --target.
+    if name in _TRACE_TARGET_NAMES and target is None:
+        target, name = name, None
     O.finish(O.call(get_trace, c, name=name, target=target, tail_lines=tail, since=since, until=until,
                     grep=grep, grep_exclude=grep_exclude, grep_ignore_case=ignore_case, level=level,
                     live_only=live_only, count_only=count_only, ncc=ncc, ncp=ncp, container=container), c)

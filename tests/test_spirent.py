@@ -470,6 +470,11 @@ class DeviceBgpToolTests(unittest.TestCase):
         self.assertTrue(env["result"]["bfd"])
         self.assertTrue(env["result"]["strict_mode_cap74"])
         self.assertTrue(env["result"]["use_gateway_as_peer"])
+        # 4-byte AS must also stamp AS_TRANS (23456) into the 2-byte fields,
+        # else STC sends a stale AsNum and the peer NOTIFICATIONs Bad Peer AS.
+        bgp_ref = next(h for h, a in stc.attrs.items() if a.get("AsNum4Byte"))
+        self.assertEqual(stc.attrs[bgp_ref]["AsNum"], "23456")
+        self.assertEqual(stc.attrs[bgp_ref]["DutAsNum"], "23456")
 
     def test_bgp_add_2byte_as_no_strict(self):
         stc = FakeDevStc(); self._reserve_port(stc)

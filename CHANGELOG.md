@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`qactl spirent bgp` — 4-byte AS sent a stale 2-byte AsNum in the OPEN.**
+  When the local AS was >65535 (e.g. 100001), the tool set `AsNum4Byte` +
+  `Enable4ByteAsNum` but left the old 2-byte `AsNum`, so STC put that stale
+  value in the OPEN's 16-bit My-AS field alongside the AS4 capability. A DNOS
+  peer then rejected the session with NOTIFICATION 2/2 "Bad Peer AS"
+  (`myasn 65001 mismatch with remote_as 100001`). `stc_ops.apply_as` now stamps
+  `AS_TRANS (23456)` into the 2-byte field for any 4-byte AS (local + DUT).
+  Verified live: cl↔Spirent iBGP AS 100001 reaches Established. Regression test
+  in `test_spirent.py`.
+- **`qactl cli trace <subsystem>` silently read nothing.** A bare
+  `qactl cli trace bgp` passed `bgp` as the positional *filename*, so it read a
+  nonexistent `/core/traces/routing_engine/bgp` (the live file is `bgpd_traces`)
+  and returned an empty result — looking like "no BGP traces exist." The `trace`
+  command now promotes a positional name that matches a known subsystem preset
+  (`bgp`/`isis`/`zebra`/`fibmgr`/`wb_agent`) to `--target` when `--target`
+  wasn't given, so `trace bgp` reads `bgpd_traces` as intended.
 - **Persistent-session daemon authenticated devices added after it started
   with the wrong (default) credentials.** `config.load_config` is
   `lru_cache`d for a process's whole lifetime, and the session daemon is
