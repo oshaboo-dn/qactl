@@ -11,7 +11,8 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "DriveNets" }]
 keywords = ["dnos", "netconf", "gnmi", "restconf", "ixia", "ixnetwork",
-            "jira", "confluence", "jenkins", "cli", "qa", "automation"]
+            "spirent", "testcenter", "jira", "confluence", "jenkins",
+            "cli", "qa", "automation"]
 
 dependencies = [
     # MCP front (stdio servers exposing the shared tool layer)
@@ -31,6 +32,8 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
     # Ixia traffic group (qactl ixia)
     "ixnetwork-restpy>=1.10.0",
+    # Spirent traffic group (qactl spirent) — STC REST client
+    "stcrestclient>=1.9.0",
 ]
 
 [project.optional-dependencies]

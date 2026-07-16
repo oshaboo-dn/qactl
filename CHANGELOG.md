@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`qactl spirent` — Spirent TestCenter (STC REST) traffic group (scaffold)**:
+  a new sibling of `qactl ixia` that drives a Spirent TestCenter REST server
+  (labserver) over the `stcrestclient` package — plain HTTP, no OTG adapter,
+  no containers. Mirrors the ixia module layer-for-layer (`client/` low-level
+  STC-REST session, `core/` envelope + reattach-first session cache, `tools/`
+  ops, `ctl/` argparse front) and the shared contract (`--json`, real exit
+  codes, `--yes` confirm gate).
+  - Session model is **reattach-first** like ixia: because qactl is
+    process-per-invocation, each call joins the named STC session
+    (`"<name> - <user>"`, default `qactl-session`) if it exists, else creates
+    it; `--new-session` forces a fresh one. Mirrors cheetah's proven
+    `dnstc` `connect_to_session`.
+  - Commands (scaffold surface): `qactl spirent session connect` (reattach
+    probe), `session sessions` (list, no join), `session describe`
+    (server/system/BLL snapshot). Config via `$SPIRENT_HOST` / `SPIRENT_PORT`
+    (80) / `SPIRENT_USER` (dn) / `SPIRENT_SESSION`.
+  - `stcrestclient>=1.9.0` added as a dependency; imported lazily so parser,
+    `--help`, and the offline tests need neither the package nor a live
+    server. Ports / config-load / traffic / protocol authoring are the
+    documented next step (see `qactl/spirent/README.md`), landing once the
+    physical Spirent port is cabled.
+
 ### Changed
 - **`qactl cli --help` groups subcommands under panel headers**: the ~30
   commands now render bucketed under `Reads / state`, `Discovery`, `Logs`,

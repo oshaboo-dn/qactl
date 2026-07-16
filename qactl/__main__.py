@@ -34,6 +34,7 @@ from qactl.orc import cli as orc_cli
 NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "orc", "jobs"}
 QACTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
+SPIRENT_GROUP = "spirent"
 MCP_GROUP = "mcp"
 
 
@@ -51,8 +52,9 @@ DNOS devices (delegated to qactl):
   rc            RESTCONF
   setup         configure device registry / credentials
 
-Traffic generation (delegated to qactl.ixia.ctl):
+Traffic generation (delegated to qactl.ixia.ctl / qactl.spirent.ctl):
   ixia          IxNetwork sessions / topology / bgp / protocols / traffic
+  spirent       Spirent TestCenter (STC REST) sessions  [scaffold]
 
 Atlassian + CI (native):
   jira          Jira watchers / attachments / comments / transitions / status
@@ -134,6 +136,12 @@ def _delegate_ixia(argv: List[str]) -> int:
     return int(ixia_main(argv[1:], prog="qactl ixia"))
 
 
+def _delegate_spirent(argv: List[str]) -> int:
+    """Invoke the qactl.spirent.ctl argparse main with everything after ``spirent``."""
+    from qactl.spirent.ctl.__main__ import main as spirent_main
+    return int(spirent_main(argv[1:], prog="qactl spirent"))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
@@ -152,6 +160,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _delegate_qactl(argv)
     if group == IXIA_GROUP:
         return _delegate_ixia(argv)
+    if group == SPIRENT_GROUP:
+        return _delegate_spirent(argv)
     print(f"qactl: unknown group {group!r}\n", file=sys.stderr)
     print(TOP_HELP, file=sys.stderr)
     return 2
