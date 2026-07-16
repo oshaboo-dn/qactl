@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`qactl spirent bgp add --strict` produced a non-conformant BGP-BFD
+  strict-mode peer that never negotiated.** The tool advertised Cap-74 as a
+  `BgpCustomCapability` with `CapLength=1` (a 1-octet value); a spec-correct DUT
+  (DNOS, since SW-276322) rejects any length ≠ 0 with NOTIFICATION 2/0
+  ("BFD Strict Mode Capability length error: got 1, expected exactly 0") per
+  draft-ietf-idr-bgp-bfd-strict-mode §5. It also omitted the MP address-family
+  capability and left STC's BFD BGP-triggered, so even past the length check the
+  session would negotiate no AF and/or deadlock against a strict DUT. `--strict`
+  now builds the full negotiated recipe: Cap-74 at `CapLength=0` (STC accepts 0
+  as long as the `Capability` value is left at default), an MP AFI capability
+  (`CustomizedAfi` + `BgpCapabilityConfig`), and a control-plane-independent BFD
+  session TXing to the DUT. Verified live: cl↔Spirent reaches Established with
+  "BFD Strict Mode Capability: advertised and received", BFD Up. Regression test
+  in `test_spirent.py`.
 - **`qactl spirent bgp` — 4-byte AS sent a stale 2-byte AsNum in the OPEN.**
   When the local AS was >65535 (e.g. 100001), the tool set `AsNum4Byte` +
   `Enable4ByteAsNum` but left the old 2-byte `AsNum`, so STC put that stale

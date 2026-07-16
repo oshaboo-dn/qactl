@@ -4,10 +4,12 @@ Adds a ``BgpRouterConfig`` to an emulated device, handling 4-byte ASNs
 (``Enable4ByteAsNum`` + asdot ``AsNum4Byte``) and the two peer-address modes
 (``UseGatewayAsDut`` = peer is the device gateway, or an explicit ``DutIpv4Addr``).
 
-``--strict`` advertises BGP-BFD **strict-mode** by attaching a custom capability
-with ``CapabilityType=74`` (draft-ietf-idr-bgp-bfd-strict-mode; the "Cap-74"
-the DNOS interop tests use). ``--bfd`` flips ``EnableBfd``. Names/attrs verified
-live against ``il-auto-containers`` 2026-07-16.
+``--strict`` sets up negotiated BGP-BFD **strict-mode** (draft-ietf-idr-bgp-bfd-
+strict-mode "Cap-74") — a 0-octet ``BgpCustomCapability`` type 74, an explicit
+MP address-family capability, and a control-plane-independent BFD session. See
+``_configure_strict`` for why all three are required. ``--bfd`` flips
+``EnableBfd``. Names/attrs verified live against ``il-auto-containers`` (STC
+5.61) 2026-07-16.
 """
 
 from __future__ import annotations
@@ -48,6 +50,62 @@ def _bgp_row(stc: Any, dev: str, bgp: str) -> Dict[str, Any]:
         "gw_mac_resolve": stc.get(dev, "Ipv4GatewayMacResolveState"),
     }
     return row
+
+
+def _configure_strict(stc: Any, dev: str, bgp: str,
+                      use_gateway: bool, peer: Optional[str]) -> None:
+    """Set up negotiated BGP-BFD strict-mode (Cap-74) on an STC BGP router.
+
+    Learned live against ``il-auto-containers`` (STC 5.61) 2026-07-16 — a strict
+    DUT (DNOS) only reaches Established with a Spirent peer when ALL THREE of
+    these are in place; any one missing and it fails differently:
+
+    1. Cap-74 with ``CapLength=0``. draft-ietf-idr-bgp-bfd-strict-mode §5 defines
+       the capability as 0 octets and DNOS rejects any other length with
+       NOTIFICATION 2/0 "length error: got N, expected exactly 0". STC's
+       ``BgpCustomCapability`` DOES accept ``CapLength=0`` — but only if the
+       ``Capability`` value attribute is left at its default; setting it to ""
+       trips STC's "length should be between 1 and 4086 bytes" on apply.
+    2. An explicit MP address-family capability (``CustomizedAfi=TRUE`` +
+       ``BgpCapabilityConfig`` Afi/SubAfi). Without it the session Establishes
+       but negotiates no AF and DNOS logs "Configured ... do not overlap with
+       received MP capabilities".
+    3. A control-plane-independent BFD session so STC transmits BFD regardless
+       of BGP state. STC's default BFD is BGP-triggered, so against a strict DUT
+       (which holds BGP until BFD is Up) it deadlocks; this session breaks it.
+    """
+    is_v6 = (stc.get(bgp, "IpVersion") or "").upper() == "IPV6"
+
+    # (1) Cap-74, length 0.
+    cap = stc_ops.strict_capability(stc, bgp)
+    if cap is None:
+        cap = stc.create("BgpCustomCapability", under=bgp,
+                         CapabilityType=stc_ops.STRICT_CAP_TYPE)
+    stc.config(cap, CapLength="0", Active="TRUE")
+
+    # (2) MP address-family capability (IPv4-unicast = 1/1, IPv6-unicast = 2/1).
+    stc.config(bgp, CustomizedAfi="TRUE")
+    afi_caps = stc_ops.children(stc, bgp, "BgpCapabilityConfig")
+    afi_cfg = afi_caps[0] if afi_caps else stc.create("BgpCapabilityConfig", under=bgp)
+    for extra in afi_caps[1:]:
+        stc.delete(extra)
+    stc.config(afi_cfg, Afi="2" if is_v6 else "1", SubAfi="1", Active="TRUE")
+
+    # (3) Control-plane-independent BFD session TXing to the DUT interface IP.
+    if not use_gateway and peer:
+        dut_ip = peer
+    else:
+        dut_ip = stc.get(dev, "Ipv6GatewayAddress" if is_v6 else "Ipv4GatewayAddress")
+    bfd_rc = stc_ops.children(stc, dev, "BfdRouterConfig")[0]
+    sess_type = ("BfdIpv6ControlPlaneIndependentSession" if is_v6
+                 else "BfdIpv4ControlPlaneIndependentSession")
+    nb_type = "Ipv6NetworkBlock" if is_v6 else "Ipv4NetworkBlock"
+    sess_objs = stc_ops.children(stc, bfd_rc, sess_type)
+    cpi = sess_objs[0] if sess_objs else stc.create(sess_type, under=bfd_rc)
+    nbs = stc_ops.children(stc, cpi, nb_type)
+    nb = nbs[0] if nbs else stc.create(nb_type, under=cpi)
+    stc.config(nb, StartIpList=dut_ip)
+    stc.config(cpi, Active="TRUE")
 
 
 def spirent_bgp_add(
@@ -101,12 +159,7 @@ def spirent_bgp_add(
             stc.create("BfdRouterConfig", under=dev)
         stc.config(bgp, EnableBfd="TRUE" if need_bfd else "FALSE")
         if strict:
-            cap = stc_ops.strict_capability(stc, bgp)
-            if cap is None:
-                cap = stc.create("BgpCustomCapability", under=bgp,
-                                 CapabilityType=stc_ops.STRICT_CAP_TYPE,
-                                 CapLength="1", Capability="0")
-            stc.config(cap, Active="TRUE")
+            _configure_strict(stc, dev, bgp, use_gateway, peer)
         else:
             cap = stc_ops.strict_capability(stc, bgp)
             if cap is not None:

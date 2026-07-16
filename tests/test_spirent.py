@@ -475,6 +475,20 @@ class DeviceBgpToolTests(unittest.TestCase):
         bgp_ref = next(h for h, a in stc.attrs.items() if a.get("AsNum4Byte"))
         self.assertEqual(stc.attrs[bgp_ref]["AsNum"], "23456")
         self.assertEqual(stc.attrs[bgp_ref]["DutAsNum"], "23456")
+        # Negotiated strict recipe (all three parts required — see
+        # _configure_strict): Cap-74 at length 0, MP AFI cap, and a
+        # control-plane-independent BFD session TXing to the DUT gateway.
+        cap_ref = next(h for h, a in stc.attrs.items()
+                       if a.get("CapabilityType") == "74")
+        self.assertEqual(stc.attrs[cap_ref]["CapLength"], "0")
+        self.assertEqual(stc.attrs[cap_ref]["Active"], "true")
+        self.assertEqual(stc.attrs[bgp_ref]["CustomizedAfi"], "true")
+        afi_ref = next(h for h, a in stc.attrs.items()
+                       if a.get("Afi") == "1" and a.get("SubAfi") == "1")
+        self.assertEqual(stc.attrs[afi_ref]["Active"], "true")
+        nb_ref = next(h for h, a in stc.attrs.items()
+                      if a.get("StartIpList") == "123.4.1.4")
+        self.assertTrue(nb_ref)
 
     def test_bgp_add_2byte_as_no_strict(self):
         stc = FakeDevStc(); self._reserve_port(stc)
