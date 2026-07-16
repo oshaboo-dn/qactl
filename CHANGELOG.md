@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`qactl cli --help` groups subcommands under panel headers**: the ~30
+  commands now render bucketed under `Reads / state`, `Discovery`, `Logs`,
+  `Config`, `Exec / diagnostics`, `Destructive lifecycle`, and `Management`
+  (in that order) instead of one flat list. Display-only — invocation is
+  unchanged (`qactl cli show`, not `qactl cli reads show`). Implemented with a
+  plain-text `_PanelGroup` formatter so the deliberate `rich_markup_mode=None`
+  (help text carries literal `[...]`/`<...>` tokens) stays intact.
+
 ### Added
 - **`qactl jobs` — cross-family async-job list/inspect**: a new native group
   that reads across every job-store namespace (`tarload` / `techsupport` /

@@ -12,6 +12,7 @@ import time as _time
 from typing import Annotated, List, Optional
 
 import typer
+from typer.core import TyperGroup
 
 from qactl.dnos.core import confirm, options as O
 from qactl.dnos.cli.tools.backup import backup_device, list_backups, read_backup, restore_device
@@ -71,7 +72,52 @@ from qactl.dnos.cli.tools.templates import (
 )
 from qactl.dnos.cli.tools.traces import get_trace, list_traces
 
-app = typer.Typer(no_args_is_help=True, help="SSH→DNOS CLI: show / config / backup / recovery.")
+# Help-panel groups (`--help` scannability only — invocation stays flat, e.g.
+# `qactl cli show`, NOT `qactl cli reads show`). Each command/sub-group is
+# tagged with `rich_help_panel=<one of these>`; `_PanelGroup` below buckets
+# them under plain-text headers in `--help`, in `_PANEL_ORDER`. We render this
+# ourselves rather than via Typer's rich formatter because the root app runs
+# `rich_markup_mode=None` on purpose (help text carries literal `[...]` /
+# `<...>` tokens that rich markup would mangle), and Typer forces the root's
+# markup mode onto every child group.
+_P_READ = "Reads / state"
+_P_DISC = "Discovery (learn the command tree — read-only, run FIRST)"
+_P_LOG = "Logs"
+_P_CFG = "Config"
+_P_EXEC = "Exec / diagnostics"
+_P_LIFE = "Destructive lifecycle"
+_P_MGMT = "Management"
+_PANEL_ORDER = [_P_READ, _P_DISC, _P_LOG, _P_CFG, _P_EXEC, _P_LIFE, _P_MGMT]
+_P_DEFAULT = "Commands"
+
+
+class _PanelGroup(TyperGroup):
+    """A Click/Typer group that renders subcommands bucketed under the
+    `rich_help_panel` headers, ordered by `_PANEL_ORDER` — plain Click
+    formatting, no rich (so `rich_markup_mode=None` stays intact)."""
+
+    def format_commands(self, ctx, formatter):  # type: ignore[override]
+        buckets: dict[str, list] = {}
+        for name in self.commands:  # dict = registration order
+            cmd = self.get_command(ctx, name)
+            if cmd is None or cmd.hidden:
+                continue
+            panel = getattr(cmd, "rich_help_panel", None) or _P_DEFAULT
+            buckets.setdefault(panel, []).append((name, cmd))
+        if not any(buckets.values()):
+            return
+        limit = formatter.width - 6 - max(len(n) for n in self.commands)
+        ordered = [p for p in _PANEL_ORDER if p in buckets]
+        ordered += [p for p in buckets if p not in _PANEL_ORDER]  # unknowns last
+        for panel in ordered:
+            rows = [(name, cmd.get_short_help_str(limit)) for name, cmd in buckets[panel]]
+            with formatter.section(panel):
+                formatter.write_dl(rows)
+
+
+app = typer.Typer(no_args_is_help=True, help="SSH→DNOS CLI: show / config / backup / recovery.",
+                  cls=_PanelGroup)
+
 template_app = typer.Typer(no_args_is_help=True, help="Manage jinja templates.")
 device_app = typer.Typer(no_args_is_help=True, help="Manage the device registry.")
 ts_app = typer.Typer(no_args_is_help=True, help="Tech-support bundles.")
@@ -84,15 +130,8 @@ session_app = typer.Typer(
     no_args_is_help=True,
     help="Persistent SSH-session daemon (one warm transport per device across invocations).",
 )
-app.add_typer(session_app, name="session")
-app.add_typer(template_app, name="template")
-app.add_typer(device_app, name="device")
-app.add_typer(ts_app, name="techsupport")
-app.add_typer(tarload_app, name="tar-load")
-app.add_typer(backup_app, name="backup")
-app.add_typer(restart_app, name="restart")
-app.add_typer(monitor_app, name="monitor")
-app.add_typer(core_app, name="core")
+# Sub-group registration lives at the end of the file so their help panels
+# trail the flat-command panels (see _P_* above).
 
 
 # --- reads / discovery -----------------------------------------------------
@@ -117,7 +156,7 @@ def _batch_show_args(cmd: List[str]) -> Optional[List[str]]:
     return stripped
 
 
-@app.command()
+@app.command(rich_help_panel=_P_READ)
 def show(
     cmd: Annotated[List[str], typer.Argument(help=(
         "DNOS show command words, OR several full quoted 'show …' commands "
@@ -140,7 +179,7 @@ def show(
     O.finish(O.call(show_tool, c, command=" ".join(cmd)), c)
 
 
-@app.command("show-config")
+@app.command("show-config", rich_help_panel=_P_READ)
 def show_config_cmd(
     cmd: Annotated[List[str], typer.Argument(help=(
         "DNOS `show config` command words, OR several full quoted "
@@ -161,7 +200,7 @@ def show_config_cmd(
     O.finish(O.call(show_config, c, command=" ".join(cmd)), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_READ)
 def system(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
@@ -173,7 +212,7 @@ def system(
     O.finish(O.call(show_system, c), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_READ)
 def interfaces(
     interface: Annotated[Optional[str], typer.Argument(help="Single interface to filter to (e.g. ge400-7/0/8.6). Omit for all.")] = None,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -186,7 +225,7 @@ def interfaces(
     O.finish(O.call(interfaces_tool, c, interface=interface), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_DISC)
 def search(
     scope: Annotated[str, typer.Argument(help="show | show_config | configure | clear | request | run | set | unset | all-commands.")],
     words: Annotated[List[str], typer.Argument(help="Keywords to match.")],
@@ -199,7 +238,7 @@ def search(
     O.finish(O.call(cmd_search, c, scope=scope, words=words), c)
 
 
-@app.command("help")
+@app.command("help", rich_help_panel=_P_DISC)
 def help_cmd(
     command: Annotated[List[str], typer.Argument(
         help="Canonical DNOS command line (keep <placeholder> tokens intact, "
@@ -221,7 +260,7 @@ def help_cmd(
     O.finish(O.call(cmd_help, c, command=" ".join(command)), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_DISC)
 def crawl(
     path: Annotated[str, typer.Argument(help="CLI tree path prefix (empty = root).")] = "",
     config: Annotated[bool, typer.Option("--config", help="Crawl the configure-mode tree.")] = False,
@@ -235,7 +274,7 @@ def crawl(
     O.finish(O.call(fn, c, path=path), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_DISC)
 def probe(
     prefixes: Annotated[List[str], typer.Argument(help="Command-line prefix(es), each typed WITHOUT Enter (one probe per argument, all on ONE channel; the line is wiped with Ctrl-U between probes). Keep a trailing space to enumerate children ('... bfd '); omit it to act on the partial last token ('... bfd str'). Quote to preserve spacing.")],
     key: Annotated[str, typer.Option("--key", help="Keystroke injected after the prefix: '?' (context help) or 'tab' (completion; per-step line_buffer carries the completed line).")] = "?",
@@ -262,7 +301,7 @@ def probe(
     )
 
 
-@app.command()
+@app.command(rich_help_panel=_P_READ)
 def gitcommit(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
@@ -280,7 +319,7 @@ def _log_filters(tail, since, until, grep, grep_exclude, ignore_case):
     }
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LOG)
 def accounting(
     tail: Annotated[Optional[int], typer.Option("--tail", help="Last N lines.")] = 500,
     since: Annotated[Optional[str], typer.Option("--since")] = None,
@@ -298,7 +337,7 @@ def accounting(
     O.finish(O.call(get_accounting, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
 
 
-@app.command("netconf-accounting")
+@app.command("netconf-accounting", rich_help_panel=_P_LOG)
 def netconf_accounting(
     tail: Annotated[Optional[int], typer.Option("--tail", help="Last N lines.")] = 500,
     since: Annotated[Optional[str], typer.Option("--since")] = None,
@@ -316,7 +355,7 @@ def netconf_accounting(
     O.finish(O.call(get_netconf_accounting, c, **_log_filters(tail, since, until, grep, grep_exclude, ignore_case)), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LOG)
 def events(
     tail: Annotated[Optional[int], typer.Option("--tail", help="Last N lines.")] = 500,
     since: Annotated[Optional[str], typer.Option("--since")] = None,
@@ -491,7 +530,7 @@ def core_bt(
     )
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LOG)
 def traces(
     target: Annotated[Optional[str], typer.Option("--target", help="bgp | isis | zebra | fibmgr | wb_agent.")] = None,
     component: Annotated[Optional[str], typer.Option("--component")] = None,
@@ -511,7 +550,7 @@ def traces(
                     include_rotated=not no_rotated, ncc=ncc, ncp=ncp, container=container), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LOG)
 def trace(
     name: Annotated[Optional[str], typer.Argument(help="Trace filename (from `traces`).")] = None,
     target: Annotated[Optional[str], typer.Option("--target")] = None,
@@ -539,7 +578,7 @@ def trace(
                     live_only=live_only, count_only=count_only, ncc=ncc, ncp=ncp, container=container), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_READ)
 def ping(
     dest: Annotated[str, typer.Argument(help="Destination IPv4 address.")],
     count: Annotated[Optional[int], typer.Option("--count")] = None,
@@ -556,7 +595,7 @@ def ping(
     O.finish(O.call(run_ping_ipv4, c, dest=dest, count=count, size=size, vrf=vrf, source_interface=source_interface), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_EXEC)
 def shell(
     commands: Annotated[List[str], typer.Argument(help="Linux command(s) to run in `run start shell`. Each argument is one command; chained with && (or ; with --continue-on-error).")],
     ncc: Annotated[Optional[str], typer.Option("--ncc", help="Target NCC: 0 | 1 | active.")] = None,
@@ -586,7 +625,7 @@ def shell(
     )
 
 
-@app.command()
+@app.command(rich_help_panel=_P_EXEC)
 def capture(
     device: Annotated[Optional[List[str]], typer.Option("--device", "-d", help="Device(s) to capture on (repeatable). Runs concurrently, one pcap per device.")] = None,
     mode: Annotated[str, typer.Option("--mode", help="Capture mode: routing (control-plane / routing-engine, default) or datapath (NCP wbox-cli).")] = "routing",
@@ -630,7 +669,7 @@ def capture(
     )
 
 
-@app.command("ncm-cli")
+@app.command("ncm-cli", rich_help_panel=_P_EXEC)
 def ncm_cli(
     commands: Annotated[List[str], typer.Argument(help="NCM CLI command(s) to run in order, e.g. 'show lldp neighbors' or 'configure' 'interface eth 0/5' 'shutdown'.")],
     ncm: Annotated[str, typer.Option("--ncm", help="Target NCM: A0 | B0 | ...")],
@@ -646,7 +685,7 @@ def ncm_cli(
     O.finish(O.call(run_ncm_cli, c, commands=commands, ncm=ncm, answer=answer), c)
 
 
-@app.command("raw")
+@app.command("raw", rich_help_panel=_P_EXEC)
 def raw(
     lines: Annotated[List[str], typer.Argument(help="Raw CLI line(s) sent verbatim, in order, on ONE channel. Each argument is one line (configure-mode lines need a preceding 'configure' line in the same call).")],
     continue_on_error: Annotated[bool, typer.Option("--continue-on-error", help="Run every line even after one errors (default: abort on first error).")] = False,
@@ -677,7 +716,7 @@ def raw(
     )
 
 
-@app.command("clear")
+@app.command("clear", rich_help_panel=_P_EXEC)
 def clear(
     command: Annotated[List[str], typer.Argument(help="Operational clear command, e.g. 'clear arp' or 'clear bgp neighbor 1.2.3.4 soft in'.")],
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -695,7 +734,7 @@ def clear(
 # --- config (destructive) --------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel=_P_CFG)
 def config(
     statements: Annotated[List[str], typer.Argument(help="Configure-mode statements.")],
     check: Annotated[bool, typer.Option("--check", help="Dry-run via 'commit check' — no commit, not destructive (no --yes needed).")] = False,
@@ -718,7 +757,7 @@ def config(
     O.finish(O.call(edit_config, c, statements=statements), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_CFG)
 def rollback(
     rollback_id: Annotated[int, typer.Argument(help="Rollback checkpoint id.")] = 1,
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -750,7 +789,7 @@ def template_get_cmd(
     O.finish(template_get(name=name), O.build_ctx(as_json=as_json))
 
 
-@app.command("render")
+@app.command("render", rich_help_panel=_P_CFG)
 def render_cmd(
     name: Annotated[Optional[str], typer.Option("--name", help="Saved template name.")] = None,
     content_inline: Annotated[Optional[str], typer.Option("--content", help="Inline Jinja2 template body.")] = None,
@@ -784,7 +823,7 @@ def render_cmd(
     )
 
 
-@app.command("scale-deploy")
+@app.command("scale-deploy", rich_help_panel=_P_CFG)
 def scale_deploy_cmd(
     rendered_file: Annotated[str, typer.Argument(help="Rendered .cli file to push ('-' = stdin).")],
     log: Annotated[Optional[str], typer.Option("--log", help="Commit annotation.")] = None,
@@ -1231,7 +1270,7 @@ def device_unalias(
 # --- recovery (all destructive) --------------------------------------------
 
 
-@app.command("factory-default")
+@app.command("factory-default", rich_help_panel=_P_CFG)
 def factory_default(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
@@ -1308,7 +1347,7 @@ def restart_process(
                     container_name=container_name, process_name=process_name, confirm=True), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LIFE)
 def switchover(
     device: O.Device = None, host: O.Host = None, user: O.User = None,
     password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
@@ -1321,7 +1360,7 @@ def switchover(
     O.finish(O.call(request_system_ncc_switchover, c, confirm=True), c)
 
 
-@app.command()
+@app.command(rich_help_panel=_P_LIFE)
 def kill9(
     process: Annotated[str, typer.Argument(help="bgpd | zebra | fibmgrd.")],
     device: O.Device = None, host: O.Host = None, user: O.User = None,
@@ -1333,3 +1372,15 @@ def kill9(
     if not confirm.ensure(f"kill -9 {process} on {c.device or c.host}", yes=c.yes, as_json=c.json):
         raise typer.Exit(confirm.REFUSAL_EXIT)
     O.finish(O.call(kill_9_ncc_process, c, process=process), c)
+
+
+# --- sub-group registration (help panels trail the flat commands) ----------
+app.add_typer(device_app, name="device", rich_help_panel=_P_MGMT)
+app.add_typer(backup_app, name="backup", rich_help_panel=_P_MGMT)
+app.add_typer(session_app, name="session", rich_help_panel=_P_MGMT)
+app.add_typer(template_app, name="template", rich_help_panel=_P_MGMT)
+app.add_typer(ts_app, name="techsupport", rich_help_panel=_P_MGMT)
+app.add_typer(tarload_app, name="tar-load", rich_help_panel=_P_MGMT)
+app.add_typer(monitor_app, name="monitor", rich_help_panel=_P_MGMT)
+app.add_typer(core_app, name="core", rich_help_panel=_P_LOG)
+app.add_typer(restart_app, name="restart", rich_help_panel=_P_LIFE)

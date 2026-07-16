@@ -28,6 +28,31 @@ def test_group_help_lists_commands():
         assert r.exit_code == 0
 
 
+def test_cli_help_grouped_into_panels():
+    """`qactl cli --help` buckets subcommands under panel headers, in order,
+    without breaking the flat invocation (headers are display-only)."""
+    r = runner.invoke(app, ["cli", "--help"])
+    assert r.exit_code == 0
+    out = r.stdout
+    headers = [
+        "Reads / state:",
+        "Discovery",
+        "Logs:",
+        "Config:",
+        "Exec / diagnostics:",
+        "Destructive lifecycle:",
+        "Management:",
+    ]
+    positions = [out.find(h) for h in headers]
+    assert all(p != -1 for p in positions), f"missing panel header(s) in:\n{out}"
+    assert positions == sorted(positions), f"panels out of order:\n{out}"
+    # factory-default lives under Config, not Destructive lifecycle.
+    assert positions[3] < out.find("factory-default") < positions[5]
+    # A representative command from each panel is still present.
+    for cmd in ("show", "search", "traces", "config", "shell", "kill9", "device"):
+        assert cmd in out
+
+
 def test_devices_json_seeded():
     r = runner.invoke(app, ["gnmi", "devices", "--json"])
     assert r.exit_code == 0
