@@ -165,6 +165,24 @@ def spirent_bgp_add(
             if cap is not None:
                 stc.config(cap, Active="FALSE")
         stc.apply()
+        # A config apply re-stages the device's protocol block, which silently
+        # halts an already-running control-plane-independent BFD session's TX
+        # (it stays Active=true but stops emitting) until the device's protocols
+        # are restarted. So if we just reconfigured a *running* BFD-enabled
+        # device, bounce it — otherwise a strict DUT peer sits pending on a BFD
+        # that never comes back Up. (Observed live 2026-07-16; DeviceStop/Start
+        # is the reliable revive. Fresh, not-yet-started devices are left alone —
+        # the later `device start` brings them up cleanly.)
+        if need_bfd and stc.get(dev, "Active") == "true":
+            stc.perform("DeviceStop", DeviceList=dev)
+            stc.perform("DeviceStart", DeviceList=dev)
+            # gateway ARP isn't auto-resolved after DeviceStart — kick it
+            try:
+                stc.perform("ArpNdStart", HandleList=dev)
+            except Exception:
+                pass
+            stc.apply()
+            env["restarted_device"] = True
         env["result"] = _bgp_row(stc, dev, bgp)
     except Exception as exc:
         return _fail(env, exc)

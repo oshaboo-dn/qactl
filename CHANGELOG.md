@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`qactl spirent bgp add` left a running device's BFD TX stalled after a
+  reconfigure.** An STC config apply re-stages the device's protocol block,
+  which silently halts an already-running control-plane-independent BFD
+  session's transmission (it stays `Active=true` but stops emitting) until the
+  device's protocols are restarted — so reconfiguring a live BFD/strict peer
+  left a strict DUT sitting pending on a BFD that never came back Up. `bgp add`
+  now bounces the device (`DeviceStop`→`DeviceStart` + ARP kick) after the
+  apply when the device is already running and BFD is enabled; fresh,
+  not-yet-started devices are left for the later `device start`. Verified live:
+  a reconfigure of the established cl↔Spirent strict session auto-recovers BFD
+  Up without a manual restart. Tests in `test_spirent.py`.
 - **`qactl spirent bgp add --strict` produced a non-conformant BGP-BFD
   strict-mode peer that never negotiated.** The tool advertised Cap-74 as a
   `BgpCustomCapability` with `CapLength=1` (a 1-octet value); a spec-correct DUT

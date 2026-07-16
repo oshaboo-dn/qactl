@@ -490,6 +490,47 @@ class DeviceBgpToolTests(unittest.TestCase):
                       if a.get("StartIpList") == "123.4.1.4")
         self.assertTrue(nb_ref)
 
+    def test_bgp_add_strict_restarts_running_bfd_device(self):
+        # Reconfiguring a *running* BFD/strict device must bounce it
+        # (DeviceStop→DeviceStart) so the control-plane-independent BFD TX
+        # resumes after the apply re-stages the protocol block.
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import (spirent_device_create,
+                                                    spirent_device_start)
+            from qactl.spirent.tools.bgp import spirent_bgp_add
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="wan-stc-1", ip="123.4.1.1", prefix=24,
+                                  gateway="123.4.1.4", vlan=205)
+            spirent_device_start("h", 80, "dn", name="wan-stc-1")   # now Active
+            env = spirent_bgp_add("h", 80, "dn", device="wan-stc-1",
+                                  local_as=100001, strict=True)
+        self.assertEqual(env["status"], "ok")
+        self.assertTrue(env.get("restarted_device"))
+        cmds = [c for c, _ in stc.performed]
+        # the restart must be a Stop immediately followed by a Start
+        self.assertIn("DeviceStop", cmds)
+        self.assertLess(cmds.index("DeviceStop"), len(cmds) - 1)
+        self.assertEqual(cmds[cmds.index("DeviceStop") + 1], "DeviceStart")
+
+    def test_bgp_add_strict_fresh_device_not_restarted(self):
+        # A not-yet-started device must NOT be bounced by bgp add — the later
+        # `device start` brings it up cleanly.
+        stc = FakeDevStc(); self._reserve_port(stc)
+        with self._patch(stc):
+            from qactl.spirent.tools.device import spirent_device_create
+            from qactl.spirent.tools.bgp import spirent_bgp_add
+            spirent_device_create("h", 80, "dn",
+                                  port_location="//100.64.3.238/6/13",
+                                  name="wan-stc-1", ip="123.4.1.1", prefix=24,
+                                  gateway="123.4.1.4", vlan=205)
+            env = spirent_bgp_add("h", 80, "dn", device="wan-stc-1",
+                                  local_as=100001, strict=True)
+        self.assertEqual(env["status"], "ok")
+        self.assertFalse(env.get("restarted_device"))
+        self.assertNotIn("DeviceStop", [c for c, _ in stc.performed])
+
     def test_bgp_add_2byte_as_no_strict(self):
         stc = FakeDevStc(); self._reserve_port(stc)
         with self._patch(stc):
