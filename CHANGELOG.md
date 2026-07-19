@@ -21,6 +21,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opt-in — they post per-event, not per-job, and are `--yes`-gated.)
 
 ### Added
+- **`qactl cli monitor tick`/`watch` now re-read a `--overlap` window (default
+  `10m`) before the cursor**, closing a blind spot where a back-dated event —
+  one whose line is merged into the readable log only after the cursor already
+  advanced past its timestamp (e.g. a standby-NCC crash surfacing on the active
+  NCC minutes late) — was never read and never alerted. The spool's fingerprint
+  ring dedupes the re-read lines, so each event still alerts exactly once.
+  `--overlap 0` restores the old strict-since-cursor behaviour. (The overlap was
+  documented in the spool design all along but never actually applied on
+  subsequent ticks.)
 - **`qactl spirent bgp send-pdu --device D --hex <PDU>`** — send a raw,
   hand-crafted BGP PDU over an emulated router's session (full message hex,
   16-byte marker included; `-` reads stdin). Builds an STC `BgpCustomPdu`

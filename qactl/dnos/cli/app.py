@@ -381,6 +381,7 @@ def monitor_tick_cmd(
     exclude: Annotated[Optional[List[str]], typer.Option("--exclude", help="Substring that vetoes an event (repeatable).")] = None,
     default_rules: Annotated[bool, typer.Option("--default-rules/--no-default-rules", help="Include the built-in interesting-code list (BGP, link-down, crash, ...).")] = True,
     lookback: Annotated[str, typer.Option("--lookback", help="First-tick lookback window when a device has no cursor yet.")] = "15m",
+    overlap: Annotated[str, typer.Option("--overlap", help="Re-read this far before the cursor each tick to catch back-dated events (30s/10m/2h/1d; 0 disables). Dedup ring prevents re-alerting.")] = "10m",
     notify: Annotated[str, typer.Option("--notify", help="Slack channel/@user to post new alerts to (side-effecting — needs --yes).")] = "",
     max_events: Annotated[int, typer.Option("--max-events", help="Cap on new alerts surfaced/notified per device per tick.")] = 200,
     links: Annotated[bool, typer.Option("--links/--no-links", help="Also detect interface up/down via gNMI oper-status (snapshot diff).")] = True,
@@ -410,7 +411,7 @@ def monitor_tick_cmd(
         O.call(
             monitor_tick, c,
             devices=device, severity=severity, match=match, exclude=exclude,
-            use_default_rules=default_rules, lookback=lookback,
+            use_default_rules=default_rules, lookback=lookback, overlap=overlap,
             notify_slack=notify, max_events_per_device=max_events,
             links=links, gnmi_tls_mode=gnmi_tls_mode, dry_run=dry_run,
         ),
@@ -428,6 +429,7 @@ def monitor_watch_cmd(
     exclude: Annotated[Optional[List[str]], typer.Option("--exclude", help="Substring that vetoes an event (repeatable).")] = None,
     default_rules: Annotated[bool, typer.Option("--default-rules/--no-default-rules", help="Include the built-in interesting-code list.")] = True,
     lookback: Annotated[str, typer.Option("--lookback", help="First-tick lookback window when a device has no cursor yet.")] = "15m",
+    overlap: Annotated[str, typer.Option("--overlap", help="Re-read this far before the cursor each tick to catch back-dated events (30s/10m/2h/1d; 0 disables). Dedup ring prevents re-alerting.")] = "10m",
     notify: Annotated[str, typer.Option("--notify", help="Slack channel/@user to post new alerts to (side-effecting — needs --yes).")] = "",
     max_events: Annotated[int, typer.Option("--max-events", help="Cap on new alerts surfaced/notified per device per tick.")] = 200,
     links: Annotated[bool, typer.Option("--links/--no-links", help="Also detect interface up/down via gNMI oper-status.")] = True,
@@ -454,7 +456,7 @@ def monitor_watch_cmd(
             env = O.call(
                 monitor_tick, c,
                 devices=device, severity=severity, match=match, exclude=exclude,
-                use_default_rules=default_rules, lookback=lookback,
+                use_default_rules=default_rules, lookback=lookback, overlap=overlap,
                 notify_slack=notify, max_events_per_device=max_events,
                 links=links, gnmi_tls_mode=gnmi_tls_mode, dry_run=False,
             )

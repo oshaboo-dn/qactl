@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from qactl.dnos.cli.core import event_spool as _spool
@@ -97,6 +99,52 @@ def _newest_timestamp(parsed: List[Dict[str, Any]]) -> Optional[str]:
     return best
 
 
+_OVERLAP_RE = re.compile(r"^(\d+)([smhd])$")
+_OVERLAP_UNIT_SECS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+# ISO-8601 UTC cursor as stored in the spool: 2026-04-20T22:17:09[.597]Z
+_CURSOR_ISO_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$"
+)
+
+
+def parse_overlap_seconds(overlap: str) -> Optional[int]:
+    """Parse an overlap window (``30s`` / ``10m`` / ``2h`` / ``1d``) to seconds.
+
+    ``0`` / empty disables overlap (returns 0). Returns ``None`` on a
+    malformed value so the caller can reject it.
+    """
+    s = (overlap or "").strip()
+    if not s or s == "0":
+        return 0
+    m = _OVERLAP_RE.match(s)
+    if not m:
+        return None
+    return int(m.group(1)) * _OVERLAP_UNIT_SECS[m.group(2)]
+
+
+def rewind_cursor(cursor: str, overlap_s: int) -> str:
+    """Return an ISO ``since`` = ``cursor`` - ``overlap_s`` (lower-bound padded).
+
+    Each tick reads from a window that starts ``overlap_s`` *before* the
+    persisted cursor, so an event whose line is merged into the readable log
+    only after the cursor has already advanced past its timestamp (e.g. a
+    standby-NCC crash surfacing on the active NCC a few minutes late) is
+    still re-read on a later tick. The spool's fingerprint ring dedupes the
+    re-read lines, so a genuinely-old event alerts exactly once. Falls back
+    to the raw cursor if ``overlap_s`` <= 0 or the cursor can't be parsed.
+    """
+    if overlap_s <= 0:
+        return cursor
+    m = _CURSOR_ISO_RE.match((cursor or "").strip())
+    if not m:
+        return cursor
+    ms = int(((m.group(2) or "0") + "000")[:3])
+    dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=timezone.utc, microsecond=ms * 1000
+    ) - timedelta(seconds=overlap_s)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
 def monitor_tick(
     devices: Optional[List[str]] = None,
     severity: str = _events.DEFAULT_SEVERITY,
@@ -104,6 +152,7 @@ def monitor_tick(
     exclude: Optional[List[str]] = None,
     use_default_rules: bool = True,
     lookback: str = "15m",
+    overlap: str = "10m",
     notify_slack: str = "",
     max_events_per_device: int = _MAX_EVENTS_DEFAULT,
     links: bool = True,
@@ -132,6 +181,12 @@ def monitor_tick(
             (:data:`events.DEFAULT_MATCH`).
         lookback: how far back to read on a device's **first** tick (no
             cursor yet). Relative (``30s``/``10m``/``2h``/``1d``) or ISO.
+        overlap: on every *subsequent* tick, start the read window this far
+            *before* the persisted cursor (``30s``/``10m``/``2h``/``1d``;
+            ``0`` disables). Re-reads back-dated events that were merged into
+            the readable log after the cursor advanced (e.g. a standby-NCC
+            crash surfacing late on the active NCC); the fingerprint ring
+            dedupes, so each event still alerts once. Default ``10m``.
         notify_slack: Slack channel/``@user`` to post new alerts to. Empty
             disables notification (collection still happens).
         max_events_per_device: cap on new alerts surfaced/notified per
@@ -164,6 +219,17 @@ def monitor_tick(
             operation="monitor-tick",
         )
     max_rank = _events.severity_rank(sev)
+
+    overlap_s = parse_overlap_seconds(overlap)
+    if overlap_s is None:
+        return make_response(
+            status="error", device=None,
+            errors=[
+                "overlap must be relative (30s/10m/2h/1d) or 0 to disable "
+                f"(got {overlap!r})."
+            ],
+            next_actions=[_TICK_NEXT_ACTION], operation="monitor-tick",
+        )
 
     if not isinstance(max_events_per_device, int) or max_events_per_device < 1:
         return make_response(
@@ -202,7 +268,7 @@ def monitor_tick(
         for name in targets:
             canonical = _dn_devices.resolve_canonical(name) or name
             cursor = _spool.get_cursor(state, canonical)
-            since = cursor or lookback
+            since = rewind_cursor(cursor, overlap_s) if cursor else lookback
             summary: Dict[str, Any] = {
                 "device": canonical, "since": since,
                 "alert_count": 0, "new_count": 0,

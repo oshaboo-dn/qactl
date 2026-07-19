@@ -378,3 +378,117 @@ def test_cli_monitor_tick_notify_refuses_without_yes(tmp_path, monkeypatch):
     r = runner.invoke(app, ["cli", "monitor", "tick", "--notify", "#net", "--json"])
     assert r.exit_code == 2
     assert any("--yes" in n for n in json.loads(r.stdout)["next_actions"])
+
+
+# --- overlap re-scan (back-dated events) -----------------------------------
+
+def test_parse_overlap_seconds():
+    assert mon.parse_overlap_seconds("10m") == 600
+    assert mon.parse_overlap_seconds("30s") == 30
+    assert mon.parse_overlap_seconds("2h") == 7200
+    assert mon.parse_overlap_seconds("1d") == 86400
+    # disabled
+    assert mon.parse_overlap_seconds("0") == 0
+    assert mon.parse_overlap_seconds("") == 0
+    # malformed -> None (caller rejects)
+    assert mon.parse_overlap_seconds("loud") is None
+    assert mon.parse_overlap_seconds("10") is None
+
+
+def test_rewind_cursor_subtracts_overlap():
+    # 07:02:00 - 10m = 06:52:00, lower-bound padded
+    assert (
+        mon.rewind_cursor("2026-06-28T07:02:00.000Z", 600)
+        == "2026-06-28T06:52:00.000Z"
+    )
+    # crosses the minute/second boundary correctly
+    assert (
+        mon.rewind_cursor("2026-06-28T07:02:00.500Z", 30)
+        == "2026-06-28T07:01:30.500Z"
+    )
+    # overlap 0 or unparseable cursor -> returned unchanged
+    assert mon.rewind_cursor("2026-06-28T07:02:00.000Z", 0) == "2026-06-28T07:02:00.000Z"
+    assert mon.rewind_cursor("garbage", 600) == "garbage"
+
+
+def _fake_fleet_since(monkeypatch, log_ref, gnmi_oper=None):
+    """Like ``_fake_fleet`` but the fake device honours the ``since`` window.
+
+    ``log_ref`` is a one-element list holding the current system-events text;
+    mutate it between ticks. When ``since`` is an ISO timestamp (a cursor),
+    only lines whose timestamp is ``>= since`` are returned — the same
+    ``$2>=since`` semantics the device-side awk uses — so a back-dated line
+    is invisible unless the read window reaches back far enough.
+    """
+    monkeypatch.setattr(mon._dn_devices, "list_device_aliases", lambda: ["HCL"])
+    monkeypatch.setattr(mon._dn_devices, "resolve_canonical", lambda name: name)
+
+    def _fake_events(**kwargs):
+        since = kwargs.get("since") or ""
+        text = log_ref[0]
+        if "T" in since and since.endswith("Z"):  # ISO cursor -> filter
+            kept = [
+                ln for ln in text.splitlines()
+                if len(ln.split()) > 1 and ln.split()[1] >= since
+            ]
+            text = "\n".join(kept) + ("\n" if kept else "")
+        return {"status": "ok", "stdout": text, "errors": []}
+
+    monkeypatch.setattr(mon, "get_system_events", _fake_events)
+    oper = gnmi_oper if gnmi_oper is not None else {"eth1": "UP"}
+    monkeypatch.setattr(mon, "_gnmi_get", lambda **k: _gnmi_env(oper))
+
+
+_LOG_T0_T2 = (
+    "local7.warning 2026-06-28T07:00:00.000Z HCL System - - - "
+    "NCF_STATE_CHANGE_DISCONNECTED:NCF 0 state has changed to disconnected\n"
+    "local7.info 2026-06-28T07:02:00.000Z HCL Routing - - - "
+    "BGP_NEIGHBOR_DOWN:neighbor 10.0.0.1 went down\n"
+)
+# A crash whose line is merged into the readable log LATE — its timestamp
+# (07:01:30) sits *before* the cursor the first tick already advanced to
+# (07:02:00). This is the standby-NCC-crash-surfaces-late case.
+_BACKDATED = (
+    "local7.err 2026-06-28T07:01:30.000Z HCL System - - - "
+    "SYSTEM_PROCESS_FAILED:standby_routing:bgpd_standby failed\n"
+)
+
+
+def test_tick_overlap_catches_backdated_event(tmp_path, monkeypatch):
+    p = str(tmp_path / "spool.json")
+    log = [_LOG_T0_T2]
+    _fake_fleet_since(monkeypatch, log)
+
+    # Tick 1: cursor advances to 07:02:00.
+    r1 = mon.monitor_tick(state_path=p, match=["SYSTEM_PROCESS_FAILED"])
+    assert r1["new_event_count"] == 2
+    assert spool.get_cursor(spool.load(p), "HCL") == "2026-06-28T07:02:00.000Z"
+
+    # The crash line surfaces AFTER the cursor already passed its timestamp.
+    log[0] = _LOG_T0_T2 + _BACKDATED
+
+    # Default overlap (10m) re-reads from 06:52:00 -> the back-dated crash is
+    # inside the window, fingerprint is new -> it alerts (older ones dedupe).
+    r2 = mon.monitor_tick(state_path=p, match=["SYSTEM_PROCESS_FAILED"])
+    assert r2["new_event_count"] == 1
+    assert r2["new_events"][0]["event_code"] == "SYSTEM_PROCESS_FAILED"
+
+
+def test_tick_no_overlap_misses_backdated_event(tmp_path, monkeypatch):
+    """Regression guard: with overlap disabled the old blind spot returns."""
+    p = str(tmp_path / "spool.json")
+    log = [_LOG_T0_T2]
+    _fake_fleet_since(monkeypatch, log)
+
+    mon.monitor_tick(state_path=p, overlap="0", match=["SYSTEM_PROCESS_FAILED"])
+    log[0] = _LOG_T0_T2 + _BACKDATED
+    # since == cursor (07:02:00); back-dated 07:01:30 is never read.
+    r2 = mon.monitor_tick(state_path=p, overlap="0", match=["SYSTEM_PROCESS_FAILED"])
+    assert r2["new_event_count"] == 0
+
+
+def test_tick_bad_overlap_errors(tmp_path, monkeypatch):
+    _fake_fleet(monkeypatch)
+    r = mon.monitor_tick(state_path=str(tmp_path / "s.json"), overlap="loud")
+    assert r["status"] == "error"
+    assert any("overlap" in e for e in r["errors"])
