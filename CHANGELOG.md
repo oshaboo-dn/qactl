@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`qactl cli restart process` now accepts a bare routing-daemon name.** DNOS
+  registers routing-engine processes under namespaces (`routing:bgpd`,
+  `routing:fibmgrd`, `infra:sshd`, …) and `request system process restart`
+  only accepts the full token — so `restart process ncc 0 routing-engine bgpd`
+  was rejected on-box with `ERROR: Unknown word: 'bgpd'`. On execute
+  (`confirm=True`) a bare name is now auto-resolved to its unique namespaced
+  form by reading the `| Process Name |` column of `show system <role> <id>
+  container <container>` (read-only), and a note records the rewrite
+  (`bgpd → routing:bgpd`). Already-namespaced, ambiguous, or unknown names are
+  passed through unchanged for DNOS to validate. (`kill9 bgpd` was unaffected —
+  it uses `pgrep -x` on the Linux binary name.)
+
 ### Changed
 - **Long-running jobs now Slack-notify by DEFAULT.** `qactl jenkins trigger` /
   `trigger-raw` / `watch` previously only posted with an explicit

@@ -103,6 +103,73 @@ def _validate_process_name(name: str) -> Optional[str]:
     return None
 
 
+def _resolve_process_name(
+    process_name: str,
+    node_role: str,
+    node_id: str,
+    container_name: str,
+    device: Optional[str],
+    host: Optional[str],
+    user: str,
+    password: str,
+    timeout: int,
+) -> tuple[str, Optional[str]]:
+    """Resolve a bare daemon name to its DNOS-namespaced process name.
+
+    DNOS registers routing-engine processes under namespaces —
+    ``routing:bgpd``, ``routing:fibmgrd``, ``infra:sshd``,
+    ``standby_routing:bgpd_standby`` — and ``request system process restart``
+    only accepts the full namespaced token, so a bare ``bgpd`` is rejected
+    on-box with ``ERROR: Unknown word: 'bgpd'``. This reads the
+    ``| Process Name |`` column of ``show system <role> <id> container
+    <container>`` and, when the bare name matches exactly one row's suffix
+    (the part after the ``:``), rewrites it to the full token.
+
+    Returns ``(resolved_name, note)`` on a unique rewrite; otherwise
+    ``(original_name, None)`` — already namespaced, lookup failed, or a
+    zero/ambiguous match (let DNOS surface its own error). Read-only: only
+    runs a ``show`` command.
+    """
+    name = process_name.strip()
+    if ":" in name:
+        return name, None
+    show_cmd = (
+        f"show system {node_role} {node_id.strip()} "
+        f"container {container_name.strip()}"
+    )
+    try:
+        result = run_sequence(
+            transport_registry,
+            device=device, host=host, user=user, password=password,
+            commands=[show_cmd], timeout=timeout,
+        )
+    except Exception:
+        return name, None
+    if not getattr(result, "hit_prompt", False):
+        return name, None
+    candidates: list[str] = []
+    for line in (getattr(result, "output", "") or "").splitlines():
+        if "|" not in line:
+            continue
+        cols = [c.strip() for c in line.split("|")]
+        # Table shape: '' | Process Name | State | PID | ... → first data col.
+        pn = cols[1] if len(cols) > 1 else ""
+        if pn and pn.lower() != "process name":
+            candidates.append(pn)
+    seen: set[str] = set()
+    matches = []
+    for c in candidates:
+        if (c == name or c.rsplit(":", 1)[-1] == name) and c not in seen:
+            seen.add(c)
+            matches.append(c)
+    if len(matches) == 1 and matches[0] != name:
+        return matches[0], (
+            f"resolved bare process name {name!r} to {matches[0]!r} via "
+            f"`{show_cmd}` (DNOS requires the namespaced form)."
+        )
+    return name, None
+
+
 def _restart_execute(
     tool: str,
     command: str,
@@ -495,7 +562,11 @@ def request_system_process_restart(
 
     Process names may include colon-prefixed forms such as
     ``routing:bgpd``, ``infra:sshd``, ``core:nr_agent``, or
-    ``standby_routing:bgpd_standby``.
+    ``standby_routing:bgpd_standby``. On execute (``confirm=True``) a bare
+    daemon name is auto-resolved to its namespaced token by reading
+    ``show system`` — so ``bgpd`` becomes ``routing:bgpd`` — because DNOS
+    rejects the bare form. Ambiguous/unknown names are passed through
+    unchanged for DNOS to reject.
 
     Safety: same two layers as the other restart tools — Python-side
     ``confirm=True`` gate AND per-channel ``set cli-no-confirm``.
@@ -529,15 +600,28 @@ def request_system_process_restart(
             next_action=REQUEST_RESTART_NEXT_ACTION,
         )
 
+    # A bare daemon name (e.g. ``bgpd``) is rejected on-box — DNOS wants the
+    # namespaced token (``routing:bgpd``). Resolve it from ``show system``
+    # before executing (read-only; skipped on dry-run, which opens no SSH).
+    resolve_note = None
+    if confirm and (device or host):
+        process_name, resolve_note = _resolve_process_name(
+            process_name, node_role, node_id, container_name,
+            device, host, user, password, timeout,
+        )
+
     command = (
         f"request system process restart {node_role} "
         f"{node_id.strip()} {container_name.strip()} {process_name.strip()}"
     )
-    return _restart_execute(
+    response = _restart_execute(
         "request_system_process_restart",
         command, confirm,
         device, host, user, password, timeout,
     )
+    if resolve_note:
+        response.setdefault("warnings", []).append(resolve_note)
+    return response
 
 
 @requires(CAP_RESTART)
