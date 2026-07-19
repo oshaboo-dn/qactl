@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`qactl cli capture --mode datapath` no longer blindly defaults to
+  `ncp 0`.** When port-mirroring config didn't resolve an NCP the tool
+  assumed `ncp 0`, which hard-failed on a cluster (CL) chassis — its line
+  cards are `NCP 1`/`NCP 2` and there is no `ncp 0` (`could not enter run
+  start shell ncp 0`). Auto-detect now falls back to a *valid* NCP read from
+  `show system` inventory: prefer `0` on a standalone, else the lowest present
+  NCP (e.g. `1` on a CL), with a warning naming the pick and the present NCPs
+  so the user can `--ncp` to the one the capture loop/mirror is on. New pure
+  helper `resolve_ncps_from_system()` + tests.
 - **`qactl cli restart process` now accepts a bare routing-daemon name.** DNOS
   registers routing-engine processes under namespaces (`routing:bgpd`,
   `routing:fibmgrd`, `infra:sshd`, …) and `request system process restart`

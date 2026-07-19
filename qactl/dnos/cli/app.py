@@ -641,7 +641,7 @@ def capture(
     name: Annotated[str, typer.Option("--name", help="pcap filename prefix; final name is <prefix>_<device>_<YYYYmmdd_HHMMSS>.pcap.")] = "capture",
     bpf: Annotated[Optional[str], typer.Option("--filter", help="BPF filter, e.g. 'host 1.2.3.4'. routing: applied ON THE DEVICE so the raw pcap lands already scoped. datapath: applied locally after download (writes a sibling *_filtered.pcap, keeps the raw). Recommended on every routing capture — otherwise it grabs the whole control plane.")] = None,
     iface: Annotated[str, typer.Option("--iface", help="routing mode only: tcpdump interface inside inband_ns (default 'any'). 'any' double-counts each packet across netns legs (dup-ACKs in Wireshark); pin the sub-if (e.g. g07008.0009 for ge400-7/0/8.9) for exactly one copy per packet = what the CPU sent/received.")] = "any",
-    ncp: Annotated[Optional[str], typer.Option("--ncp", help="datapath NCP override; auto-detected from port-mirroring config when unset (falls back to 0).")] = None,
+    ncp: Annotated[Optional[str], typer.Option("--ncp", help="datapath NCP override; when unset, auto-detected from port-mirroring config, else a valid chassis NCP from 'show system' (prefers 0 on standalone, lowest present on a cluster — no ncp 0 there).")] = None,
     host: O.Host = None, user: O.User = None, password: O.Password = None,
     timeout: O.Timeout = None, as_json: O.Json = False, yes: O.Yes = False,
 ):

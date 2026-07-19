@@ -81,27 +81,56 @@ CAPTURE_NEXT_ACTION = (
 _NCP_SHOW_CMD = (
     'show config services | flatten | include "services port-mirroring session"'
 )
+_SYSTEM_SHOW_CMD = "show system"
 
 
 def _resolve_ncp(
     device: str, user: str, password: str, timeout: int,
 ) -> tuple[str, Optional[str]]:
-    """Resolve the datapath NCP from port-mirroring config (best-effort).
+    """Resolve the datapath NCP (best-effort).
 
-    Returns ``(ncp, warning)``. Falls back to ``"0"`` (standalone default)
-    with a warning when the show can't be read or parsed.
+    Order: (1) the NCP referenced by ``port-mirroring`` config — the actual
+    mirror destination; (2) failing that, a *valid* NCP from the chassis
+    inventory (``show system``) — prefer ``0`` (standalone) else the lowest
+    present NCP. Only assume ``"0"`` when the box can't be read at all.
+
+    A cluster (CL) chassis has no ``NCP 0`` (its line cards are ``NCP 1``/
+    ``NCP 2``), so the old unconditional ``"0"`` default hard-failed there
+    with "could not enter run start shell ncp 0". Returns ``(ncp, warning)``.
     """
+    # (1) port-mirroring config — the most specific signal.
     try:
         inv = run_once(
             transport_registry, device=device, host=None,
             user=user, password=password, command=_NCP_SHOW_CMD, timeout=timeout,
         )
+    except Exception:  # noqa: BLE001 - degrade to inventory / default
+        pass
+    else:
+        ncp = H.resolve_ncp_from_port_mirroring(inv.output)
+        if ncp:
+            return ncp, None
+    # (2) no mirror config — pick a valid NCP from the chassis inventory.
+    try:
+        sysinv = run_once(
+            transport_registry, device=device, host=None,
+            user=user, password=password, command=_SYSTEM_SHOW_CMD, timeout=timeout,
+        )
     except Exception as exc:  # noqa: BLE001 - degrade to default
         return "0", f"NCP auto-detect failed ({exc}); defaulting to ncp 0."
-    ncp = H.resolve_ncp_from_port_mirroring(inv.output)
-    if ncp:
-        return ncp, None
-    return "0", "could not auto-detect NCP from port-mirroring; defaulting to ncp 0."
+    ncps = H.resolve_ncps_from_system(sysinv.output)
+    if not ncps:
+        return "0", (
+            "could not auto-detect NCP from port-mirroring or system "
+            "inventory; defaulting to ncp 0."
+        )
+    chosen = 0 if 0 in ncps else ncps[0]
+    warn = (
+        f"no port-mirroring config; auto-picked chassis NCP {chosen} "
+        f"(present: {', '.join(map(str, ncps))}) — pass --ncp if the capture "
+        "loop / mirror is on a different NCP."
+    )
+    return str(chosen), warn
 
 
 def _apply_local_filter(src: str, bpf: str) -> tuple[Optional[str], Optional[str]]:
@@ -314,7 +343,10 @@ def capture_devices(
             netns legs; pin the sub-if (e.g. ``g07008.0009``) for one clean
             copy per packet.
         ncp: datapath NCP override; when unset it is auto-detected from the
-            device's port-mirroring config (falling back to 0).
+            device's port-mirroring config, else a valid NCP from the chassis
+            inventory (``show system``) — prefers 0 on a standalone, the
+            lowest present NCP on a cluster (which has no ncp 0). Only falls
+            back to "0" when the box can't be read.
         user/password/timeout: SSH params (per-step timeout).
 
     Returns an envelope whose ``captures`` list carries per-device

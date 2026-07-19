@@ -196,6 +196,24 @@ def resolve_ncp_from_port_mirroring(output: str) -> Optional[str]:
     return None
 
 
+# ``show system`` inventory row for an NCP node, e.g.
+# ``| NCP  | 1      | enabled  | up ...``. NCM rows carry alpha ids
+# (``A0``/``B0``) and won't match ``\d+``; NCC/NCF rows won't match ``NCP``.
+_NCP_ROW_RE = re.compile(r"^\s*\|\s*NCP\s*\|\s*(\d+)\s*\|", re.IGNORECASE | re.MULTILINE)
+
+
+def resolve_ncps_from_system(output: str) -> List[int]:
+    """Parse ``show system`` inventory → sorted list of present NCP ids.
+
+    A standalone box reports ``NCP 0``; a cluster (CL) chassis reports its
+    line-card NCPs (e.g. ``NCP 1``, ``NCP 2``) and has **no** ``NCP 0``.
+    Used to pick a *valid* datapath NCP instead of blindly assuming 0.
+    """
+    if not output:
+        return []
+    return sorted({int(m) for m in _NCP_ROW_RE.findall(output)})
+
+
 # --- device-side command builders -----------------------------------------
 
 

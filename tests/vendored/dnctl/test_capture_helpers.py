@@ -81,6 +81,31 @@ def test_resolve_ncp(text, expect):
     assert H.resolve_ncp_from_port_mirroring(text) == expect
 
 
+_SYS_STANDALONE = (
+    "| Type | Id | Admin   | Operational | Model   |\n"
+    "| NCC  | 0  |         | active-up   | NCP-40C |\n"
+    "| NCP  | 0  | enabled | up          | NCP-40C |\n"
+)
+_SYS_CLUSTER = (
+    "| NCC  | 0  |         | active-up   | X86      |\n"
+    "| NCC  | 1  |         | standby-up  | X86      |\n"
+    "| NCF  | 0  | enabled | up          | NCF-48CD |\n"
+    "| NCP  | 1  | enabled | up          | NCP-40C  |\n"
+    "| NCP  | 2  | enabled | up          | NCP-40C  |\n"
+    "| NCM  | A0 |         | disconnected| NCM-48X  |\n"
+)
+
+
+@pytest.mark.parametrize("text,expect", [
+    (_SYS_STANDALONE, [0]),
+    (_SYS_CLUSTER, [1, 2]),           # no ncp 0; NCM A0 ignored (alpha id)
+    ("nothing useful", []),
+    ("", []),
+])
+def test_resolve_ncps_from_system(text, expect):
+    assert H.resolve_ncps_from_system(text) == expect
+
+
 # --- command builders ------------------------------------------------------
 
 
