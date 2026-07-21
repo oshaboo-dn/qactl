@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`qactl jira comment add <KEY> --text … | --text-file F | --text -`** —
+  post a plain-text comment on an issue, rendered to clean ADF (blank line =
+  new paragraph, single newline = hard break). Fills the gap where qactl could
+  only `comment delete`; posting a comment previously required the MCP or the
+  user-paste path. New `JiraClient.add_comment`, `tools.jira_add_comment`, and
+  the `_text_to_adf` helper, with tests.
+
 ### Fixed
 - **`qactl cli capture --mode datapath` no longer blindly defaults to
   `ncp 0`.** When port-mirroring config didn't resolve an NCP the tool

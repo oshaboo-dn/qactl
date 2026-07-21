@@ -200,6 +200,16 @@ class JiraClient:
 
     # ---- comments ----------------------------------------------------
 
+    def add_comment(self, issue_key: str, body_adf: Mapping[str, Any]) -> dict[str, Any]:
+        r = self._session.post(
+            self._url(f"/rest/api/3/issue/{quote(issue_key, safe='')}/comment"),
+            json={"body": body_adf},
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        self._check(r, method="POST")
+        return dict(r.json() or {})
+
     def delete_comment(self, issue_key: str, comment_id: str) -> int:
         r = self._session.delete(
             self._url(

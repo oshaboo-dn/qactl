@@ -271,6 +271,43 @@ def jira_delete_attachment(
     return _run("jira_delete_attachment", fn, timeout=timeout, email=email, token=token, base_url=base_url)
 
 
+def _text_to_adf(text: str) -> Dict[str, Any]:
+    """Render plain text into a minimal ADF doc (blank line = new paragraph,
+    single newline = hard break)."""
+    content: list[dict[str, Any]] = []
+    for para in text.split("\n\n"):
+        nodes: list[dict[str, Any]] = []
+        for i, line in enumerate(para.split("\n")):
+            if i:
+                nodes.append({"type": "hardBreak"})
+            if line:
+                nodes.append({"type": "text", "text": line})
+        node: Dict[str, Any] = {"type": "paragraph"}
+        if nodes:
+            node["content"] = nodes
+        content.append(node)
+    return {"type": "doc", "version": 1, "content": content or [{"type": "paragraph"}]}
+
+
+def jira_add_comment(
+    issue_key: str, text: str, *, timeout: float = 30.0,
+    email: Optional[str] = None, token: Optional[str] = None, base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Post a plain-text comment on an issue (rendered as ADF)."""
+    text = (text or "").strip("\n")
+    if not text.strip():
+        return error_envelope("empty comment text", kind="jira_add_comment",
+                              status="bad_argument",
+                              next_actions=["Pass a non-empty --text / --text-file."])
+
+    def fn(c: JiraClient) -> dict:
+        res = c.add_comment(issue_key, _text_to_adf(text))
+        return ok_envelope(kind="jira_add_comment", result={
+            "issue_key": issue_key, "comment_id": res.get("id"),
+        })
+    return _run("jira_add_comment", fn, timeout=timeout, email=email, token=token, base_url=base_url)
+
+
 def jira_delete_comment(
     issue_key: str, comment_id: str, *, confirm: bool = False, timeout: float = 30.0,
     email: Optional[str] = None, token: Optional[str] = None, base_url: Optional[str] = None,

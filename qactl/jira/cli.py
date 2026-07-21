@@ -12,7 +12,8 @@ import argparse
 from typing import Any, Dict
 
 from qactl.core.common import confirm_or_exit, resolve_timeout
-from qactl.core.output import emit
+from qactl.core.envelope import error_envelope
+from qactl.core.output import emit, read_payload
 from qactl.jira import tools
 
 
@@ -71,6 +72,17 @@ def _attachments_delete(args):
     if rc is not None:
         return rc
     return emit(tools.jira_delete_attachment(args.attachment_id, confirm=True, **_creds(args)),
+                as_json=args.json)
+
+
+def _comment_add(args):
+    try:
+        text = read_payload(args.text, args.text_file)
+    except Exception as e:  # noqa: BLE001
+        return emit(error_envelope(f"cannot read --text-file: {e}",
+                                   kind="jira_add_comment", status="bad_argument"),
+                    as_json=args.json)
+    return emit(tools.jira_add_comment(args.issue_key, text or "", **_creds(args)),
                 as_json=args.json)
 
 
@@ -142,8 +154,15 @@ def register(subparsers, parent: argparse.ArgumentParser) -> None:
     p = asub.add_parser("delete", parents=[parent], help="(--yes)"); _add_cred_flags(p)
     p.add_argument("attachment_id"); p.set_defaults(func=_attachments_delete)
 
-    c = sub.add_parser("comment", help="comment delete")
+    c = sub.add_parser("comment", help="comment add / delete")
     csub = c.add_subparsers(dest="subcmd", required=True)
+    p = csub.add_parser("add", parents=[parent], help="post a plain-text comment (ADF)")
+    _add_cred_flags(p)
+    p.add_argument("issue_key")
+    p.add_argument("--text", default=None, help="comment body (plain text); '-' reads stdin")
+    p.add_argument("--text-file", default=None, dest="text_file",
+                   help="read the comment body from a file (wins over --text)")
+    p.set_defaults(func=_comment_add)
     p = csub.add_parser("delete", parents=[parent], help="(--yes)"); _add_cred_flags(p)
     p.add_argument("issue_key"); p.add_argument("comment_id"); p.set_defaults(func=_comment_delete)
 
