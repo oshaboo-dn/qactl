@@ -30,18 +30,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   + `DEVICE42_AUTH`, from `~/.console_env`), a thin `Device42Client` (REST GET
   + DOQL POST, TLS-verify off for the self-signed lab cert), the
   `qactl.device42` tool/CLI layers, and tests.
-- **`qactl d42 console [<device>] [--server CS --port N]`** — open an
-  interactive serial console. With a device name/serial it resolves the console
-  server + port from Device42 (parsing the netport cable relationship's
-  ``verbose_name``, e.g. ``"Console9 @ console-b08"`` → ``CONSOLE-B08`` port 9);
-  with explicit ``--server``/``--port`` it connects manually, bypassing Device42
-  (also the fallback for devices whose Device42 console field is too free-form
-  to parse). Connect is native: SSH to the console server, parse its
-  model-specific "Port Access" menu, select the port, then bridge a raw PTY
-  (ported from the proven `console_db` tool). It only opens a session on an
-  interactive TTY — with `--json` or off a TTY it resolves the server/port and
-  stops. New `ConsoleServerConfig` (`CONSOLE_CS_USER` / `CONSOLE_CS_PASSWORD`)
-  and `qactl.device42.console`, with tests for the lookup/parse paths.
+- **`qactl console [<device>] [--server CS --port N]`** — open an interactive
+  serial console (a top-level group: the console server + port come from
+  Device42 behind the scenes, but reaching a console is a device action, not a
+  CMDB read, so it is not under `qactl d42`). With a device name/serial it
+  resolves the console server + port from Device42 (parsing the netport cable
+  relationship's ``verbose_name``, e.g. ``"Console9 @ console-b08"`` →
+  ``CONSOLE-B08`` port 9); with explicit ``--server``/``--port`` it connects
+  manually, bypassing Device42 (also the fallback for devices whose Device42
+  console field is too free-form to parse). Connect is native: SSH to the
+  console server, parse its model-specific "Port Access" menu, select the port,
+  then bridge a raw PTY (ported from the proven `console_db` tool). It only
+  opens a session on an interactive TTY — with `--json` or off a TTY it resolves
+  the server/port and stops. New `ConsoleServerConfig` (`CONSOLE_CS_USER` /
+  `CONSOLE_CS_PASSWORD`) and the `qactl.console` package, with tests for the
+  lookup/parse paths.
 - **`qactl jira comment add <KEY> --text … | --text-file F | --text -`** —
   post a plain-text comment on an issue, rendered to clean ADF (blank line =
   new paragraph, single newline = hard break). Fills the gap where qactl could

@@ -1,19 +1,17 @@
 """Device42 tool layer: envelope-returning functions for both fronts.
 
 Shared by the CLI (``qactl d42 ...``) and the stdio MCP server. Read-only:
-device inventory + owner, and rack/room/building placement. Every lookup
-accepts a device **name or serial** — the migration to the new hostname
-scheme ({Site}{NN}-{ROLE}-{RACK}) does not touch serials, and rack is read
-from Device42 fields (never derived from the device name).
+device inventory + owner, rack/room/building placement, and PDU power feeds.
+Every lookup accepts a device **name or serial** — the migration to the new
+hostname scheme ({Site}{NN}-{ROLE}-{RACK}) does not touch serials, and
+rack/PDU are read from Device42 fields (never derived from the device name).
 
-Not covered yet (they depend on the console tool's separate PDU/console
-merge, not the Device42 REST/DOQL surface): power (PDU outlet/control) and
-serial-console port. See the group docstring / CHANGELOG.
+(Serial-console resolution also reads Device42, but it backs the top-level
+``qactl console`` command and lives in ``qactl.console.tools``, not here.)
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from qactl.core.creds import CredentialError
@@ -196,60 +194,8 @@ def d42_power(query: str) -> Dict[str, Any]:
     return _run("d42_power", fn)
 
 
-# Clean console mapping: verbose_name like "Console9 @ console-b08".
-_CONSOLE_RE = re.compile(r"[Cc]onsole\s*(\d+)\s*@\s*console-([A-Za-z0-9-]+)")
-
-
-def d42_console(query: str) -> Dict[str, Any]:
-    """Resolve a lab device's serial-console server + port from Device42.
-
-    Reads the netport↔netport cable relationship and parses the console port's
-    ``verbose_name`` (``"Console9 @ console-b08"`` → server ``CONSOLE-B08``,
-    port ``9``). Device42's console field is free-text, so a device whose entry
-    isn't in that clean form comes back unmapped (with the raw text) — connect
-    it by passing ``--server``/``--port`` manually. Read-only: this only looks
-    up the coordinates; the CLI ``console`` command opens the session.
-    """
-    def fn(c: Device42Client) -> dict:
-        name = _resolve_name(c, query)
-        if name is None:
-            return error_envelope(
-                f"no Device42 device matches name or serial {query!r}.",
-                kind="d42_console", status="bad_argument",
-            )
-        q = doql_quote(name)
-        rows = c.doql(
-            "SELECT sd.name AS dev, tp.verbose_name AS vn "
-            "FROM view_netport_v1 tp "
-            "LEFT JOIN view_netport_v1 sp ON (tp.netport_pk = sp.remote_netport_fk "
-            "OR tp.remote_netport_fk = sp.netport_pk) "
-            "LEFT JOIN view_device_v2 sd ON sd.device_pk = sp.device_fk "
-            "WHERE (sp.port LIKE '%Console%' OR sp.port LIKE '%console%') "
-            f"AND sd.name LIKE '{q}%'"
-        )
-        for r in rows:
-            m = _CONSOLE_RE.search(r.get("vn") or "")
-            if m:
-                return ok_envelope(kind="d42_console", result={
-                    "device": name,
-                    "console_server": "CONSOLE-" + m.group(2).upper(),
-                    "port": int(m.group(1)),
-                    "source": "device42",
-                    "raw": r.get("vn"),
-                })
-        return ok_envelope(
-            kind="d42_console",
-            result={"device": name, "console_server": None, "port": None,
-                    "unparsed": [r.get("vn") for r in rows if r.get("vn")]},
-            warnings=[f"{name}: no cleanly-parseable console mapping in Device42 — "
-                      f"connect with `qactl d42 console --server <CS> --port <N>`."],
-        )
-    return _run("d42_console", fn)
-
-
 def register(mcp) -> None:
     """Wire the Device42 tools onto a FastMCP (or compatible) instance."""
     mcp.tool()(d42_device)
     mcp.tool()(d42_rack)
     mcp.tool()(d42_power)
-    mcp.tool()(d42_console)
