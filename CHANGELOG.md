@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl power {status|on|off|cycle} [<device>] [--pdu H --outlet N]`** — PDU
+  outlet control (a device action, top-level, not under `qactl d42`). Resolves a
+  device name/serial to its PDU outlet(s) via Device42 — a dual-PSU box has two
+  feeds and **all are acted on**, so `cycle` actually reboots it — or targets one
+  outlet with `--pdu`/`--outlet`. `status` is read-only; `on`/`off`/`cycle`
+  switch power and are gated behind `--yes` (`cycle` = off → pause → on, verified
+  each way). Native over SSH with the two lab PDU CLI dialects
+  (`dev outlet 1 <n> …` and APC-style `olOn/olOff`), picked per host by a
+  rack-key match that works for both legacy `pdu-…` names and the new
+  `{Site}{NN}-PDU-{RACK}-{N}` names; connects to the (resolvable) Device42 name.
+  New `PduConfig` (`CONSOLE_PDU_USER` / `CONSOLE_PDU_PASSWORD` /
+  `CONSOLE_PDU_PASSWORD_ALT`, primary+alt tried in order; optional dialect-map
+  override via `$QACTL_PDU_CLI_CONFIG`) and the `qactl.power` package, with
+  tests. `d42_power`'s feed lookup was factored into a shared `power_feeds()`.
 - **`qactl d42` auto-sources `~/.console_env`.** The Device42 and console-server
   credential resolvers now lazily source `~/.console_env` (setdefault — a value
   already in the environment wins), the same file the legacy `console` tool

@@ -26,6 +26,7 @@ from qactl.core.common import global_parent
 from qactl.arista import cli as arista_cli
 from qactl.device42 import cli as device42_cli
 from qactl.console import cli as console_cli
+from qactl.power import cli as power_cli
 from qactl.confluence import cli as confluence_cli
 from qactl.jenkins import cli as jenkins_cli
 from qactl.jira import cli as jira_cli
@@ -34,7 +35,7 @@ from qactl.orc import cli as orc_cli
 
 
 NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "d42", "console",
-                 "orc", "jobs"}
+                 "power", "orc", "jobs"}
 QACTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
 SPIRENT_GROUP = "spirent"
@@ -75,6 +76,9 @@ Lab CMDB (native, read-only):
 Lab serial console (native):
   console       open a device's serial console (Device42 lookup, or manual)
 
+Lab PDU power (native):
+  power         outlet control: status / on / off / cycle (Device42 lookup, or manual)
+
 MCP front (same tools, over stdio):
   mcp           run a local stdio MCP server: `qactl mcp <group>` / `qactl mcp all`
 
@@ -93,7 +97,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qactl",
         description="qactl native groups: jira, confluence, jenkins, arista, "
-                    "d42, console, orc, jobs.",
+                    "d42, console, power, orc, jobs.",
     )
     sub = parser.add_subparsers(dest="group", required=True)
     parent = global_parent()
@@ -103,6 +107,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     arista_cli.register(sub, parent)
     device42_cli.register(sub, parent)
     console_cli.register(sub, parent)
+    power_cli.register(sub, parent)
     orc_cli.register(sub, parent)
     jobs_cli.register(sub, parent)
     return parser

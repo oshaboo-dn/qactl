@@ -201,6 +201,82 @@ class ConsoleServerConfig:
         return cls(user=user, password=password)
 
 
+PDU_DEFAULT_USER = "dn"
+# Hosts whose CLI speaks the APC-style ``olOn/olOff/olStatus`` dialect; every
+# other PDU defaults to the ``dev outlet 1 <n> …`` dialect. Keyed by the
+# rack-form name (``pdu-<rack>-<n>``) so it matches both the legacy names and
+# the post-migration ``{Site}{NN}-PDU-{RACK}-{N}`` names (normalized the same
+# way). Overridable via a JSON file at $QACTL_PDU_CLI_CONFIG / $PDU_CLI_CONFIG_PATH
+# ({"ol": [...], "dev_outlet": [...]}).
+PDU_OL_DIALECT_HOSTS = frozenset({"pdu-b10-1", "m-wb-power101b"})
+
+
+@dataclass
+class PduConfig:
+    """PDU SSH login + per-host CLI dialect map for outlet power control.
+
+    Two passwords (primary + alt) are tried in order, matching the legacy
+    console tool. A wrong/absent password surfaces as an SSH auth failure at
+    connect time.
+
+        CONSOLE_PDU_USER          optional   default 'dn'
+        CONSOLE_PDU_PASSWORD      optional   primary password
+        CONSOLE_PDU_PASSWORD_ALT  optional   fallback password
+        QACTL_PDU_CLI_CONFIG /
+        PDU_CLI_CONFIG_PATH       optional   JSON dialect map override
+    """
+
+    user: str
+    password: str
+    password_alt: str
+    ol_hosts: frozenset
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        password_alt: Optional[str] = None,
+    ) -> "PduConfig":
+        _load_console_env()
+        user = (user or os.environ.get("CONSOLE_PDU_USER") or PDU_DEFAULT_USER).strip()
+        password = (password if password is not None
+                    else os.environ.get("CONSOLE_PDU_PASSWORD", ""))
+        password_alt = (password_alt if password_alt is not None
+                        else os.environ.get("CONSOLE_PDU_PASSWORD_ALT", ""))
+        return cls(user=user, password=password, password_alt=password_alt,
+                   ol_hosts=_load_pdu_ol_hosts())
+
+
+def _pdu_rack_key(name: str) -> str:
+    """Normalize a PDU name to its rack-form key ``pdu-<rack>-<n>``.
+
+    Handles both the new ``{Site}{NN}-PDU-{RACK}-{N}`` scheme (take the part
+    after ``-PDU-``) and the legacy ``pdu-…`` / bare names — so the dialect map
+    keeps matching across the hostname migration."""
+    s = (name or "").strip().lower()
+    if "-pdu-" in s:
+        s = "pdu-" + s.split("-pdu-", 1)[1]
+    elif not s.startswith("pdu-") and not s.startswith("m-wb-power"):
+        s = "pdu-" + s
+    return s
+
+
+def _load_pdu_ol_hosts() -> frozenset:
+    path = os.environ.get("QACTL_PDU_CLI_CONFIG") or os.environ.get("PDU_CLI_CONFIG_PATH")
+    if path:
+        try:
+            import json
+
+            with open(os.path.expanduser(path)) as f:
+                cfg = json.load(f)
+            return frozenset(_pdu_rack_key(h) for h in cfg.get("ol", []))
+        except (OSError, ValueError, TypeError):
+            pass
+    return PDU_OL_DIALECT_HOSTS
+
+
 @dataclass
 class Device42Config:
     """Device42 CMDB access — DOQL query endpoint + REST base, one Basic-auth header.

@@ -148,6 +148,33 @@ def _normalize_outlet(raw: str) -> Optional[int]:
     return int(s) if s.isdigit() else None
 
 
+def power_feeds(client: Device42Client, name: str) -> List[Dict[str, Any]]:
+    """PDU power feed(s) for a canonical device name (shared by d42 + power).
+
+    Each feed: ``{pdu, outlet (raw), outlet_number (normalized), model}``,
+    read from the structured ``view_pduports_v1`` relationship.
+    """
+    q = doql_quote(name)
+    rows = client.doql(
+        "SELECT d.name AS device, pdu.name AS pdu, pp.port_name AS outlet, "
+        "pm.name AS model "
+        "FROM view_pduports_v1 pp "
+        "LEFT JOIN view_pdu_v1 pdu ON pp.pdu_fk = pdu.pdu_pk "
+        "LEFT JOIN view_device_v2 d ON d.device_pk = pp.psu_device_fk "
+        "LEFT JOIN view_pdumodel_v1 pm ON pdu.pdumodel_fk = pm.pdumodel_pk "
+        f"WHERE d.name = '{q}' ORDER BY pdu.name, pp.port_name"
+    )
+    return [
+        {
+            "pdu": r.get("pdu"),
+            "outlet": r.get("outlet"),
+            "outlet_number": _normalize_outlet(r.get("outlet") or ""),
+            "model": r.get("model"),
+        }
+        for r in rows if r.get("pdu")
+    ]
+
+
 def d42_power(query: str) -> Dict[str, Any]:
     """Look up a lab device's PDU power feed(s) in Device42 by **name or serial**.
 
@@ -164,25 +191,7 @@ def d42_power(query: str) -> Dict[str, Any]:
                 f"no Device42 device matches name or serial {query!r}.",
                 kind="d42_power", status="bad_argument",
             )
-        q = doql_quote(name)
-        rows = c.doql(
-            "SELECT d.name AS device, pdu.name AS pdu, pp.port_name AS outlet, "
-            "pm.name AS model "
-            "FROM view_pduports_v1 pp "
-            "LEFT JOIN view_pdu_v1 pdu ON pp.pdu_fk = pdu.pdu_pk "
-            "LEFT JOIN view_device_v2 d ON d.device_pk = pp.psu_device_fk "
-            "LEFT JOIN view_pdumodel_v1 pm ON pdu.pdumodel_fk = pm.pdumodel_pk "
-            f"WHERE d.name = '{q}' ORDER BY pdu.name, pp.port_name"
-        )
-        feeds = [
-            {
-                "pdu": r.get("pdu"),
-                "outlet": r.get("outlet"),
-                "outlet_number": _normalize_outlet(r.get("outlet") or ""),
-                "model": r.get("model"),
-            }
-            for r in rows if r.get("pdu")
-        ]
+        feeds = power_feeds(c, name)
         warnings = None
         if not feeds:
             warnings = [f"{name} has no PDU power-port mapping in Device42."]
