@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl cli run "<run …>"`** — operational run-scope command passthrough.
+  Issues a `run …` command verbatim (its transcript returned) for the run-scope
+  diagnostics the structured tools don't model — `traceroute` and its
+  `traceroute mpls isis|bgp-car <prefix>` variants, `monitor`, … — so SR-MPLS /
+  ISIS forwarding proofs can be captured. Operational read, ungated like
+  `qactl cli show`; the two run-scope families that can mutate or open an
+  interactive session (`run start shell`, `run request …`) are refused and
+  redirected to their `--yes`-gated tools (`qactl cli shell`, `qactl cli raw`),
+  so the passthrough never becomes an ungated write path. New `CAP_RUN`
+  capability and `qactl/dnos/cli/tools/run.py`, with tests.
 - **`qactl power {status|on|off|cycle} [<device>] [--pdu H --outlet N]`** — PDU
   outlet control (a device action, top-level, not under `qactl d42`). Resolves a
   device name/serial to its PDU outlet(s) via Device42 — a dual-PSU box has two

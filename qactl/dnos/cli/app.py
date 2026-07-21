@@ -604,6 +604,25 @@ def ping(
 
 
 @app.command(rich_help_panel=_P_EXEC)
+def run(
+    cmd: Annotated[List[str], typer.Argument(help=(
+        "DNOS operational run-scope command words (e.g. run traceroute "
+        "10.0.0.1, run traceroute mpls isis <prefix>). Runs verbatim; the "
+        "transcript is returned. 'run start shell' / 'run request' are "
+        "rejected — use `qactl cli shell` / `qactl cli raw --yes`."
+    ))],
+    device: O.Device = None, host: O.Host = None, user: O.User = None,
+    password: O.Password = None, port: O.Port = None, timeout: O.Timeout = None,
+    no_verify: O.NoVerify = True, as_json: O.Json = False, yes: O.Yes = False,
+    log: O.Log = None,
+):
+    """Run an operational `run …` command (traceroute, traceroute mpls, …)."""
+    c = O.build_ctx(device, host, user, password, port, timeout, no_verify, as_json, yes, log)
+    from qactl.dnos.cli.tools.run import run_command
+    O.finish(O.call(run_command, c, command=" ".join(cmd)), c)
+
+
+@app.command(rich_help_panel=_P_EXEC)
 def shell(
     commands: Annotated[List[str], typer.Argument(help="Linux command(s) to run in `run start shell`. Each argument is one command; chained with && (or ; with --continue-on-error).")],
     ncc: Annotated[Optional[str], typer.Option("--ncc", help="Target NCC: 0 | 1 | active.")] = None,

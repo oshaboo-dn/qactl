@@ -102,6 +102,16 @@ RUN_PING_NEXT_ACTION = (
     "Verify the destination is reachable, and that the vrf / "
     "source-interface (if any) exist on the device."
 )
+RUN_NEXT_ACTION = (
+    "`qactl cli run '<run ...>'` issues an operational run-scope command "
+    "verbatim (traceroute, 'traceroute mpls isis|bgp-car <prefix>', "
+    "monitor, ...) and returns its transcript. Check (1) the command "
+    "starts with 'run' and is a valid DNOS operational command — discover "
+    "the syntax with `qactl cli search run <keywords>` or "
+    "`qactl cli crawl 'run ...'`; (2) for a slow multi-hop traceroute, "
+    "widen --timeout. Use `qactl cli shell` for the Linux shell and "
+    "`qactl cli raw '<line>' --yes` for mutating 'run request ...'."
+)
 RUN_SHELL_NEXT_ACTION = (
     "`qactl cli shell <cmd> ... --yes` runs arbitrary Linux command(s) "
     "inside 'run start shell' on the device (active NCC default container "

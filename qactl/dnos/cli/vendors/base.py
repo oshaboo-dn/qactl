@@ -42,6 +42,7 @@ CAP_SYSTEM = "system"              # `show system` summary
 CAP_INTERFACES = "interfaces"      # structured interface views
 CAP_DISCOVERY = "discovery"        # search / help / crawl grammar walkers
 CAP_PING = "ping"                  # `run ping` style reachability
+CAP_RUN = "run"                    # operational `run ...` passthrough
 CAP_LOGS = "logs"                  # log / trace / accounting readers
 CAP_SHELL = "shell"                # Linux / NCM shell passthrough
 CAP_RAW = "raw"                    # raw CLI line passthrough
@@ -63,6 +64,7 @@ ALL_CAPABILITIES: Tuple[str, ...] = (
     CAP_INTERFACES,
     CAP_DISCOVERY,
     CAP_PING,
+    CAP_RUN,
     CAP_LOGS,
     CAP_SHELL,
     CAP_RAW,

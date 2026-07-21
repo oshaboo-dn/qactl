@@ -95,6 +95,67 @@ def _validate_show_command(
     return " ".join(tokens), None
 
 
+def _validate_run_command(command: str) -> Tuple[str, Optional[str]]:
+    """Validate and normalize a full operational ``run ...`` command.
+
+    Returns ``(normalized_command, error)``. On success ``error`` is None
+    and ``normalized_command`` has its internal whitespace collapsed; on
+    failure ``error`` explains the problem and ``normalized_command`` is
+    the caller's original (stripped) input, useful for echoing back.
+
+    ``run`` is DNOS's operational-command escape (usable from either CLI
+    mode). This passthrough carries the run-scope operational / diagnostic
+    commands the structured tools don't model — ``traceroute`` and its
+    ``traceroute mpls isis|bgp-car`` variants, ``monitor``, ... — so their
+    transcript can be captured. Two families are refused and redirected to
+    their dedicated, ``--yes``-gated tools, so the passthrough never
+    becomes an ungated write path:
+
+    - ``run start shell ...`` → ``qactl cli shell`` (Linux passthrough)
+    - ``run request ...``     → ``qactl cli raw '<line>' --yes``
+
+    Leading-verb matching is case-insensitive but the caller's casing is
+    preserved in the normalized output, because DNOS identifiers
+    (prefixes, VRFs, ISIS instance names, ...) are case-sensitive even
+    when the leading verb isn't.
+    """
+    raw = (command or "").strip()
+    if not raw:
+        return raw, (
+            "command must be non-empty; pass the full 'run ...' command "
+            "(e.g. 'run traceroute 10.0.0.1', "
+            "'run traceroute mpls isis <prefix>')."
+        )
+    tokens = raw.split()
+    lowered = [t.lower() for t in tokens]
+    if lowered[0] != "run":
+        return raw, (
+            "command must start with 'run' — this passthrough issues "
+            "operational run-scope commands (e.g. 'run traceroute "
+            "10.0.0.1', 'run traceroute mpls isis <prefix>'). For "
+            "operational 'show ...' use `qactl cli show` instead."
+        )
+    if len(tokens) < 2:
+        return raw, (
+            "command must include a subcommand after 'run' — pass the "
+            "full command (e.g. 'run traceroute 10.0.0.1', "
+            "'run traceroute mpls bgp-car <prefix>')."
+        )
+    if lowered[1] == "start" and len(lowered) >= 3 and lowered[2] == "shell":
+        return raw, (
+            "'run start shell ...' is the Linux shell passthrough — use "
+            "`qactl cli shell '<cmd>' ...` instead; it keeps the "
+            "destructive --yes gate on write commands."
+        )
+    if lowered[1] == "request":
+        return raw, (
+            "'run request ...' can mutate the device — route it through "
+            "`qactl cli raw '<line>' --yes` (or the purpose-built "
+            "restart / tar-load tools) so the destructive gate applies."
+        )
+    return " ".join(tokens), None
+
+
 def _validate_clear_command(command: str) -> Tuple[str, Optional[str]]:
     """Validate and normalize a full ``clear ...`` command.
 
