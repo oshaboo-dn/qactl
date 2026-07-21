@@ -7,6 +7,7 @@ No live Device42 anywhere: tool-layer tests monkeypatch
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest import mock
 
@@ -110,11 +111,37 @@ class ParserTests(unittest.TestCase):
         self.assertEqual((ns.query, ns.server, ns.port), (None, "B10", 9))
 
 
+class ConsoleEnvLoadTests(unittest.TestCase):
+    def test_sources_file_without_overriding_real_env(self):
+        import tempfile
+        from qactl.core import creds
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+            f.write("export DEVICE42_ENDPOINT=https://d42/x/query/\n")
+            f.write("DEVICE42_AUTH='Basic fromfile'\n")
+            path = f.name
+        # Real env value must win over the file (setdefault semantics).
+        with mock.patch.dict("os.environ", {"DEVICE42_AUTH": "Basic real"}, clear=True):
+            creds._CONSOLE_ENV_LOADED = False
+            creds._load_console_env(path)
+            self.assertEqual(os.environ["DEVICE42_ENDPOINT"], "https://d42/x/query/")
+            self.assertEqual(os.environ["DEVICE42_AUTH"], "Basic real")
+        creds._CONSOLE_ENV_LOADED = False
+
+    def test_missing_file_is_silent(self):
+        from qactl.core import creds
+        creds._CONSOLE_ENV_LOADED = False
+        creds._load_console_env("/no/such/console_env")  # must not raise
+        creds._CONSOLE_ENV_LOADED = False
+
+
 class ConfigTests(unittest.TestCase):
     def test_missing_env_rejected(self):
+        from qactl.core import creds
+        creds._CONSOLE_ENV_LOADED = True  # skip file-sourcing for this test
         with mock.patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(CredentialError):
                 Device42Config.resolve()
+        creds._CONSOLE_ENV_LOADED = False
 
     def test_rest_base_derived_from_endpoint(self):
         cfg = Device42Config.resolve(

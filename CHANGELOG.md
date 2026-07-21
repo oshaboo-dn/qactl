@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl d42` auto-sources `~/.console_env`.** The Device42 and console-server
+  credential resolvers now lazily source `~/.console_env` (setdefault — a value
+  already in the environment wins), the same file the legacy `console` tool
+  reads. Without this, `qactl d42 …` failed in a normal interactive shell
+  (which doesn't export those vars) with "Missing Device42 credentials" / console
+  SSH "auth failed", even though the creds were on disk. Best-effort: a missing
+  file is silent.
 - **`qactl d42` — Device42 CMDB group (native, read-only).** A Device42-backed
   surface so lab inventory/placement/power is read *live* from the CMDB instead
   of stale cached names (motivated by the 2026-07 hostname migration to

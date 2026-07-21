@@ -39,6 +39,38 @@ from typing import List, Optional, Tuple
 ATLASSIAN_DEFAULT_BASE_URL = "https://drivenets.atlassian.net"
 JENKINS_DEFAULT_URL = "https://jenkins.dev.drivenets.net"
 
+# The lab's Device42 + console-server + PDU credentials live in ~/.console_env
+# (a `KEY=value` / `export KEY=value` file), the same file the legacy `console`
+# tool sources. Interactive shells don't necessarily export it, so the Device42
+# / console-server resolvers source it lazily with setdefault semantics — a
+# value already in the environment always wins, and nothing is printed.
+_CONSOLE_ENV_LOADED = False
+
+
+def _load_console_env(path: str = "~/.console_env") -> None:
+    """Source ``export KEY=value`` lines from ~/.console_env into os.environ.
+
+    Idempotent and best-effort: a missing/unreadable file is ignored, and an
+    env var already set is never overwritten (``setdefault``)."""
+    global _CONSOLE_ENV_LOADED
+    if _CONSOLE_ENV_LOADED:
+        return
+    _CONSOLE_ENV_LOADED = True
+    try:
+        with open(os.path.expanduser(path)) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                if "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    except OSError:
+        pass
+
 
 class CredentialError(ValueError):
     """Raised when required credentials are absent from the environment."""
@@ -161,6 +193,7 @@ class ConsoleServerConfig:
         user: Optional[str] = None,
         password: Optional[str] = None,
     ) -> "ConsoleServerConfig":
+        _load_console_env()
         user = (user or os.environ.get("CONSOLE_CS_USER") or
                 CONSOLE_SERVER_DEFAULT_USER).strip()
         password = (password if password is not None
@@ -190,6 +223,7 @@ class Device42Config:
         endpoint: Optional[str] = None,
         auth: Optional[str] = None,
     ) -> "Device42Config":
+        _load_console_env()
         endpoint = (endpoint or os.environ.get("DEVICE42_ENDPOINT") or "").strip()
         auth = (auth or os.environ.get("DEVICE42_AUTH") or "").strip()
         missing = _missing([("DEVICE42_ENDPOINT", endpoint), ("DEVICE42_AUTH", auth)])
