@@ -43,13 +43,21 @@ RACK_ROW = {
 }
 
 
+PDU_ROWS = [
+    {"device": "18ZP6S3", "pdu": "RA01-PDU-F01-1", "outlet": "34", "model": "APDU10350SW"},
+    {"device": "18ZP6S3", "pdu": "RA01-PDU-F01-2", "outlet": "B7", "model": "APDU10350SW"},
+]
+
+
 class _FakeClient:
     """Stands in for Device42Client; canned doql/rest_get answers."""
 
-    def __init__(self, resolve_name="WDV1D2VR0000E", detail=None, rack_row=None):
+    def __init__(self, resolve_name="WDV1D2VR0000E", detail=None, rack_row=None,
+                 pdu_rows=None):
         self._resolve_name = resolve_name
         self._detail = detail if detail is not None else DEVICE_DETAIL
         self._rack_row = rack_row if rack_row is not None else RACK_ROW
+        self._pdu_rows = pdu_rows if pdu_rows is not None else PDU_ROWS
         self.doql_calls = []
         self.rest_calls = []
 
@@ -59,6 +67,8 @@ class _FakeClient:
             return [{"name": self._resolve_name}] if self._resolve_name else []
         if "LEFT JOIN view_rack_v1" in sql:
             return [self._rack_row] if self._rack_row else []
+        if "view_pduports_v1" in sql:
+            return list(self._pdu_rows)
         return []
 
     def rest_get(self, path, params=None):
@@ -78,12 +88,14 @@ class ParserTests(unittest.TestCase):
     def setUp(self):
         self.parser = build_native_parser()
 
-    def test_device_and_rack_wiring(self):
+    def test_device_rack_power_wiring(self):
         ns = self.parser.parse_args(["d42", "device", "WDY1A17P0001A", "--json"])
         self.assertEqual((ns.cmd, ns.query), ("device", "WDY1A17P0001A"))
         self.assertTrue(ns.json)
         ns = self.parser.parse_args(["d42", "rack", "sa-hostname"])
         self.assertEqual((ns.cmd, ns.query), ("rack", "sa-hostname"))
+        ns = self.parser.parse_args(["d42", "power", "18ZP6S3"])
+        self.assertEqual((ns.cmd, ns.query), ("power", "18ZP6S3"))
 
 
 class ConfigTests(unittest.TestCase):
@@ -104,6 +116,15 @@ class ConfigTests(unittest.TestCase):
 class DoqlQuoteTests(unittest.TestCase):
     def test_single_quote_doubled(self):
         self.assertEqual(doql_quote("O'Brien"), "O''Brien")
+
+
+class OutletNormalizeTests(unittest.TestCase):
+    def test_bank_and_bare(self):
+        self.assertEqual(tools._normalize_outlet("B7"), 19)   # bank B -> +12
+        self.assertEqual(tools._normalize_outlet("A5"), 5)    # bank A -> drop
+        self.assertEqual(tools._normalize_outlet("14"), 14)   # bare number
+        self.assertIsNone(tools._normalize_outlet("xY"))      # unparseable
+        self.assertIsNone(tools._normalize_outlet(""))
 
 
 class ToolEnvelopeTests(unittest.TestCase):
@@ -139,6 +160,26 @@ class ToolEnvelopeTests(unittest.TestCase):
         with _patch_client(fake):
             env = tools.d42_rack("WDV1D2VR0000E")
         self.assertEqual(env["status"], "warning")
+        self.assertTrue(env["warnings"])
+
+    def test_power_feeds_and_outlet_normalization(self):
+        fake = _FakeClient()
+        with _patch_client(fake):
+            env = tools.d42_power("18ZP6S3")
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["feed_count"], 2)
+        feeds = env["result"]["feeds"]
+        self.assertEqual(feeds[0]["pdu"], "RA01-PDU-F01-1")
+        self.assertEqual(feeds[0]["outlet_number"], 34)
+        self.assertEqual(feeds[1]["outlet"], "B7")        # raw preserved
+        self.assertEqual(feeds[1]["outlet_number"], 19)   # normalized
+
+    def test_power_no_mapping_warns(self):
+        fake = _FakeClient(pdu_rows=[])
+        with _patch_client(fake):
+            env = tools.d42_power("18ZP6S3")
+        self.assertEqual(env["status"], "warning")
+        self.assertEqual(env["result"]["feed_count"], 0)
         self.assertTrue(env["warnings"])
 
     def test_doql_error_surfaces_as_error_envelope(self):

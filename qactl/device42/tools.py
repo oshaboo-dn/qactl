@@ -130,7 +130,73 @@ def d42_rack(query: str) -> Dict[str, Any]:
     return _run("d42_rack", fn)
 
 
+def _normalize_outlet(raw: str) -> Optional[int]:
+    """Map a Device42 PDU port_name to the lab's outlet number.
+
+    Mirrors ``parse_pdu_info()`` in the DNOS e2e utils / the console tool's
+    merge: a leading ``B`` means the second bank (add 12), a leading ``A`` (or
+    any other letter) is dropped, a bare number is taken as-is. Returns ``None``
+    for anything unparseable (the raw ``outlet`` is still reported).
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if s[0].isalpha():
+        rest = s[1:]
+        if not rest.isdigit():
+            return None
+        return int(rest) + 12 if s[0].upper() == "B" else int(rest)
+    return int(s) if s.isdigit() else None
+
+
+def d42_power(query: str) -> Dict[str, Any]:
+    """Look up a lab device's PDU power feed(s) in Device42 by **name or serial**.
+
+    Reads the structured power-port relationship (``view_pduports_v1``) live —
+    every PSU's PDU, outlet, and PDU model. This is real relationship data, not
+    name-encoding, so it stays correct through the hostname migration (the PDU
+    names it returns are already the new ``{Site}{NN}-PDU-{RACK}-{N}`` scheme).
+    Read-only: reports the feeds; it does not switch power.
+    """
+    def fn(c: Device42Client) -> dict:
+        name = _resolve_name(c, query)
+        if name is None:
+            return error_envelope(
+                f"no Device42 device matches name or serial {query!r}.",
+                kind="d42_power", status="bad_argument",
+            )
+        q = doql_quote(name)
+        rows = c.doql(
+            "SELECT d.name AS device, pdu.name AS pdu, pp.port_name AS outlet, "
+            "pm.name AS model "
+            "FROM view_pduports_v1 pp "
+            "LEFT JOIN view_pdu_v1 pdu ON pp.pdu_fk = pdu.pdu_pk "
+            "LEFT JOIN view_device_v2 d ON d.device_pk = pp.psu_device_fk "
+            "LEFT JOIN view_pdumodel_v1 pm ON pdu.pdumodel_fk = pm.pdumodel_pk "
+            f"WHERE d.name = '{q}' ORDER BY pdu.name, pp.port_name"
+        )
+        feeds = [
+            {
+                "pdu": r.get("pdu"),
+                "outlet": r.get("outlet"),
+                "outlet_number": _normalize_outlet(r.get("outlet") or ""),
+                "model": r.get("model"),
+            }
+            for r in rows if r.get("pdu")
+        ]
+        warnings = None
+        if not feeds:
+            warnings = [f"{name} has no PDU power-port mapping in Device42."]
+        return ok_envelope(
+            kind="d42_power",
+            result={"device": name, "feed_count": len(feeds), "feeds": feeds},
+            warnings=warnings,
+        )
+    return _run("d42_power", fn)
+
+
 def register(mcp) -> None:
     """Wire the Device42 tools onto a FastMCP (or compatible) instance."""
     mcp.tool()(d42_device)
     mcp.tool()(d42_rack)
+    mcp.tool()(d42_power)
