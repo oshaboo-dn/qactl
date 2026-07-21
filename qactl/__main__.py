@@ -24,6 +24,7 @@ from typing import List, Optional
 from qactl import __version__
 from qactl.core.common import global_parent
 from qactl.arista import cli as arista_cli
+from qactl.device42 import cli as device42_cli
 from qactl.confluence import cli as confluence_cli
 from qactl.jenkins import cli as jenkins_cli
 from qactl.jira import cli as jira_cli
@@ -31,7 +32,7 @@ from qactl.jobs import cli as jobs_cli
 from qactl.orc import cli as orc_cli
 
 
-NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "orc", "jobs"}
+NATIVE_GROUPS = {"jira", "confluence", "jenkins", "arista", "d42", "orc", "jobs"}
 QACTL_GROUPS = {"cli", "nc", "gnmi", "rc", "setup"}
 IXIA_GROUP = "ixia"
 SPIRENT_GROUP = "spirent"
@@ -66,6 +67,9 @@ Atlassian + CI (native):
 Arista EOS switches (native, read-only over SSH):
   arista        interfaces / lldp / config / version
 
+Lab CMDB (native, read-only):
+  d42           Device42: device inventory / rack lookup
+
 MCP front (same tools, over stdio):
   mcp           run a local stdio MCP server: `qactl mcp <group>` / `qactl mcp all`
 
@@ -83,7 +87,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     """argparse tree for the natively-implemented groups."""
     parser = argparse.ArgumentParser(
         prog="qactl",
-        description="qactl native groups: jira, confluence, jenkins, arista, orc, jobs.",
+        description="qactl native groups: jira, confluence, jenkins, arista, d42, orc, jobs.",
     )
     sub = parser.add_subparsers(dest="group", required=True)
     parent = global_parent()
@@ -91,6 +95,7 @@ def build_native_parser() -> argparse.ArgumentParser:
     confluence_cli.register(sub, parent)
     jenkins_cli.register(sub, parent)
     arista_cli.register(sub, parent)
+    device42_cli.register(sub, parent)
     orc_cli.register(sub, parent)
     jobs_cli.register(sub, parent)
     return parser

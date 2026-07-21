@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`qactl d42` — Device42 CMDB group (native, read-only).** First cut of a
+  Device42-backed surface so lab inventory/placement is read *live* from the
+  CMDB instead of stale cached names (motivated by the 2026-07 hostname
+  migration to `{Site}{NN}-{ROLE}-{RACK}`, which breaks name-encoded rack
+  derivation). Two commands, each taking a device **name or serial**:
+  `qactl d42 device <q>` (curated inventory + owner/`End User` + IPs + raw
+  custom fields, via the REST API) and `qactl d42 rack <q>` (rack / row /
+  room / building / U-position via a single DOQL join — placement read from
+  Device42 fields, never parsed from the name). New `Device42Config` (env
+  `DEVICE42_ENDPOINT` + `DEVICE42_AUTH`, from `~/.console_env`), a thin
+  `Device42Client` (REST GET + DOQL POST, TLS-verify off for the self-signed
+  lab cert), the `qactl.device42` tool/CLI layers, and tests. Power (PDU) and
+  serial-console lookup are intentionally **not** included — those live in the
+  console tool's separate PDU/console merge, not the Device42 API, and are the
+  planned follow-up.
 - **`qactl jira comment add <KEY> --text … | --text-file F | --text -`** —
   post a plain-text comment on an issue, rendered to clean ADF (blank line =
   new paragraph, single newline = hard break). Fills the gap where qactl could
