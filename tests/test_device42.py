@@ -48,16 +48,19 @@ PDU_ROWS = [
     {"device": "18ZP6S3", "pdu": "RA01-PDU-F01-2", "outlet": "B7", "model": "APDU10350SW"},
 ]
 
+CONSOLE_ROWS = [{"dev": "WDY1CAV800048", "vn": "Console9 @ console-b08"}]
+
 
 class _FakeClient:
     """Stands in for Device42Client; canned doql/rest_get answers."""
 
     def __init__(self, resolve_name="WDV1D2VR0000E", detail=None, rack_row=None,
-                 pdu_rows=None):
+                 pdu_rows=None, console_rows=None):
         self._resolve_name = resolve_name
         self._detail = detail if detail is not None else DEVICE_DETAIL
         self._rack_row = rack_row if rack_row is not None else RACK_ROW
         self._pdu_rows = pdu_rows if pdu_rows is not None else PDU_ROWS
+        self._console_rows = console_rows if console_rows is not None else CONSOLE_ROWS
         self.doql_calls = []
         self.rest_calls = []
 
@@ -69,6 +72,8 @@ class _FakeClient:
             return [self._rack_row] if self._rack_row else []
         if "view_pduports_v1" in sql:
             return list(self._pdu_rows)
+        if "view_netport_v1" in sql:
+            return list(self._console_rows)
         return []
 
     def rest_get(self, path, params=None):
@@ -96,6 +101,13 @@ class ParserTests(unittest.TestCase):
         self.assertEqual((ns.cmd, ns.query), ("rack", "sa-hostname"))
         ns = self.parser.parse_args(["d42", "power", "18ZP6S3"])
         self.assertEqual((ns.cmd, ns.query), ("power", "18ZP6S3"))
+
+    def test_console_wiring_lookup_and_manual(self):
+        ns = self.parser.parse_args(["d42", "console", "WDY1CAV800048"])
+        self.assertEqual((ns.cmd, ns.query, ns.server, ns.port),
+                         ("console", "WDY1CAV800048", None, None))
+        ns = self.parser.parse_args(["d42", "console", "--server", "B10", "--port", "9"])
+        self.assertEqual((ns.query, ns.server, ns.port), (None, "B10", 9))
 
 
 class ConfigTests(unittest.TestCase):
@@ -181,6 +193,24 @@ class ToolEnvelopeTests(unittest.TestCase):
         self.assertEqual(env["status"], "warning")
         self.assertEqual(env["result"]["feed_count"], 0)
         self.assertTrue(env["warnings"])
+
+    def test_console_clean_mapping_parsed(self):
+        fake = _FakeClient()
+        with _patch_client(fake):
+            env = tools.d42_console("WDY1CAV800048")
+        self.assertEqual(env["status"], "ok")
+        self.assertEqual(env["result"]["console_server"], "CONSOLE-B08")
+        self.assertEqual(env["result"]["port"], 9)
+        self.assertEqual(env["result"]["source"], "device42")
+
+    def test_console_unparseable_warns_with_raw(self):
+        fake = _FakeClient(console_rows=[{"dev": "X", "vn": "console-c02-DMZ,Console @ X"}])
+        with _patch_client(fake):
+            env = tools.d42_console("X")
+        self.assertEqual(env["status"], "warning")
+        self.assertIsNone(env["result"]["console_server"])
+        self.assertTrue(env["warnings"])
+        self.assertIn("console-c02-DMZ,Console @ X", env["result"]["unparsed"])
 
     def test_doql_error_surfaces_as_error_envelope(self):
         fake = _FakeClient()

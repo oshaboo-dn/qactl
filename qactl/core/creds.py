@@ -137,6 +137,37 @@ class AristaConfig:
         return cls(host=host, user=user, password=password, port=int(port or 22))
 
 
+CONSOLE_SERVER_DEFAULT_USER = "dn"
+
+
+@dataclass
+class ConsoleServerConfig:
+    """Terminal-server (console server) SSH login for interactive connect.
+
+    A wrong/absent password surfaces as an SSH auth failure at connect time
+    (with an env-var hint), not here — mirroring :class:`AristaConfig`.
+
+        CONSOLE_CS_USER       optional   default 'dn'
+        CONSOLE_CS_PASSWORD   optional   default empty
+    """
+
+    user: str
+    password: str
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> "ConsoleServerConfig":
+        user = (user or os.environ.get("CONSOLE_CS_USER") or
+                CONSOLE_SERVER_DEFAULT_USER).strip()
+        password = (password if password is not None
+                    else os.environ.get("CONSOLE_CS_PASSWORD", ""))
+        return cls(user=user, password=password)
+
+
 @dataclass
 class Device42Config:
     """Device42 CMDB access — DOQL query endpoint + REST base, one Basic-auth header.
