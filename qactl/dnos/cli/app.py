@@ -673,7 +673,10 @@ def capture(
       (BGP/179, ISIS, LDP, ICMP, ...). No device config or physical setup.
       Note: the default `-i any` double-counts each packet across netns
       legs; pass `--iface <sub-if>` (e.g. g07008.0009) for a single clean
-      copy per packet. (BFD is NCP-offloaded and not seen here.)
+      copy per packet. (BFD is NCP-offloaded and not seen here.) On a cdnos
+      / single-container node (no nested routing-engine container) it
+      captures in the node's local inband_ns directly, mapping the DNOS
+      port name ge100-0/0/N to its netns interface e0000N.
     - datapath: the NCP wbox-cli pcap engine, with a /tmp free-space
       preflight and a size cap. LAB PREREQUISITE (not automated): datapath
       capture needs a physical loop cable (or a DNAAS mirror chain)
