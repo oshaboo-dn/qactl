@@ -77,6 +77,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `_text_to_adf` helper, with tests.
 
 ### Fixed
+- **`qactl cli capture --mode routing` now works on cdnos nodes.** The routing
+  capture assumed a real NCC chassis, exec'ing into a nested `routing-engine`
+  container found via `docker ps`; on a cdnos / containerlab node the node *is*
+  the container (DNOS runs in a netns, L3 lives in a local `inband_ns`), so no
+  such container exists and capture aborted with "routing-engine container not
+  found in docker ps". The driver now detects the single-container topology
+  (`inband_ns` present at the `run start shell` level) and runs the
+  `timeout`-bounded tcpdump in `inband_ns` directly, mapping a DNOS port name
+  `ge100-0/0/N` → its netns interface `e0000N`. The NCC-chassis path is
+  unchanged.
 - **`qactl cli capture --mode datapath` no longer blindly defaults to
   `ncp 0`.** When port-mirroring config didn't resolve an NCP the tool
   assumed `ncp 0`, which hard-failed on a cluster (CL) chassis — its line

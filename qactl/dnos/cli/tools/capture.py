@@ -6,7 +6,9 @@ command. Two modes, matching the original:
 - ``routing`` (control-plane / routing-engine): a ``timeout``-bounded
   ``tcpdump`` in the routing-engine container's ``inband_ns`` — captures
   in-band control-plane traffic (BGP/179, BFD, ISIS, ICMP, …). No device
-  config or physical prerequisite.
+  config or physical prerequisite. On a cdnos / single-container node (no
+  nested routing-engine container) it captures in the node's local
+  ``inband_ns`` directly, mapping ``ge100-0/0/N`` → ``e0000N``.
 - ``datapath``: the NCP ``wbox-cli`` pcap engine with a ``/tmp`` free-space
   preflight and a size cap. **Lab prerequisite (not automated):** datapath
   capture needs a physical loop cable (or a DNAAS mirror chain) steering
@@ -341,7 +343,8 @@ def capture_devices(
         iface: routing mode only — tcpdump interface inside ``inband_ns``
             (default ``any``). ``any`` double-counts each packet across
             netns legs; pin the sub-if (e.g. ``g07008.0009``) for one clean
-            copy per packet.
+            copy per packet. On a cdnos node a DNOS port name
+            (``ge100-0/0/N``) is mapped to its netns interface (``e0000N``).
         ncp: datapath NCP override; when unset it is auto-detected from the
             device's port-mirroring config, else a valid NCP from the chassis
             inventory (``show system``) — prefers 0 on a standalone, the

@@ -41,14 +41,17 @@ class ScriptedChannel:
 
 
 def _routing_handler(*, container_line, egress_reply="\r\nx.pcap 100%\r\n" + SHELL,
-                     ls_reply="-rw-r--r-- 1 root root 40960 /tmp/x.pcap\r\n" + SHELL):
+                     ls_reply="-rw-r--r-- 1 root root 40960 /tmp/x.pcap\r\n" + SHELL,
+                     netns_reply="default\r\n" + SHELL):
     def handler(data):
         s = data.strip()
         if s == "run start shell":
             return SHELL
         if s.startswith("docker ps"):
             return container_line + SHELL
-        if s.startswith("docker exec"):        # tcpdump completes
+        if s.startswith("ip netns list"):      # cdnos topology probe
+            return netns_reply
+        if s.startswith("docker exec") or "tcpdump" in s:   # tcpdump completes
             return SHELL
         if s.startswith("ls -l"):
             return ls_reply
@@ -79,7 +82,9 @@ def test_routing_happy_path():
 
 
 def test_routing_container_not_found():
-    ch = ScriptedChannel(_routing_handler(container_line="nothing here\r\n"))
+    # No routing-engine container AND no inband_ns netns → hard fail (not cdnos).
+    ch = ScriptedChannel(_routing_handler(
+        container_line="nothing here\r\n", netns_reply="default\r\n" + SHELL))
     res = D.routing_capture_on_channel(
         ch, DNOS, device_host="CZ1", password="devpw",
         pcap_path="/tmp/x.pcap", duration=1,
@@ -87,6 +92,26 @@ def test_routing_container_not_found():
     )
     assert res["ok"] is False
     assert "container not found" in res["error"]
+
+
+def test_routing_cdnos_no_container_uses_inband_ns():
+    # cdnos: docker ps finds nothing, but inband_ns exists → capture direct.
+    ch = ScriptedChannel(_routing_handler(
+        container_line="\r\n",
+        netns_reply="oob_ns\r\ninband_ns (id: 1)\r\n" + SHELL))
+    res = D.routing_capture_on_channel(
+        ch, DNOS, device_host="car1", password="devpw",
+        pcap_path="/tmp/x.pcap", duration=1, iface="ge100-0/0/5",
+        egress_cmd="scp /tmp/x.pcap dn@host:/d/", egress_password=PW, cmd_timeout=2,
+    )
+    assert res["ok"] is True
+    assert res["egress_ok"] is True
+    assert "cdnos inband_ns" in res["stages"]
+    # tcpdump ran in inband_ns directly (no docker exec), mapped iface e00005.
+    tcpdump = next(s for s in ch.sent if "tcpdump" in s)
+    assert "docker exec" not in tcpdump
+    assert tcpdump.startswith("ip netns exec inband_ns ")
+    assert "-i e00005" in tcpdump
 
 
 def test_routing_egress_failure():

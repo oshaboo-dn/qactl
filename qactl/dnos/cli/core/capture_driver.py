@@ -179,6 +179,14 @@ def routing_capture_on_channel(
     stale target file, run a ``timeout``-bounded tcpdump in the RE's
     ``inband_ns``, verify the pcap exists, then scp it to the local-sftp
     host (via the OOB namespace) and remove it device-side on success.
+
+    Two topologies are supported. A real NCC chassis runs DNOS in a nested
+    ``routing-engine`` container discovered via ``docker ps`` (the tcpdump is
+    ``docker exec``'d into it). A cdnos / single-container node *is* the
+    container — there is no nested routing-engine container — so ``inband_ns``
+    is visible directly at the ``run start shell`` level; there the tcpdump
+    runs in ``inband_ns`` directly and the port name is mapped ``ge100-0/0/N``
+    → ``e0000N``.
     """
     stages: List[str] = []
 
@@ -190,18 +198,28 @@ def routing_capture_on_channel(
 
     docker_out, hit = _run(channel, "docker ps | grep routing-engine", cmd_timeout)
     container = H.find_routing_engine_container(docker_out, device_host)
+    cdnos = False
     if not container:
-        _exit_shell(channel, dnos_prompt, cmd_timeout)
-        return _result(ok=False,
-                       error="routing-engine container not found in `docker ps`.",
-                       stages=stages)
-    stages.append(f"container={container}")
+        # No nested routing-engine container: this may be a cdnos node, where
+        # DNOS runs in a netns inside the single container and L3 lives in a
+        # local ``inband_ns``. Detect that (inband_ns present at this level)
+        # and capture there directly instead of failing.
+        netns_out, _ = _run(channel, "ip netns list", cmd_timeout)
+        if not H.has_inband_ns(netns_out):
+            _exit_shell(channel, dnos_prompt, cmd_timeout)
+            return _result(ok=False,
+                           error="routing-engine container not found in `docker ps`.",
+                           stages=stages)
+        cdnos = True
+    stages.append("cdnos inband_ns" if cdnos else f"container={container}")
 
     # Only remove the specific target path (never a blanket /tmp/*.pcap
     # sweep — that could clobber another capture on the same box).
     _run(channel, f"rm -f {pcap_path}", cmd_timeout)
 
-    tcpdump_cmd = H.build_re_tcpdump_cmd(container, pcap_path, duration, bpf, iface)
+    cap_iface = H.map_cdnos_iface(iface) if cdnos else iface
+    tcpdump_cmd = H.build_re_tcpdump_cmd(
+        None if cdnos else container, pcap_path, duration, bpf, cap_iface)
     # The command blocks for ~duration (self-terminating via `timeout`),
     # plus RE/tcpdump setup latency — give it a generous margin.
     _out, hit = _run(channel, tcpdump_cmd, timeout=duration + cmd_timeout + 15)

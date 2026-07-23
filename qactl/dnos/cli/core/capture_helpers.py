@@ -38,6 +38,10 @@ _ROUTING_ENGINE_CONTAINER_RE = re.compile(
     r"([\w-]+_routing-engine\.[a-z0-9]+\.[a-z0-9]+)", re.IGNORECASE,
 )
 
+# cdnos DNOS port name (``ge100-0/0/N``) → the netns interface it maps to
+# inside ``inband_ns`` (``e0000N``). Only the trailing port index varies.
+_CDNOS_GE_IFACE_RE = re.compile(r"^ge\d+-\d+/\d+/(\d+)$", re.IGNORECASE)
+
 
 def _env_int(name: str, legacy: Optional[str], default: int) -> int:
     """Positive int from ``name`` (or the legacy dn_capture env), else default."""
@@ -170,6 +174,39 @@ def find_routing_engine_container(
     return matches[0] if matches else None
 
 
+def has_inband_ns(netns_output: str) -> bool:
+    """True if ``ip netns list`` shows an ``inband_ns`` namespace.
+
+    On a cdnos / single-container node the DNOS L3 namespace (``inband_ns``)
+    is visible directly at the ``run start shell`` level — the node *is* the
+    container, so there is no nested routing-engine container to exec into.
+    On a real NCC chassis ``inband_ns`` lives *inside* the routing-engine
+    container and is absent here; that difference is how the routing capture
+    driver tells the two topologies apart when ``docker ps`` finds no
+    routing-engine container.
+    """
+    if not netns_output:
+        return False
+    return re.search(r"\binband_ns\b", netns_output) is not None
+
+
+def map_cdnos_iface(iface: str) -> str:
+    """Map a DNOS port name to its cdnos ``inband_ns`` interface.
+
+    On a cdnos node the L3 interfaces inside ``inband_ns`` are named
+    ``e00000``, ``e00001``, … matching ``ge100-0/0/0``, ``ge100-0/0/1``, …
+    So ``ge100-0/0/N`` → ``e0000N`` (the index is zero-padded to 5 digits).
+    Anything that is not a ``ge`` port name — ``any`` (the default), or an
+    already-mapped ``e0000N`` — passes through unchanged.
+    """
+    if not iface:
+        return "any"
+    m = _CDNOS_GE_IFACE_RE.match(iface.strip())
+    if m:
+        return f"e{int(m.group(1)):05d}"
+    return iface
+
+
 def resolve_ncp_from_port_mirroring(output: str) -> Optional[str]:
     """Extract the NCP number from ``port-mirroring`` config output.
 
@@ -218,13 +255,19 @@ def resolve_ncps_from_system(output: str) -> List[int]:
 
 
 def build_re_tcpdump_cmd(
-    container: str,
+    container: Optional[str],
     pcap_path: str,
     duration: int,
     bpf: Optional[str] = None,
     iface: str = "any",
 ) -> str:
     """Control-plane capture line: tcpdump in the RE container's inband_ns.
+
+    On a real NCC chassis ``container`` is the routing-engine container the
+    tcpdump is ``docker exec``'d into. On a cdnos / single-container node the
+    node *is* the container (``inband_ns`` is local), so ``container=None``
+    drops the ``docker exec`` prefix and runs tcpdump in ``inband_ns``
+    directly — the caller maps the port name via :func:`map_cdnos_iface`.
 
     ``timeout <duration>`` makes it self-terminating (no Ctrl+C needed).
 
@@ -240,8 +283,9 @@ def build_re_tcpdump_cmd(
     scoped (a routing capture otherwise grabs the whole control plane). It
     is passed as a single quoted argument.
     """
+    prefix = f"docker exec {shlex.quote(container)} " if container else ""
     cmd = (
-        f"docker exec {shlex.quote(container)} ip netns exec inband_ns "
+        f"{prefix}ip netns exec inband_ns "
         f"timeout {int(duration)} tcpdump -nqe -i {shlex.quote(iface or 'any')} "
         f"-w {shlex.quote(pcap_path)}"
     )
@@ -370,6 +414,8 @@ __all__ = [
     "validate_name",
     "make_pcap_name",
     "find_routing_engine_container",
+    "has_inband_ns",
+    "map_cdnos_iface",
     "resolve_ncp_from_port_mirroring",
     "build_re_tcpdump_cmd",
     "build_wbox_open_cmd",

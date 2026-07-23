@@ -71,6 +71,29 @@ def test_find_container_none():
 
 
 @pytest.mark.parametrize("text,expect", [
+    ("Name: inband_ns", True),
+    ("oob_ns\ninband_ns (id: 1)\nmgmt_ns", True),
+    ("oob_ns\ndefault", False),
+    ("", False),
+])
+def test_has_inband_ns(text, expect):
+    assert H.has_inband_ns(text) is expect
+
+
+@pytest.mark.parametrize("iface,expect", [
+    ("ge100-0/0/0", "e00000"),
+    ("ge100-0/0/1", "e00001"),
+    ("ge100-0/0/10", "e00010"),
+    ("GE100-0/0/5", "e00005"),   # case-insensitive
+    ("any", "any"),              # default passes through
+    ("e00003", "e00003"),        # already mapped passes through
+    ("", "any"),
+])
+def test_map_cdnos_iface(iface, expect):
+    assert H.map_cdnos_iface(iface) == expect
+
+
+@pytest.mark.parametrize("text,expect", [
     ("destination-interface ge400-7/0/8", "7"),
     ("source-interface ge100-3/0/1", "3"),
     ("something ge400-18/0/8.9 blah", "18"),
@@ -143,6 +166,20 @@ def test_build_re_tcpdump_cmd_iface_and_bpf():
     cmd = H.build_re_tcpdump_cmd("CT", "/tmp/x.pcap", 20, "host 1.2.3.4", "g07008.0009")
     assert "-i g07008.0009" in cmd
     assert cmd.endswith("'host 1.2.3.4'")
+
+
+def test_build_re_tcpdump_cmd_cdnos_no_container():
+    # container=None (cdnos): no `docker exec` prefix, runs in inband_ns direct.
+    cmd = H.build_re_tcpdump_cmd(None, "/tmp/x.pcap", 20, None, "e00005")
+    assert "docker exec" not in cmd
+    assert cmd.startswith("ip netns exec inband_ns ")
+    assert "timeout 20 tcpdump -nqe -i e00005 -w /tmp/x.pcap" in cmd
+
+
+def test_build_re_tcpdump_cmd_cdnos_with_bpf():
+    cmd = H.build_re_tcpdump_cmd(None, "/tmp/x.pcap", 20, "host 1.2.3.4", "e00000")
+    assert "docker exec" not in cmd
+    assert cmd.endswith("-w /tmp/x.pcap 'host 1.2.3.4'")
 
 
 def test_build_wbox_open_cmd():
