@@ -231,7 +231,7 @@ def _capture_one(
                 channel, prompt, device_host=chost, password=password,
                 pcap_path=device_pcap, duration=int(duration_s),
                 egress_cmd=egress, egress_password=local_pw, cmd_timeout=timeout,
-                bpf=bpf, iface=iface,
+                bpf=bpf, iface=iface, local_pcap_path=remote,
             )
         return datapath_capture_on_channel(
             channel, prompt, ncp=str(resolved_ncp), password=password,

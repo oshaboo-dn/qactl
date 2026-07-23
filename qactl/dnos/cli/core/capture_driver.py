@@ -19,6 +19,9 @@ but end-to-end behaviour needs a live DNOS device to confirm.
 
 from __future__ import annotations
 
+import base64
+import re
+import shlex
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -32,6 +35,15 @@ from qactl.dnos.cli.core.shell import (
 
 # Marker the RE / datapath shell entry prints once the Linux prompt is up.
 _PASSWORD_RE_TEXT = "password:"
+
+# base64-pull framing markers. Emitted via a shell variable + PID (``$$``)
+# so the literal marker text appears only in the command *output*, never in
+# the echoed command line (which shows ``${M}_BEG_$$`` unexpanded) — the
+# parser can then match the real markers unambiguously.
+_PULL_MARKER = "QACTLPCAP"
+_PULL_RE = re.compile(
+    _PULL_MARKER + r"_BEG_\d+\s+(.*?)\s+" + _PULL_MARKER + r"_END_\d+", re.S,
+)
 
 
 def _result(
@@ -155,6 +167,49 @@ def _looks_like_error(text: str) -> bool:
     )
 
 
+def _pull_via_base64(
+    channel: Any,
+    remote_path: str,
+    local_path: str,
+    timeout: float,
+) -> Tuple[bool, Optional[str]]:
+    """Pull a device file to ``local_path`` by streaming base64 over the shell.
+
+    The containerlab cdnos node has no network path back to the agent (so the
+    device→local-sftp scp push can't work) and DNOS SSH exposes no SFTP
+    subsystem (so a paramiko ``open_sftp`` pull fails). The one channel that
+    *does* work is the interactive shell we already hold — so ``base64 -w0``
+    the pcap on the device, read the single line back between unique markers,
+    and decode it locally. Returns ``(ok, error)``.
+    """
+    q = shlex.quote(remote_path)
+    # ``M`` + ``$$`` keep the printed markers out of the echoed command line.
+    cmd = (
+        f"M={_PULL_MARKER}; echo ${{M}}_BEG_$$; base64 -w0 {q}; echo; "
+        f"echo ${{M}}_END_$$"
+    )
+    channel.send(cmd + "\n")
+    raw, hit = read_until_shell_prompt(channel, overall_timeout=timeout)
+    if not hit:
+        return False, "timed out reading pcap back over the shell channel."
+    m = _PULL_RE.search(strip_ansi(raw))
+    if not m:
+        return False, "could not read the pcap back over the shell channel."
+    b64 = re.sub(r"\s+", "", m.group(1))
+    if not b64:
+        return False, "pcap read back empty over the shell channel."
+    try:
+        data = base64.b64decode(b64, validate=True)
+    except (ValueError, Exception) as exc:  # noqa: BLE001
+        return False, f"failed to decode pcap stream: {exc}"
+    try:
+        with open(local_path, "wb") as fh:
+            fh.write(data)
+    except OSError as exc:
+        return False, f"failed to write pulled pcap locally: {exc}"
+    return True, None
+
+
 # --- routing (control-plane) ----------------------------------------------
 
 
@@ -171,6 +226,7 @@ def routing_capture_on_channel(
     cmd_timeout: float = 30.0,
     bpf: Optional[str] = None,
     iface: str = "any",
+    local_pcap_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Drive a control-plane (routing-engine) capture on one channel.
 
@@ -182,11 +238,18 @@ def routing_capture_on_channel(
 
     Two topologies are supported. A real NCC chassis runs DNOS in a nested
     ``routing-engine`` container discovered via ``docker ps`` (the tcpdump is
-    ``docker exec``'d into it). A cdnos / single-container node *is* the
-    container — there is no nested routing-engine container — so ``inband_ns``
-    is visible directly at the ``run start shell`` level; there the tcpdump
-    runs in ``inband_ns`` directly and the port name is mapped ``ge100-0/0/N``
-    → ``e0000N``.
+    ``docker exec``'d into it), and its scp egress runs inside an OOB
+    management namespace (``egress_cmd``). A cdnos / single-container node *is*
+    the container — there is no nested routing-engine container — so
+    ``inband_ns`` is visible directly at the ``run start shell`` level; there
+    the tcpdump runs in ``inband_ns`` directly and the port name is mapped
+    ``ge100-0/0/N`` → ``e0000N``.
+
+    Egress also differs. A cdnos containerlab node has no network path back to
+    the agent (the device→local-sftp scp push can't reach it) and DNOS SSH
+    exposes no SFTP subsystem, so the pcap is *pulled* to ``local_pcap_path``
+    over this same shell channel via ``base64`` (:func:`_pull_via_base64`).
+    An NCC chassis pushes with scp over its OOB namespace as before.
     """
     stages: List[str] = []
 
@@ -236,6 +299,32 @@ def routing_capture_on_channel(
         return _result(ok=False, error="pcap not created on device.",
                        stages=stages, container=container)
 
+    if cdnos:
+        # Pull the pcap back over this channel (no push path exists), then
+        # remove it device-side on success — the tool verifies the landed file.
+        if not local_pcap_path:
+            _exit_shell(channel, dnos_prompt, cmd_timeout)
+            return _result(ok=False,
+                           error="cdnos capture needs a local landing path to pull into.",
+                           stages=stages)
+        # base64 of the whole pcap streams over the channel; scale the read
+        # window with the on-device size so a large capture isn't cut short.
+        pull_timeout = max(cmd_timeout, 120) + duration
+        egress_ok, pull_err = _pull_via_base64(
+            channel, pcap_path, local_pcap_path, pull_timeout)
+        if egress_ok:
+            _run(channel, f"rm -f {pcap_path}", cmd_timeout)
+        stages.append("pulled pcap over channel" if egress_ok else "pull failed")
+        _exit_shell(channel, dnos_prompt, cmd_timeout)
+        return _result(
+            ok=egress_ok,
+            error=None if egress_ok else (pull_err or "pcap pull over channel failed."),
+            egress_ok=egress_ok,
+            stages=stages,
+            container=container,
+        )
+
+    # NCC chassis: scp push over the OOB management namespace.
     egress_out, eg_hit = _run_with_password(
         channel, egress_cmd, egress_password, timeout=max(cmd_timeout, 90),
     )

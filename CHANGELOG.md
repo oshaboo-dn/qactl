@@ -94,8 +94,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   found in docker ps". The driver now detects the single-container topology
   (`inband_ns` present at the `run start shell` level) and runs the
   `timeout`-bounded tcpdump in `inband_ns` directly, mapping a DNOS port name
-  `ge100-0/0/N` → its netns interface `e0000N`. The NCC-chassis path is
-  unchanged.
+  `ge100-0/0/N` → its netns interface `e0000N`. Egress is handled for the
+  containerlab case too: such a node has no network path back to the agent
+  (the device→local-sftp scp push can't reach it) and DNOS SSH exposes no SFTP
+  subsystem, so the pcap is **pulled** to this host over the existing shell
+  channel via `base64` rather than pushed. The NCC-chassis path (docker exec +
+  scp over the OOB namespace) is unchanged. Verified end-to-end on a cdnos lab
+  node (car1).
 - **`qactl cli capture --mode datapath` no longer blindly defaults to
   `ncp 0`.** When port-mirroring config didn't resolve an NCP the tool
   assumed `ncp 0`, which hard-failed on a cluster (CL) chassis — its line
