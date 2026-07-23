@@ -136,7 +136,7 @@ class TrafficItemProxy:
         """Start this traffic item. Returns self for chaining."""
         ti = self._resolve()
         try:
-            self._session.ixn.Traffic.StartStatelessTrafficBlocking(ti)
+            ti.StartStatelessTrafficBlocking()
         except Exception as e:
             raise IxiaOperationError(f"Failed to start {self._name!r}: {e}") from e
         return self
@@ -145,7 +145,7 @@ class TrafficItemProxy:
         """Stop this traffic item. Returns self for chaining."""
         ti = self._resolve()
         try:
-            self._session.ixn.Traffic.StopStatelessTrafficBlocking(ti)
+            ti.StopStatelessTrafficBlocking()
         except Exception as e:
             raise IxiaOperationError(f"Failed to stop {self._name!r}: {e}") from e
         return self

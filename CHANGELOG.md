@@ -77,6 +77,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `_text_to_adf` helper, with tests.
 
 ### Fixed
+- **`qactl ixia traffic start/stop --name <ITEM>` no longer errors with
+  "startstatelesstrafficblocking is not a valid operation".**
+  `TrafficItemProxy.start()`/`stop()` were calling the *global*
+  `ixn.Traffic.StartStatelessTrafficBlocking(ti)` /
+  `StopStatelessTrafficBlocking(ti)` with the resolved TrafficItem passed as a
+  positional argument — but that global op takes no arguments (it starts/stops
+  all stateless traffic), so passing one is not a valid operation. The per-item
+  op is invoked on the TrafficItem object itself; now calls
+  `ti.StartStatelessTrafficBlocking()` / `ti.StopStatelessTrafficBlocking()`.
 - **`qactl cli capture --mode routing` now works on cdnos nodes.** The routing
   capture assumed a real NCC chassis, exec'ing into a nested `routing-engine`
   container found via `docker ps`; on a cdnos / containerlab node the node *is*
